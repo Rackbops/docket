@@ -1,0 +1,31 @@
+# @rackbops/docket-types -- the six task types, built on docket-core
+
+default:
+    @just --list
+
+# Build
+build:
+    pnpm run build
+
+# Run all checks (lint + typecheck + test)
+check: lint typecheck test
+
+# Lint and check formatting
+lint:
+    pnpm exec biome check .
+
+# Fix lint and formatting issues
+fix:
+    pnpm exec biome check --write .
+
+# Type-check
+typecheck:
+    pnpm run typecheck
+
+# Run tests
+test:
+    pnpm run test
+
+# Remove build artifacts
+clean:
+    rm -rf dist coverage *.tsbuildinfo

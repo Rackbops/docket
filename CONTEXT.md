@@ -1,0 +1,53 @@
+# docket -- toolchain and testing reference
+
+Paid-for-once tool knowledge for this repo. Design lives in Rackbops/Tooling's plan of record,
+not here.
+
+## Layout
+
+pnpm workspace (`pnpm-workspace.yaml`: `packages/*`), in the shape of Lepid-Labs/discord-ai:
+`packages/core` and `packages/types`, each with its own `package.json`, `tsconfig.json`
+(extending `tsconfig.base.json`), `Justfile`, `src/` and `test/`. The root `Justfile` exposes
+each package as a module (`just core test`, `just types build`).
+
+## Order matters
+
+`docket-types` depends on `docket-core` through `workspace:^`, and core's `exports` point at
+`dist/`. So:
+
+- `pnpm -r run build` builds in topological order (core first) -- fine.
+- `pnpm -r run typecheck` on a clean tree fails in `types` (`Cannot find module
+  '@rackbops/docket-core'`) until core is built. `just check` runs lint, **build**, typecheck,
+  test in that order for this reason. CI does the same.
+- vitest in `types` resolves core the same way, so `just types test` also needs `just core
+  build` first; `just check` from the root covers it.
+
+## Toolchain
+
+- Node 24 (`.nvmrc`; `engines.node >= 24`), pnpm from `packageManager` (Corepack), TypeScript 7,
+  vitest 5, Biome 2 -- the versions rackbops-node-app-kit runs, so Renovate keeps them in step
+  across Rackbops.
+- Biome 2 reads `.gitignore` (`vcs.useIgnoreFile`), so `dist/` and `node_modules/` need no
+  separate ignore list. Semicolons are **as needed**; `just fix` writes the formatting.
+- `tsc` (not `tsc -b`): per-package plain builds, topological order from pnpm, no project
+  references to maintain.
+
+## Publishing
+
+- One version, both packages, one `v*` tag. `just version X.Y.Z` runs `npm version` in every
+  package with `--no-git-tag-version`; commit, tag, push with tags.
+- `publish.yml` is rackbops-node-app-kit's OIDC trusted-publishing workflow with one change:
+  each package is packed with `pnpm pack` and the tarball is published, because pnpm rewrites
+  `workspace:^` to the published version and `npm publish` from the directory would not.
+- One-time setup on npmjs.com, per package: a trusted publisher for organization `Rackbops`,
+  repository `docket`, workflow `publish.yml`, environment blank. A trusted publisher can only be
+  added to a package that already exists, so the **first** publish of each name uses the
+  `NPM_TOKEN` break-glass (set the repo secret, tag, then remove the secret).
+- Verify a tarball before the first release: `cd packages/types && pnpm pack` and check that the
+  packed `package.json` carries a real version for `@rackbops/docket-core`, not `workspace:^`.
+
+## Repo stamps
+
+Labels come from Rackbops/Tooling's `sync_labels.py` (`--repo Rackbops/docket` or the daily
+sweep); Renovate extends `github>Rackbops/renovate-config`; `push-notify.yml` needs the
+`DISCORD_PUSH_WEBHOOK` repository secret to post.
