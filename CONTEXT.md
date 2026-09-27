@@ -54,6 +54,13 @@ each package as a module (`just core test`, `just types build`).
   core before types), then add the trusted publishers.
 - A tag can also be created from the GitHub release page (`/releases/new?tag=vX.Y.Z&target=main`)
   when a local push is not at hand; it triggers `publish.yml` the same way.
+- A failed tag run is re-run without moving the tag: `publish.yml` has a `workflow_dispatch`
+  with a `tag` input (Actions tab, or `gh workflow run publish.yml -f tag=vX.Y.Z`); it checks
+  out the tag, verifies the versions against it and skips packages already on the registry.
+- npm reports the outcome of the OIDC exchange -- including the registry's reason when no
+  trusted publisher matches -- only at `--loglevel=verbose` (npm/cli `lib/utils/oidc.js`);
+  at the default level a mismatch is a bare `ENEEDAUTH`. The publish step runs verbose and
+  prints the `oidc` lines, so the log says whether the exchange ran and why it failed.
 - Verify a tarball before the first release: `cd packages/types && pnpm pack` and check that the
   packed `package.json` carries a real version for `@rackbops/docket-core`, not `workspace:^`.
 
