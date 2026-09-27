@@ -35,7 +35,9 @@ each package as a module (`just core test`, `just types build`).
 ## Publishing
 
 - One version, both packages, one `v*` tag. `just version X.Y.Z` runs `npm version` in every
-  package with `--no-git-tag-version`; commit, tag, push with tags.
+  package with `--no-git-tag-version`; commit, tag, push with tags. The tag must be
+  **annotated** (`git tag -a vX.Y.Z -m vX.Y.Z`): `git push --follow-tags` pushes annotated tags
+  only, so a lightweight `git tag vX.Y.Z` never reaches GitHub and `publish.yml` never runs.
 - `publish.yml` is rackbops-node-app-kit's OIDC trusted-publishing workflow with one change:
   each package is packed with `pnpm pack` and the tarball is published, because pnpm rewrites
   `workspace:^` to the published version and `npm publish` from the directory would not.
