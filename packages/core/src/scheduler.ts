@@ -7,7 +7,9 @@ import { nextDue, type Schedule, scheduleProblems } from "./schedule.js"
  * Materialization (plan section 5.3): a task keeps exactly one upcoming occurrence, created
  * through its dedupe key so a repeated call is a no-op. A schedule edit cancels the queued
  * occurrence and replaces it. Catch-up is per kind: a missed `once` fires late and is marked late;
- * a missed calendar occurrence fires once late, then the next is computed from now.
+ * a missed calendar or period occurrence fires once late, then the next is computed from now; a
+ * poll's first occurrence is its `start` (so a tracker observes at once), every later one the
+ * next grid instant after now.
  */
 
 /** A run starting this long after its due instant is marked late. */
@@ -34,7 +36,7 @@ export async function materialize(
   if (task.status !== "active" || !task.schedule) return null
   const pending = await store.listOccurrences({ taskId: task.id })
   if (pending.some((o) => o.status === "queued" || o.status === "running")) return null
-  const after = task.schedule.kind === "once" ? new Date(0) : now
+  const after = firstDueAfter(task.schedule, pending.length === 0, now)
   const due = nextDue(task.schedule, after, {
     zone: owner.timeZone,
     preferredHour: owner.preferredHour,
@@ -47,6 +49,13 @@ export async function materialize(
     dedupeKey: scheduledKey(task.id, due),
     at: now.toISOString(),
   })
+}
+
+/** The instant `nextDue` searches from: the epoch for `once`, the start for a fresh poll. */
+function firstDueAfter(schedule: Schedule, fresh: boolean, now: Date): Date {
+  if (schedule.kind === "once") return new Date(0)
+  if (schedule.kind === "poll" && fresh) return new Date(Date.parse(schedule.start) - 1)
+  return now
 }
 
 export interface RescheduleResult {

@@ -10,6 +10,7 @@ import type {
   OccurrenceStatus,
   Reply,
   ReplyKind,
+  SeriesPoint,
   Task,
   TaskEvent,
   TaskEventKind,
@@ -45,6 +46,11 @@ export interface OutgoingMessage {
   text: string
   /** Replies the message offers as buttons; the adapter renders them (discord-ai#7). */
   actions?: ReplyKind[]
+  /**
+   * When `actions` includes `decision`: the choices, one button each. The reply is a
+   * `decision` whose payload is `{ choice }`.
+   */
+  decisions?: string[]
 }
 
 /** Sends to a user, never to a channel, at tier 0 (plan 5.5). */
@@ -111,6 +117,8 @@ export interface NewTask {
   type: string
   title: string
   config: unknown
+  /** Initial type state; null when absent. */
+  state?: unknown
   schedule: Schedule | null
   lane: Lane
   capabilities: Capability[]
@@ -120,6 +128,7 @@ export interface NewTask {
 export interface TaskPatch {
   title?: string
   config?: unknown
+  state?: unknown
   schedule?: Schedule | null
   capabilities?: Capability[]
   status?: TaskStatus
@@ -191,6 +200,21 @@ export interface NewBlock {
   at: string
 }
 
+export interface NewSeriesPoint {
+  taskId: string
+  at: string
+  value: number
+  unit?: string | null
+  note?: string | null
+}
+
+export interface SeriesFilter {
+  /** Inclusive: points at or after this instant. */
+  since?: string
+  /** Keep only the most recent N points (the result stays oldest first). */
+  limit?: number
+}
+
 /**
  * Persistence. Every method is async so a host may back it with anything; the in-memory
  * `MemoryStore` is the reference for the semantics a host must keep, above all that
@@ -240,4 +264,8 @@ export interface Store {
   listTaskEvents(taskId: string): Promise<TaskEvent[]>
   addReply(reply: NewReply): Promise<Reply>
   listReplies(taskId: string): Promise<Reply[]>
+
+  addSeriesPoint(point: NewSeriesPoint): Promise<SeriesPoint>
+  /** Oldest first. */
+  listSeries(taskId: string, filter?: SeriesFilter): Promise<SeriesPoint[]>
 }

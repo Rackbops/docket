@@ -23,8 +23,10 @@ function ctx(): RunContext<{ text: string }> {
     owner,
     recipients: [],
     config: { text: "dentist" },
+    state: null,
     now,
-    history: { events: [], replies: [] },
+    ports: {},
+    history: { events: [], replies: [], series: [] },
   }
 }
 

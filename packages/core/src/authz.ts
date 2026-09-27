@@ -1,5 +1,13 @@
-import type { Occurrence, OccurrenceEvent, Reply, Task, TaskEvent, TaskRecipient } from "./model.js"
-import type { Actor, Store, TaskFilter } from "./ports.js"
+import type {
+  Occurrence,
+  OccurrenceEvent,
+  Reply,
+  SeriesPoint,
+  Task,
+  TaskEvent,
+  TaskRecipient,
+} from "./model.js"
+import type { Actor, SeriesFilter, Store, TaskFilter } from "./ports.js"
 
 /**
  * Authorization as a core rule (plan section 5.10): every read of a task, its occurrences,
@@ -75,4 +83,15 @@ export async function visibleHistory(
 ): Promise<TaskEvent[] | null> {
   if (!(await visibleTask(store, actor, taskId))) return null
   return store.listTaskEvents(taskId)
+}
+
+/** The task's series -- prices seen, amounts paid -- for those who may see the task. */
+export async function visibleSeries(
+  store: Store,
+  actor: Actor,
+  taskId: string,
+  filter?: SeriesFilter,
+): Promise<SeriesPoint[] | null> {
+  if (!(await visibleTask(store, actor, taskId))) return null
+  return store.listSeries(taskId, filter)
 }

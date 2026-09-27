@@ -7,13 +7,13 @@ the adapters behind the ports and gets a tracker. Design: Rackbops/Tooling,
 
 | Module | What it holds |
 |---|---|
-| `model` | the records: users, tasks, occurrences, events, task history, recipients, blocks, replies |
+| `model` | the records: users, tasks (config and type state), occurrences, events, task history, recipients, blocks, replies, series |
 | `ports` | `Store`, `Clock`, `Identity`, `Notifier`, `Executor`, `Memory`, `Fetch`, and the Store's input shapes |
 | `memory-store` | the Store in memory: the reference semantics and the test fake |
-| `schedule`, `zoned` | `once` and `calendar` schedules, `nextDue`, zone-aware wall-clock arithmetic on Intl alone |
+| `schedule`, `zoned` | `once`, `calendar`, `poll` and `period` schedules, `nextDue`, `periodDate`, zone-aware wall-clock arithmetic on Intl alone |
 | `scheduler`, `dedupe`, `tasks` | one upcoming occurrence per task through its dedupe key; cancel-and-replace on edit; `createTask` |
-| `dispatch`, `delivery` | the notify and execute lanes, idempotent DM delivery, crash recovery, replies and snooze |
-| `authz`, `consent` | every read takes an identity; invitations, accept, the decline rule, opt-out, admin lifts |
+| `dispatch`, `delivery` | the notify and execute lanes, idempotent DM delivery, crash recovery, replies and snooze; a type's outcome applied: state stored, series appended, `complete` ends the task |
+| `authz`, `consent` | every read takes an identity, the series included; invitations, accept, the decline rule, opt-out, admin lifts |
 | `contract`, `capabilities`, `job` | `TaskType`, `defineTaskType`, the grantable capability enum, the `JobSpec` and `JobResult` a runner speaks |
 
 ```ts
@@ -26,5 +26,6 @@ await lanes.recover()
 setInterval(() => lanes.tickNotify(), 60_000)
 ```
 
-A host replaces `MemoryStore` with its own Store, supplies a `Notifier` that DMs a user, and an
+A host replaces `MemoryStore` with its own Store, supplies a `Notifier` that DMs a user, a `Fetch`
+for the plain-code types (the price tracker reads pages through it, via `RunContext.ports`), and an
 `Executor` that hands Jobs to the runner. The core never calls a model and holds no credential.

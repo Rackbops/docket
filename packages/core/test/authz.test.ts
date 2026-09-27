@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest"
 
-import { createTask, invite, respondToInvite, visibleTask, visibleTasks } from "../src/index.js"
+import {
+  createTask,
+  invite,
+  respondToInvite,
+  visibleSeries,
+  visibleTask,
+  visibleTasks,
+} from "../src/index.js"
 import { actor, FakeClock, MemoryStore, people, T0 } from "./helpers.js"
 
 const type = {
@@ -28,6 +35,28 @@ describe("authorized reads", () => {
     expect(await visibleTasks(store, actor(moe))).toEqual([])
     expect((await visibleTask(store, actor(larry), task.id))?.id).toBe(task.id)
     expect((await visibleTask(store, actor(admin), task.id))?.id).toBe(task.id)
+  })
+
+  it("keeps a task's series -- prices seen, amounts paid -- behind the same rule", async () => {
+    const store = new MemoryStore()
+    const clock = new FakeClock(new Date(T0))
+    const { larry, moe } = await people(store)
+    const { task } = await createTask(
+      store,
+      actor(larry),
+      larry,
+      { type, title: "widget", config: {}, schedule: null },
+      clock.now(),
+    )
+    await store.addSeriesPoint({ taskId: task.id, at: T0, value: 49.99, unit: "USD" })
+    await store.addSeriesPoint({ taskId: task.id, at: "2026-03-03T12:00:00.000Z", value: 44.99 })
+    expect(await visibleSeries(store, actor(moe), task.id)).toBeNull()
+    expect((await visibleSeries(store, actor(larry), task.id))?.map((p) => p.value)).toEqual([
+      49.99, 44.99,
+    ])
+    expect((await visibleSeries(store, actor(larry), task.id, { limit: 1 }))?.[0]?.value).toBe(
+      44.99,
+    )
   })
 
   it("shows a task to a recipient only once they accepted", async () => {

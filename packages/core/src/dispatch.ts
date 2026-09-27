@@ -8,6 +8,7 @@ import {
   type Clock,
   type Executor,
   ExecutorUnavailableError,
+  type Fetch,
   type Notifier,
   type Store,
 } from "./ports.js"
@@ -18,9 +19,16 @@ import { isLate, materialize } from "./scheduler.js"
  * waits on a model; `tickExecute` runs due execute-lane occurrences one at a time through the
  * Executor. A lane whose runtime is missing is skipped -- its items stay queued -- and never ends
  * the other lane's drain, which is the starvation city-hall's single drain had (city-hall#7).
+ *
+ * The dispatcher owns status and applies what a type's Outcome asks for: state is stored on
+ * the task, series points are appended, `complete` finishes the task. A failed run still
+ * materializes the schedule's next occurrence, so one bad fetch or one closed DM never ends a
+ * recurring task on its own.
  */
 
 const ME = "docket"
+/** How many of the task's most recent series points a run sees. */
+export const SERIES_IN_CONTEXT = 100
 
 export interface LaneDeps {
   store: Store
@@ -29,6 +37,8 @@ export interface LaneDeps {
   notifier: Notifier
   /** Absent or null while no runner exists: the execute lane skips. */
   executor?: Executor | null
+  /** Plain HTTP reads for the plain-code types; absent when the host offers none. */
+  fetch?: Fetch | null
 }
 
 export interface TickResult {
@@ -105,7 +115,11 @@ export class Lanes {
     if (!occurrence) return null
     const ctx = await this.context(loaded, occurrence, now)
     const outcome = await loaded.type.onReply({ ...ctx, reply })
-    if (outcome.snoozeUntil) await this.snooze(task, occurrence, outcome.snoozeUntil, reply, now)
+    await this.apply(task, outcome, now)
+    if (outcome.complete) await this.complete(task, input.userId, now)
+    else if (outcome.snoozeUntil) {
+      await this.snooze(task, occurrence, outcome.snoozeUntil, reply, now)
+    }
     return outcome
   }
 
@@ -142,12 +156,41 @@ export class Lanes {
       owner: loaded.owner,
       recipients: loaded.recipients,
       config: loaded.task.config,
+      state: loaded.task.state,
       now,
+      ports: this.d.fetch ? { fetch: this.d.fetch } : {},
       history: {
         events: await this.d.store.listEvents(occurrence.id),
         replies: await this.d.store.listReplies(loaded.task.id),
+        series: await this.d.store.listSeries(loaded.task.id, { limit: SERIES_IN_CONTEXT }),
       },
     }
+  }
+
+  /** Stores what the outcome carries for the task: new state, series points. */
+  private async apply(task: Task, outcome: Outcome, now: Date): Promise<void> {
+    const { store } = this.d
+    if (outcome.state !== undefined) {
+      await store.updateTask(task.id, { state: outcome.state, at: now.toISOString() })
+    }
+    for (const point of outcome.series ?? []) {
+      await store.addSeriesPoint({
+        taskId: task.id,
+        at: point.at ?? now.toISOString(),
+        value: point.value,
+        unit: point.unit ?? null,
+        note: point.note ?? null,
+      })
+    }
+  }
+
+  /** The type said the task is finished: no more occurrences, status done, on record. */
+  private async complete(task: Task, actorId: string | null, now: Date): Promise<void> {
+    const { store } = this.d
+    const at = now.toISOString()
+    await store.deleteQueuedOccurrences(task.id)
+    await store.updateTask(task.id, { status: "done", at })
+    await store.addTaskEvent({ taskId: task.id, actorId, kind: "completed", detail: "", at })
   }
 
   /** True on success, false on failure, null when the executor was unavailable (item requeued). */
@@ -169,6 +212,7 @@ export class Lanes {
     try {
       const ctx = await this.context(loaded, occurrence, now)
       const { outcome, costUsd } = await this.execute(loaded.type, ctx, occurrence)
+      await this.apply(task, outcome, clock.now())
       if (outcome.notify) {
         await deliver(
           store,
@@ -185,7 +229,8 @@ export class Lanes {
         summary: outcome.summary ?? null,
         costUsd,
       })
-      await materialize(store, task, loaded.owner, clock.now())
+      if (outcome.complete) await this.complete(task, null, clock.now())
+      else await this.next(task, loaded.owner)
       return true
     } catch (err) {
       if (err instanceof ExecutorUnavailableError) {
@@ -193,8 +238,16 @@ export class Lanes {
         await store.updateOccurrence(occurrence.id, { status: "queued" })
         return null
       }
-      return this.fail(occurrence, err instanceof Error ? err.message : String(err))
+      await this.fail(occurrence, err instanceof Error ? err.message : String(err))
+      await this.next(task, loaded.owner)
+      return false
     }
+  }
+
+  /** The schedule's next occurrence, from the task as it now is (a run may have ended it). */
+  private async next(task: Task, owner: User): Promise<void> {
+    const current = await this.d.store.getTask(task.id)
+    if (current) await materialize(this.d.store, current, owner, this.d.clock.now())
   }
 
   private async execute(

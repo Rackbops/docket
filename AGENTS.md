@@ -23,7 +23,9 @@ style, test). Merges land as squash commits titled `<subject> (#N)`.
 - **No platform code.** `docket-core` imports no Hono, discord.js, sqlite, fetch or Discord
   types. Anything that talks to the outside world is a port (`Store`, `Clock`, `Identity`,
   `Notifier`, `Executor`, `Memory`, `Fetch`) with an in-memory fake in the tests; the adapter
-  lives in the host.
+  lives in the host. A type reaches a port only through `RunContext.ports` (today `fetch`),
+  never by importing a platform module; string work on what a port returns (price extraction)
+  is fine, a DOM or HTTP library is not.
 - **The model is never called from here.** Execute-lane types produce a `Job` (a `claude -p`
   call as data) and consume a `JobResult`; the runner executes it. There is no API-key path
   anywhere in the plan and none may be added here.

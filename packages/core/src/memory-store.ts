@@ -5,6 +5,7 @@ import type {
   Occurrence,
   OccurrenceEvent,
   Reply,
+  SeriesPoint,
   Task,
   TaskEvent,
   TaskRecipient,
@@ -15,11 +16,13 @@ import type {
   NewEvent,
   NewOccurrence,
   NewReply,
+  NewSeriesPoint,
   NewTask,
   NewTaskEvent,
   NewUser,
   OccurrenceFilter,
   OccurrencePatch,
+  SeriesFilter,
   Store,
   TaskFilter,
   TaskPatch,
@@ -39,6 +42,7 @@ export class MemoryStore implements Store {
   private readonly events: OccurrenceEvent[] = []
   private readonly taskEvents: TaskEvent[] = []
   private readonly replies: Reply[] = []
+  private readonly series: SeriesPoint[] = []
   private seq = 0
 
   private id(prefix: string): string {
@@ -100,6 +104,7 @@ export class MemoryStore implements Store {
       type: input.type,
       title: input.title,
       config: MemoryStore.copy(input.config),
+      state: MemoryStore.copy(input.state ?? null),
       schedule: MemoryStore.copy(input.schedule),
       lane: input.lane,
       capabilities: [...input.capabilities],
@@ -129,6 +134,7 @@ export class MemoryStore implements Store {
     const next: Task = { ...cur, updatedAt: patch.at }
     if (patch.title !== undefined) next.title = patch.title
     if (patch.config !== undefined) next.config = MemoryStore.copy(patch.config)
+    if (patch.state !== undefined) next.state = MemoryStore.copy(patch.state)
     if (patch.schedule !== undefined) next.schedule = MemoryStore.copy(patch.schedule)
     if (patch.capabilities !== undefined) next.capabilities = [...patch.capabilities]
     if (patch.status !== undefined) next.status = patch.status
@@ -294,5 +300,27 @@ export class MemoryStore implements Store {
 
   async listReplies(taskId: string): Promise<Reply[]> {
     return this.replies.filter((r) => r.taskId === taskId).map((r) => MemoryStore.copy(r))
+  }
+
+  async addSeriesPoint(input: NewSeriesPoint): Promise<SeriesPoint> {
+    const point: SeriesPoint = {
+      id: this.id("s"),
+      taskId: input.taskId,
+      at: input.at,
+      value: input.value,
+      unit: input.unit ?? null,
+      note: input.note ?? null,
+    }
+    this.series.push(point)
+    return MemoryStore.copy(point)
+  }
+
+  async listSeries(taskId: string, filter: SeriesFilter = {}): Promise<SeriesPoint[]> {
+    const points = this.series
+      .filter((p) => p.taskId === taskId)
+      .filter((p) => filter.since === undefined || p.at >= filter.since)
+      .sort((a, b) => a.at.localeCompare(b.at) || a.id.localeCompare(b.id))
+    const kept = filter.limit === undefined ? points : points.slice(-filter.limit)
+    return kept.map((p) => MemoryStore.copy(p))
   }
 }
