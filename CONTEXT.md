@@ -44,7 +44,16 @@ each package as a module (`just core test`, `just types build`).
 - One-time setup on npmjs.com, per package: a trusted publisher for organization `Rackbops`,
   repository `docket`, workflow `publish.yml`, environment blank. A trusted publisher can only be
   added to a package that already exists, so the **first** publish of each name uses the
-  `NPM_TOKEN` break-glass (set the repo secret, tag, then remove the secret).
+  `NPM_TOKEN` break-glass (set the repo secret, tag, then remove the secret). That token must
+  be a granular access token with Read and write on **All packages** (or the `rackbops`
+  organization scope): one limited to selected existing packages cannot create a new name, and
+  npm answers the publish with a bare 404 "not found or no permission" (seen 2026-09-27 on
+  0.0.1). Bypass 2FA must be on for CI to use it. npm has announced it is restricting such
+  tokens for direct publishing, so if a future first publish fails on 2FA rather than 404, publish
+  that first version from a logged-in terminal instead (`pnpm publish` in each package folder,
+  core before types), then add the trusted publishers.
+- A tag can also be created from the GitHub release page (`/releases/new?tag=vX.Y.Z&target=main`)
+  when a local push is not at hand; it triggers `publish.yml` the same way.
 - Verify a tarball before the first release: `cd packages/types && pnpm pack` and check that the
   packed `package.json` carries a real version for `@rackbops/docket-core`, not `workspace:^`.
 
