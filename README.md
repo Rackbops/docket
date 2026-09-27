@@ -16,9 +16,15 @@ Lepid-Labs/city-hall#4.
 
 ## Status
 
-Scaffold ([#1](https://github.com/Rackbops/docket/issues/1)): the workspace, the build, the tests
-and the publish path, with one real export per package. The domain lands per
-Lepid-Labs/city-hall#7.
+- **0.0.1** -- the scaffold ([#1](https://github.com/Rackbops/docket/issues/1)): the workspace,
+  the build, the tests and the publish path.
+- **Reminder slice** (Lepid-Labs/city-hall#7, the library half): the model behind the Store
+  port, `once` and `calendar` schedules with zone-correct arithmetic, the two lanes, idempotent
+  delivery, authorized reads, the decline rule, the capability enum, the task-type contract, the
+  in-memory store, and the `reminder` type. city-hall's adapters (SQLite, usr, the Discord bot)
+  are the other half and live there.
+- Next: renewal and price (#11), findings into recall (E7), the execute lane against the runner
+  (E8).
 
 ## Use
 
