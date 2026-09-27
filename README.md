@@ -8,11 +8,13 @@ one version, one tag:
 | [`@rackbops/docket-core`](packages/core) | the domain, the scheduler, the two lanes, the task-type contract and the **ports** a host implements: Store, Clock, Identity, Notifier, Executor, Memory, Fetch |
 | [`@rackbops/docket-types`](packages/types) | the six task types: reminder, renewal, price, research, scout, wantlist |
 
-docket is a **library**, never a service: it imports no Hono, discord.js, sqlite or fetch. A
-host supplies the adapters. The first host is [Lepid-Labs/city-hall](https://github.com/Lepid-Labs/city-hall),
-the Rackbops Clerk bot; the model runs happen in [Rackbops/docket-runner](https://github.com/Rackbops/docket-runner).
-The plan of record is Rackbops/Tooling, `research/city-hall-task-tracker.md`; the epic is
-Lepid-Labs/city-hall#4.
+docket is a **library**, never a service: it imports no Hono, discord.js, sqlite or fetch, and it
+never calls a model. A host supplies the adapters and the surfaces. The first host is
+[Lepid-Labs/city-hall](https://github.com/Lepid-Labs/city-hall), whose bot is Rackbops Clerk, built
+on discord-ai; the model runs happen in [Rackbops/docket-runner](https://github.com/Rackbops/docket-runner),
+through the Claude Code CLI on roshne's subscription, never an API key. The plan of record is
+Rackbops/Tooling, `research/city-hall-task-tracker.md` (section 0 is the goal in one page); the
+epic is Lepid-Labs/city-hall#4.
 
 ## Status
 

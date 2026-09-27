@@ -1,9 +1,11 @@
 # docket -- Agent Instructions
 
-Tracker core library for the Rackbops Clerk: `@rackbops/docket-core` (domain, scheduler, lanes,
-task-type contract, ports) and `@rackbops/docket-types` (the six task types). The plan of record
-is Rackbops/Tooling `research/city-hall-task-tracker.md` (section 5 is the architecture); the
-epic is Lepid-Labs/city-hall#4; this repo's own scaffold is #1.
+The core of the task tracker for roshne and friends on Discord: `@rackbops/docket-core` (domain,
+scheduler, lanes, task-type contract, ports) and `@rackbops/docket-types` (the six task types).
+Lepid-Labs/city-hall is the host, Rackbops/docket-runner runs the model calls, and the bot is
+Rackbops Clerk, built on discord-ai. The plan of record is Rackbops/Tooling
+`research/city-hall-task-tracker.md` (section 0 is the goal in one page, section 5 the
+architecture); the epic is Lepid-Labs/city-hall#4; this repo's own scaffold is #1.
 
 My personal global instructions govern *how I work* -- the review gate, escalation, git and
 shipping, tool routing, shell choice. Claude Code loads them from `~/.claude/CLAUDE.md`; Codex
@@ -27,8 +29,19 @@ style, test). Merges land as squash commits titled `<subject> (#N)`.
   never by importing a platform module; string work on what a port returns (price extraction)
   is fine, a DOM or HTTP library is not.
 - **The model is never called from here.** Execute-lane types produce a `Job` (a `claude -p`
-  call as data) and consume a `JobResult`; the runner executes it. There is no API-key path
-  anywhere in the plan and none may be added here.
+  call as data) and consume a `JobResult`; the runner executes it. Every model call the tracker
+  makes runs through the Claude Code CLI on roshne's subscription, in the runner on roshne's own
+  host, never through an API key (plan 5.12): the host holds no Claude credential, and neither
+  does this library. There is no API-key path anywhere in the plan and none may be added here;
+  `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN` and `ANTHROPIC_BASE_URL` appear in this repo only
+  in sentences that forbid them, never in code, config, tests or CI.
+- **Two lanes, so a reminder never waits on a model** (plan 5.3). The notify lane ticks every
+  minute and never waits on a model; the execute lane runs model Jobs through the runner.
+- **Nothing behind the tier-2 wall** (plan 1.3, 5.6). The grantable capability set holds tier 0
+  (observe and notify, always on) and tier 1 (writes inside our own systems, granted per type by
+  an admin, every use logged) only. Tier 2 -- anything external or irreversible: buy, bid, mail a
+  third party, act on an outside account -- has no name in this library and gets none until its
+  own design pass.
 - **One version for both packages**, bumped together (`just version`), published together on a
   `v*` tag. `docket-types` depends on `docket-core` with `workspace:^`.
 
