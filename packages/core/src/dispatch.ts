@@ -221,6 +221,7 @@ export class Lanes {
           [loaded.owner, ...loaded.recipients],
           outcome.notify,
           () => clock.now(),
+          { ownerId: loaded.owner.id },
         )
       }
       await store.updateOccurrence(occurrence.id, {

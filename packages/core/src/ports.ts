@@ -51,6 +51,17 @@ export interface OutgoingMessage {
    * `decision` whose payload is `{ choice }`.
    */
   decisions?: string[]
+  /**
+   * What a reply to this message answers. The dispatcher sets it on every delivery; the
+   * Notifier encodes it into each button with `encodeReplyRef`, so a press routes back.
+   */
+  ref?: MessageRef
+}
+
+/** The task a message is about, and the occurrence when it is about one run. */
+export interface MessageRef {
+  taskId: string
+  occurrenceId: string | null
 }
 
 /** Sends to a user, never to a channel, at tier 0 (plan 5.5). */

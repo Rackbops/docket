@@ -23,7 +23,33 @@ export async function deliveredTo(store: Store, occurrenceId: string): Promise<S
   )
 }
 
-/** Sends `message` to every target not yet delivered to, recording each send as it happens. */
+export interface DeliverOptions {
+  /**
+   * The task's owner. Every other target is a recipient, and a recipient's copy carries the
+   * opt-out the consent rule promises on every message (plan 5.5).
+   */
+  ownerId?: string
+}
+
+/** The copy one target receives: the reply reference, and the opt-out for a recipient. */
+export function messageFor(
+  message: OutgoingMessage,
+  occurrence: Occurrence,
+  target: User,
+  options: DeliverOptions = {},
+): OutgoingMessage {
+  const ref = { taskId: occurrence.taskId, occurrenceId: occurrence.id }
+  const recipient = options.ownerId !== undefined && target.id !== options.ownerId
+  const actions = message.actions ?? []
+  if (!recipient || actions.includes("opt_out")) return { ...message, ref }
+  return { ...message, actions: [...actions, "opt_out"], ref }
+}
+
+/**
+ * Sends `message` to every target not yet delivered to, recording each send as it happens.
+ * Each copy carries the occurrence as its reply reference; with `ownerId`, recipients' copies
+ * also carry the opt-out.
+ */
 export async function deliver(
   store: Store,
   notifier: Notifier,
@@ -31,6 +57,7 @@ export async function deliver(
   targets: readonly User[],
   message: OutgoingMessage,
   now: () => Date,
+  options: DeliverOptions = {},
 ): Promise<DeliveryReport> {
   const done = await deliveredTo(store, occurrence.id)
   const report: DeliveryReport = { sent: [], skipped: [] }
@@ -39,7 +66,10 @@ export async function deliver(
       report.skipped.push(target.id)
       continue
     }
-    const { messageId } = await notifier.sendDm(target.id, message)
+    const { messageId } = await notifier.sendDm(
+      target.id,
+      messageFor(message, occurrence, target, options),
+    )
     await store.addEvent({
       occurrenceId: occurrence.id,
       agent: NOTIFIER,

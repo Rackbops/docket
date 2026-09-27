@@ -31,6 +31,11 @@ epic is Lepid-Labs/city-hall#4.
   Fetch port reaching plain-code types, and the `renewal` and `price` types with structured
   price extraction. city-hall's half (the SQLite series table, the Fetch adapter, `/renewal`
   and `/price`) lives there.
+- **The bot's words** (Lepid-Labs/city-hall#8, the library half): parsing a person's "when",
+  schedules in words, the consent DM and registration disclosure, the `/tasks` list, reply
+  references that route a button press back as a reply, the opt-out on every recipient's copy,
+  and `STORE_CONTRACT` for a host's Store. city-hall's half (the commands, the Discord Notifier
+  on discord-ai's buttons) lives there.
 - Next: findings into recall (E7), the execute lane against the runner (E8).
 
 ## Use
