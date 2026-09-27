@@ -1,20 +1,24 @@
 /**
- * @rackbops/docket-core -- the tracker's domain, scheduler, task-type contract and ports.
+ * @rackbops/docket-core -- the tracker's domain, scheduler, lanes, task-type contract and ports.
  *
- * This is the scaffold (Rackbops/docket#1): one real export so the workspace, the build, the
- * tests and the publish path can be proven end to end. The domain lands per
- * Lepid-Labs/city-hall#7. Design: Rackbops/Tooling, research/city-hall-task-tracker.md, section 5.
+ * Design: Rackbops/Tooling, research/city-hall-task-tracker.md, section 5. Epic:
+ * Lepid-Labs/city-hall#4; this slice is city-hall#7. Nothing here starts a process, opens a port,
+ * holds a credential or calls a model: a host implements the ports and gets a tracker.
  */
 
-/**
- * The two drains a task type runs on (plan section 5.3). The notify lane ticks every minute and
- * never waits on a model; the execute lane runs model Jobs, serially, through the runner.
- */
-export const LANES = ["notify", "execute"] as const
-
-export type Lane = (typeof LANES)[number]
-
-/** True when `value` names a lane. Narrows a string read from storage or the wire. */
-export function isLane(value: string): value is Lane {
-  return (LANES as readonly string[]).includes(value)
-}
+export * from "./authz.js"
+export * from "./capabilities.js"
+export * from "./consent.js"
+export * from "./contract.js"
+export * from "./dedupe.js"
+export * from "./delivery.js"
+export * from "./dispatch.js"
+export * from "./job.js"
+export * from "./lanes.js"
+export * from "./memory-store.js"
+export * from "./model.js"
+export * from "./ports.js"
+export * from "./schedule.js"
+export * from "./scheduler.js"
+export * from "./tasks.js"
+export * from "./zoned.js"

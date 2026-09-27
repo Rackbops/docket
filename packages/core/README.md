@@ -1,13 +1,30 @@
 # @rackbops/docket-core
 
-The tracker's domain, scheduler, task-type contract and ports, with no platform code: no Hono,
-no discord.js, no sqlite, no fetch. A host (Lepid-Labs/city-hall is the first) supplies the
-adapters behind the ports.
+The tracker's domain, scheduler, two lanes, task-type contract and ports, with no platform code:
+no Hono, no discord.js, no sqlite, no fetch. A host (Lepid-Labs/city-hall is the first) supplies
+the adapters behind the ports and gets a tracker. Design: Rackbops/Tooling,
+`research/city-hall-task-tracker.md`, section 5; this slice is Lepid-Labs/city-hall#7.
 
-Today this package is the scaffold: it exports the two lanes and nothing else. The domain lands
-per Lepid-Labs/city-hall#7. Design: Rackbops/Tooling, `research/city-hall-task-tracker.md`,
-section 5.
+| Module | What it holds |
+|---|---|
+| `model` | the records: users, tasks, occurrences, events, task history, recipients, blocks, replies |
+| `ports` | `Store`, `Clock`, `Identity`, `Notifier`, `Executor`, `Memory`, `Fetch`, and the Store's input shapes |
+| `memory-store` | the Store in memory: the reference semantics and the test fake |
+| `schedule`, `zoned` | `once` and `calendar` schedules, `nextDue`, zone-aware wall-clock arithmetic on Intl alone |
+| `scheduler`, `dedupe`, `tasks` | one upcoming occurrence per task through its dedupe key; cancel-and-replace on edit; `createTask` |
+| `dispatch`, `delivery` | the notify and execute lanes, idempotent DM delivery, crash recovery, replies and snooze |
+| `authz`, `consent` | every read takes an identity; invitations, accept, the decline rule, opt-out, admin lifts |
+| `contract`, `capabilities`, `job` | `TaskType`, `defineTaskType`, the grantable capability enum, the `JobSpec` and `JobResult` a runner speaks |
 
 ```ts
-import { LANES, isLane, type Lane } from "@rackbops/docket-core"
+import { createTask, Lanes, MemoryStore } from "@rackbops/docket-core"
+import { TASK_TYPES } from "@rackbops/docket-types"
+
+const store = new MemoryStore()
+const lanes = new Lanes({ store, clock: { now: () => new Date() }, types: TASK_TYPES, notifier })
+await lanes.recover()
+setInterval(() => lanes.tickNotify(), 60_000)
 ```
+
+A host replaces `MemoryStore` with its own Store, supplies a `Notifier` that DMs a user, and an
+`Executor` that hands Jobs to the runner. The core never calls a model and holds no credential.
