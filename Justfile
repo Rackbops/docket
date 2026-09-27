@@ -37,7 +37,7 @@ test:
 # Set the one shared version on every package (no commit, no tag); then commit and tag v<version>
 version version:
     pnpm -r exec npm version {{version}} --no-git-tag-version
-    @echo "now: git commit -am 'chore(release): v{{version}}' && git tag v{{version}} && git push --follow-tags"
+    @echo "now: git commit -am 'chore(release): v{{version}}' && git tag -a v{{version}} -m 'v{{version}}' && git push --follow-tags"
 
 # Remove build artifacts and node_modules
 clean:
