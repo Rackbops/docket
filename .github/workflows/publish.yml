@@ -4,6 +4,16 @@ on:
   push:
     tags:
       - "v*"
+  # Re-run the publish for a tag whose first run failed (a trusted publisher
+  # fixed on npmjs.com after the fact, a registry hiccup) without moving the
+  # tag: the run checks out the tag, verifies every package's version against
+  # it, and skips packages the registry already has at that version.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "existing v* tag to publish"
+        required: true
+        type: string
 
 # Public npm publish of every workspace package, in dependency order. The DEFAULT
 # path is OIDC trusted publishing -- no long-lived token: GitHub mints a short-lived
@@ -36,15 +46,20 @@ permissions:
   id-token: write
 
 concurrency:
-  group: publish-${{ github.ref }}
+  group: publish-${{ github.event.inputs.tag || github.ref }}
   cancel-in-progress: false
 
 jobs:
   publish:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    env:
+      # The tag being published: the pushed tag, or the one a dispatch names.
+      RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
       - uses: pnpm/action-setup@v6
       # No registry-url / scope here -- see the header comment: setting
       # registry-url writes an empty _authToken into .npmrc and breaks OIDC.
@@ -133,9 +148,10 @@ jobs:
           # code doesn't actually carry -- so every package's version is
           # checked against the tag before publishing starts on the next
           # step, not interleaved with it.
+          case "${RELEASE_TAG}" in v*) ;; *) echo "::error::'${RELEASE_TAG}' is not a v* tag"; exit 1 ;; esac
           while IFS=$'\t' read -r name version path; do
-            if [ "v${version}" != "${GITHUB_REF_NAME}" ]; then
-              echo "Tag ${GITHUB_REF_NAME} does not match ${path}/package.json's version (v${version}) -- refusing to publish." >&2
+            if [ "v${version}" != "${RELEASE_TAG}" ]; then
+              echo "Tag ${RELEASE_TAG} does not match ${path}/package.json's version (v${version}) -- refusing to publish." >&2
               exit 1
             fi
           done < /tmp/publishable-packages.tsv
@@ -161,9 +177,14 @@ jobs:
             tgz="$(ls "$dest"/*.tgz)"
             # Capture output so an auth failure can be reframed to the actual
             # cause for the mode preflight chose (npm reports every auth problem
-            # as a bare ENEEDAUTH/E401/E404 -- npm/cli#9088).
-            if ! out="$(npm publish "$tgz" --access public 2>&1)"; then
-              printf '%s\n' "${out}" >&2
+            # as a bare ENEEDAUTH/E401/E404 -- npm/cli#9088). Verbose logging is
+            # on because npm reports the OIDC exchange's outcome -- the registry's
+            # own reason when a trusted publisher does not match -- at that level
+            # and nowhere else (npm/cli lib/utils/oidc.js); the "oidc" lines are
+            # surfaced below, the rest of the verbosity stays in the captured output.
+            if ! out="$(npm publish "$tgz" --access public --loglevel=verbose 2>&1)"; then
+              printf '%s\n' "${out}" | grep -E 'oidc' >&2 || echo "npm logged no oidc lines: the exchange was not attempted (no id-token, or a token was configured)" >&2
+              printf '%s\n' "${out}" | grep -Ev '^npm (http|verb|sill|verbose|silly) ' | tail -n 40 >&2
               if printf '%s' "${out}" | grep -Eq 'ENEEDAUTH|E401|E404|need auth|Unable to authenticate'; then
                 if [ "${PUBLISH_AUTH_MODE:-oidc}" = "token" ]; then
                   echo "::error::${name}@${version} failed to authenticate with NPM_TOKEN -- the token is expired, malformed, or lacks publish rights to ${name}. Rotate the secret or unset it to use OIDC."
@@ -173,5 +194,5 @@ jobs:
               fi
               exit 1
             fi
-            printf '%s\n' "${out}"
+            printf '%s\n' "${out}" | grep -E 'oidc|^\+ ' || printf '%s\n' "${out}" | tail -n 5
           done < /tmp/publishable-packages.tsv
