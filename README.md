@@ -23,8 +23,13 @@ Lepid-Labs/city-hall#4.
   delivery, authorized reads, the decline rule, the capability enum, the task-type contract, the
   in-memory store, and the `reminder` type. city-hall's adapters (SQLite, usr, the Discord bot)
   are the other half and live there.
-- Next: renewal and price (#11), findings into recall (E7), the execute lane against the runner
-  (E8).
+- **Renewal and price slice** (Lepid-Labs/city-hall#11, the library half): `poll` and `period`
+  schedules, type state on the task, the series (prices seen, amounts paid) behind the same
+  authorized reads, outcomes that complete a task, a failed run that keeps its schedule, the
+  Fetch port reaching plain-code types, and the `renewal` and `price` types with structured
+  price extraction. city-hall's half (the SQLite series table, the Fetch adapter, `/renewal`
+  and `/price`) lives there.
+- Next: findings into recall (E7), the execute lane against the runner (E8).
 
 ## Use
 

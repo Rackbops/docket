@@ -1,8 +1,8 @@
 import { type Capability, unknownCapabilities } from "./capabilities.js"
 import type { JobResult, JobSpec } from "./job.js"
 import { isLane, type Lane } from "./lanes.js"
-import type { Occurrence, OccurrenceEvent, Reply, Task, User } from "./model.js"
-import type { Finding, OutgoingMessage } from "./ports.js"
+import type { Occurrence, OccurrenceEvent, Reply, SeriesPoint, Task, User } from "./model.js"
+import type { Fetch, Finding, OutgoingMessage } from "./ports.js"
 import { isScheduleKind, type ScheduleKind } from "./schedule.js"
 
 /**
@@ -12,6 +12,12 @@ import { isScheduleKind, type ScheduleKind } from "./schedule.js"
  * JobResult in, findings and notifications out) and never calls a model itself.
  */
 
+/** The ports a type may use directly; the host decides which exist (plan 5.1). */
+export interface TypePorts {
+  /** Plain HTTP reads, for the plain-code types. Absent when the host configured none. */
+  fetch?: Fetch
+}
+
 export interface RunContext<Config = unknown> {
   task: Task
   occurrence: Occurrence
@@ -19,10 +25,15 @@ export interface RunContext<Config = unknown> {
   /** Recipients who accepted, in addition to the owner. */
   recipients: User[]
   config: Config
+  /** What the type's last `Outcome.state` said; null until it said anything. */
+  state: unknown
   now: Date
+  ports: TypePorts
   history: {
     events: OccurrenceEvent[]
     replies: Reply[]
+    /** The task's most recent series points, oldest first. */
+    series: SeriesPoint[]
   }
 }
 
@@ -30,13 +41,25 @@ export interface ReplyContext<Config = unknown> extends RunContext<Config> {
   reply: Reply
 }
 
+/** One observation for the task's series; `at` defaults to now. */
+export interface SeriesObservation {
+  value: number
+  unit?: string
+  note?: string
+  at?: string
+}
+
 export interface Outcome {
   /** Sent to the owner and every accepted recipient, idempotently per person. */
   notify?: OutgoingMessage
   /** One line for the occurrence's `summary`. */
   summary?: string
-  /** Type state carried to the next run (persisted with the task's config by the host). */
+  /** Type state carried to the next run; the dispatcher stores it on the task when present. */
   state?: unknown
+  /** Points the dispatcher appends to the task's series, in order. */
+  series?: SeriesObservation[]
+  /** The task is finished: no further occurrences; the dispatcher marks it done. */
+  complete?: boolean
   /** From `onReply`: a snooze creates a new occurrence at this instant. */
   snoozeUntil?: Date
   /** Findings for the owner's memory (E7). */
@@ -47,7 +70,7 @@ export interface IntakeOption {
   name: string
   description: string
   required: boolean
-  kind: "string" | "integer" | "boolean" | "datetime"
+  kind: "string" | "integer" | "number" | "boolean" | "datetime"
 }
 
 /** The slash-command options, and the dialogue's fields (plan 1.4, E10). */

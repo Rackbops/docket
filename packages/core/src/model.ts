@@ -35,6 +35,12 @@ export interface Task {
   title: string
   /** Type-specific configuration; the type's `intake` describes it. */
   config: unknown
+  /**
+   * Type state carried between runs: what a type's `Outcome.state` last returned, null until
+   * then. Kenzen's current-row pattern: the current row lives here, the history in events,
+   * replies and the series (plan 5.2, 5.4).
+   */
+  state: unknown
   schedule: Schedule | null
   lane: Lane
   /** Capabilities granted to this task, a subset of what its type declares. */
@@ -93,6 +99,7 @@ export type TaskEventKind =
   | "block_lifted"
   | "paused"
   | "resumed"
+  | "completed"
   | "archived"
 
 /** The history occurrence events miss: edits, recipients, grants, blocks, pauses (plan 5.2). */
@@ -141,4 +148,19 @@ export interface Reply {
   kind: ReplyKind
   payload: unknown
   at: string
+}
+
+/**
+ * One observation in a task's series (plan 5.2, E6): a price seen, an amount paid. The series
+ * lives in the tracker's own store, never in recall; a type appends through `Outcome.series`.
+ */
+export interface SeriesPoint {
+  id: string
+  taskId: string
+  at: string
+  value: number
+  /** A currency code or other unit, when the value has one. */
+  unit: string | null
+  /** Why it was recorded: `observed`, `kept`, `renewed`, ... */
+  note: string | null
 }

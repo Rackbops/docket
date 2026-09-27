@@ -1,5 +1,15 @@
-import type { Clock, Fetch, FetchResponse, Notifier, OutgoingMessage, User } from "../src/index.js"
-import { MemoryStore } from "../src/index.js"
+import {
+  type Clock,
+  type Fetch,
+  type FetchResponse,
+  Lanes,
+  MemoryStore,
+  type Notifier,
+  type OutgoingMessage,
+  type User,
+} from "@rackbops/docket-core"
+
+import { TASK_TYPES } from "../src/index.js"
 
 /** A clock the test moves by hand. */
 export class FakeClock implements Clock {
@@ -18,20 +28,18 @@ export class FakeClock implements Clock {
 export interface Sent {
   userId: string
   message: OutgoingMessage
-  messageId: string
 }
 
 /** Records every DM instead of sending one. */
 export class FakeNotifier implements Notifier {
   readonly sent: Sent[] = []
   async sendDm(userId: string, message: OutgoingMessage): Promise<{ messageId: string }> {
-    const messageId = `m${this.sent.length + 1}`
-    this.sent.push({ userId, message, messageId })
-    return { messageId }
+    this.sent.push({ userId, message })
+    return { messageId: `m${this.sent.length}` }
   }
 }
 
-/** Serves canned bodies by URL; anything else is a 404. Records every request. */
+/** Serves canned bodies by URL; anything else is a 404. */
 export class FakeFetch implements Fetch {
   readonly requests: string[] = []
   constructor(private readonly pages: Record<string, string | FetchResponse> = {}) {}
@@ -48,45 +56,35 @@ export class FakeFetch implements Fetch {
 
 export const T0 = "2026-03-02T12:00:00.000Z"
 
-export async function people(
-  store: MemoryStore,
-  at = T0,
-): Promise<{ larry: User; moe: User; curly: User; admin: User }> {
-  const zone = "America/New_York"
-  const larry = await store.createUser({
+/** A store, a clock at T0, a notifier, an optional fetch, the shipped types, and one owner. */
+export async function tracker(fetch?: FakeFetch): Promise<{
+  store: MemoryStore
+  clock: FakeClock
+  notifier: FakeNotifier
+  lanes: Lanes
+  owner: User
+}> {
+  const store = new MemoryStore()
+  const clock = new FakeClock(new Date(T0))
+  const notifier = new FakeNotifier()
+  const owner = await store.createUser({
     discordId: "d-larry",
     displayName: "Larry",
-    timeZone: zone,
+    timeZone: "America/New_York",
     preferredHour: 9,
-    at,
+    at: T0,
   })
-  const moe = await store.createUser({
-    discordId: "d-moe",
-    displayName: "Moe",
-    timeZone: zone,
-    preferredHour: 9,
-    at,
+  const lanes = new Lanes({
+    store,
+    clock,
+    types: TASK_TYPES,
+    notifier,
+    executor: null,
+    fetch: fetch ?? null,
   })
-  const curly = await store.createUser({
-    discordId: "d-curly",
-    displayName: "Curly",
-    timeZone: zone,
-    preferredHour: 9,
-    at,
-  })
-  const admin = await store.createUser({
-    discordId: "d-admin",
-    displayName: "Admin",
-    timeZone: zone,
-    preferredHour: 9,
-    admin: true,
-    at,
-  })
-  return { larry, moe, curly, admin }
+  return { store, clock, notifier, lanes, owner }
 }
 
 export function actor(user: User): { userId: string; admin: boolean } {
   return { userId: user.id, admin: user.admin }
 }
-
-export { MemoryStore }
