@@ -4,15 +4,18 @@ import { wallClock, zonedInstant } from "./zoned.js"
 
 /**
  * Budgets (plan sections 5.7 and 5.12). Every model call the tracker makes is charged to the
- * task's owner: one call and the CLI's cost estimate per run, plus recall's extraction calls for
- * a finding, which the host's Memory adapter charges with `charge`. Under the subscription the
+ * task's owner: one call and the CLI's cost estimate per run that reached the model (an auth
+ * failure or a usage limit did not, and charges nobody), plus recall's extraction calls for a
+ * finding, which the host's Memory adapter charges with `charge`. Under the subscription the
  * dollar figures are the CLI's list-price estimate, not a bill, so the call ceilings are the hard
  * count. A day is a day in `BUDGET_ZONE`: at a ceiling a person's execute-lane tasks wait until
  * midnight Eastern, the person gets one DM and the admins are told once.
  *
  * A ceiling is reached when what was spent today is at or above it, checked before each run: a
  * run that starts under a dollar ceiling may end above it, and the next one waits. Reminders,
- * renewals and the price tracker make no model calls and never count.
+ * renewals and the price tracker make no model calls and never count. Ceilings are per person
+ * and global; a per-task ceiling (plan 5.2, 5.7) is not enforced yet -- each Job's
+ * `maxBudgetUsd` caps one run -- but every charge carries its task, so one can be rolled up.
  */
 
 /** Budget days turn over at midnight in this zone (roshne, 2026-09-26, plan 5.7). */
@@ -140,6 +143,7 @@ function hold(
 
 export interface Charge {
   userId: string
+  taskId: string | null
   occurrenceId?: string | null
   source: UsageSource
   calls: number
@@ -151,6 +155,7 @@ export interface Charge {
 export async function charge(store: Store, c: Charge): Promise<Usage> {
   return store.addUsage({
     userId: c.userId,
+    taskId: c.taskId,
     occurrenceId: c.occurrenceId ?? null,
     source: c.source,
     calls: c.calls,
@@ -177,18 +182,29 @@ export function budgetPersonMessage(h: BudgetHold): OutgoingMessage {
 
 /** What the admins are told when a person, or everyone, reaches a ceiling. */
 export function budgetAdminMessage(h: BudgetHold, who: User | null): OutgoingMessage {
-  const whom = h.scope === "global" ? "Everyone together has" : `${who?.displayName ?? who?.id} has`
+  const used = `(${h.used.calls} calls, about ${h.used.usd.toFixed(2)} USD)`
+  if (h.scope === "global") {
+    return {
+      text: [
+        `Everyone together has reached today's limit of ${describeLimit(h)} ${used}.`,
+        "Every task that uses the model waits until midnight Eastern time.",
+      ].join("\n"),
+    }
+  }
+  const name = who?.displayName ?? who?.id ?? "Someone"
   return {
     text: [
-      `${whom} reached today's limit of ${describeLimit(h)} (${h.used.calls} calls, about ${h.used.usd.toFixed(2)} USD).`,
-      "Tasks that use the model wait until midnight Eastern time; an admin can raise the limit.",
+      `${name} has reached today's limit of ${describeLimit(h)} ${used}.`,
+      `${name}'s tasks that use the model wait until midnight Eastern time; an admin can raise ${name}'s limit.`,
     ].join("\n"),
   }
 }
 
 /** What the admins are told once per usage window when the subscription's limit is hit. */
 export function usageLimitAdminMessage(until: Date, parsed: boolean): OutgoingMessage {
-  const when = parsed ? `until ${until.toISOString()}` : `for an hour (no reset time was given)`
+  const when = parsed
+    ? `until ${until.toISOString()}`
+    : "for an hour, then try again (no usable reset time came with it)"
   return {
     text: [
       "The Claude subscription's usage limit was reached.",
@@ -198,9 +214,11 @@ export function usageLimitAdminMessage(until: Date, parsed: boolean): OutgoingMe
 }
 
 /**
- * Sends `message` once for `key`, whatever the restarts: to `user` when given, and to every
- * admin. The key is claimed before sending, so a crash between claim and send loses the notice
- * rather than repeating it.
+ * Sends a notice once for `key`, whatever the restarts: `admins` to every admin, then the
+ * person's own message when one is given (an admin who is that person gets only their own).
+ * Each send is best effort and never throws: a closed DM loses that one copy, not the others.
+ * The key is claimed before sending, so a crash between claim and send loses the notice rather
+ * than repeating it.
  */
 export async function noticeOnce(
   store: Store,
@@ -211,10 +229,17 @@ export async function noticeOnce(
   person?: { user: User; message: OutgoingMessage },
 ): Promise<boolean> {
   if (!(await store.claimNotice(key, now.toISOString()))) return false
-  if (person) await notifier.sendDm(person.user.id, person.message)
+  const sends: Array<[string, OutgoingMessage]> = []
   for (const admin of await store.listUsers({ admin: true })) {
-    if (admin.id === person?.user.id) continue
-    await notifier.sendDm(admin.id, admins)
+    if (admin.id !== person?.user.id) sends.push([admin.id, admins])
+  }
+  if (person) sends.push([person.user.id, person.message])
+  for (const [userId, message] of sends) {
+    try {
+      await notifier.sendDm(userId, message)
+    } catch {
+      // Best effort: one closed DM must not cost anyone else their notice, or the lane its tick.
+    }
   }
   return true
 }

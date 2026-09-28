@@ -363,7 +363,15 @@ export const STORE_CONTRACT: readonly StoreContractCase[] = [
         [u.id, AT, 1],
         [v.id, MID, 5],
       ] as const) {
-        await store.addUsage({ userId, occurrenceId: null, source: "run", calls, costUsd: 0.5, at })
+        await store.addUsage({
+          userId,
+          taskId: null,
+          occurrenceId: null,
+          source: "run",
+          calls,
+          costUsd: 0.5,
+          at,
+        })
       }
       same(
         (await store.listUsage()).map((c) => c.calls),

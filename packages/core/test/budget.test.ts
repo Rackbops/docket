@@ -60,13 +60,21 @@ describe("ceilings", () => {
     // Yesterday's 19 calls do not count today.
     await charge(store, {
       userId: larry.id,
+      taskId: null,
       source: "run",
       calls: 19,
       at: new Date("2026-03-02T04:59:59.000Z"),
     })
-    await charge(store, { userId: larry.id, source: "run", calls: 19, costUsd: 0.1, at: now })
+    await charge(store, {
+      userId: larry.id,
+      taskId: null,
+      source: "run",
+      calls: 19,
+      costUsd: 0.1,
+      at: now,
+    })
     expect(await budgetHold(store, DEFAULT_BUDGET, larry, now)).toBeNull()
-    await charge(store, { userId: larry.id, source: "recall", calls: 1, at: now })
+    await charge(store, { userId: larry.id, taskId: null, source: "recall", calls: 1, at: now })
     expect(await budgetHold(store, DEFAULT_BUDGET, larry, now)).toMatchObject({
       scope: "person",
       limit: "calls",
@@ -135,7 +143,14 @@ describe("the execute lane under budgets", () => {
     expect(await lanes.tickExecute()).toEqual({ ran: 1, failed: 0, skipped: 0 })
     const [occ] = await store.listOccurrences({ taskId: task.id })
     expect(await store.listUsage()).toMatchObject([
-      { userId: larry.id, occurrenceId: occ?.id, source: "run", calls: 1, costUsd: 0.05 },
+      {
+        userId: larry.id,
+        taskId: task.id,
+        occurrenceId: occ?.id,
+        source: "run",
+        calls: 1,
+        costUsd: 0.05,
+      },
     ])
   })
 
@@ -169,8 +184,8 @@ describe("the execute lane under budgets", () => {
       "done",
     ])
     const notices = notifier.sent.filter((s) => s.message.text.includes("limit"))
-    expect(notices.map((s) => s.userId)).toEqual([larry.id, admin.id])
-    expect(notices[0]?.message.text).toContain("1 model calls")
+    expect(notices.map((s) => s.userId)).toEqual([admin.id, larry.id])
+    expect(notices[1]?.message.text).toContain("1 model calls")
 
     // Later the same day: still held, and nobody is told twice.
     clock.set("2026-03-03T04:59:00.000Z")
@@ -191,7 +206,13 @@ describe("the execute lane under budgets", () => {
       [moe, 60],
       [curly, 40],
     ] as const) {
-      await charge(store, { userId: who.id, source: "run", calls: n, at: new Date(T0) })
+      await charge(store, {
+        userId: who.id,
+        taskId: null,
+        source: "run",
+        calls: n,
+        at: new Date(T0),
+      })
     }
     await ask()
     await ask()
@@ -239,6 +260,108 @@ describe("the execute lane under budgets", () => {
     clock.set("2026-03-02T12:59:59.000Z")
     expect(await lanes.tickExecute()).toMatchObject({ ran: 0, skipped: 1 })
     clock.set("2026-03-02T13:00:00.000Z")
+    expect(await lanes.tickExecute()).toMatchObject({ ran: 1 })
+  })
+
+  it("tells the admins even when the person's DMs are closed, and keeps the tick going", async () => {
+    const { executor } = scripted()
+    const store = new MemoryStore()
+    const { larry, moe, admin } = await people(store)
+    const sent: string[] = []
+    const lanes = new Lanes({
+      store,
+      clock: new FakeClock(new Date(T0)),
+      types: { research },
+      notifier: {
+        sendDm: async (userId) => {
+          if (userId === larry.id) throw new Error("closed DMs")
+          sent.push(userId)
+          return { messageId: `m${sent.length}` }
+        },
+      },
+      executor,
+      budget: { ...DEFAULT_BUDGET, person: { usd: null, calls: 0 } },
+    })
+    for (const who of [larry, moe]) {
+      await createTask(
+        store,
+        actor(who),
+        who,
+        { type: research, title: "q", config: {}, schedule: { kind: "once", at: T0 } },
+        new Date(T0),
+      )
+    }
+    expect(await lanes.tickExecute()).toEqual({ ran: 0, failed: 0, skipped: 2 })
+    expect(sent).toEqual([admin.id, admin.id, moe.id])
+  })
+
+  it("keeps a snooze pressed while the run was in flight when the usage limit sends it back", async () => {
+    let lanesRef: Lanes | undefined
+    let occurrenceId = ""
+    let taskId = ""
+    let ownerId = ""
+    const executor: Executor = {
+      run: async (_spec, id) => {
+        await lanesRef?.reply({
+          taskId,
+          occurrenceId: id,
+          userId: ownerId,
+          kind: "snooze",
+          payload: { hours: 1 },
+        })
+        occurrenceId = id
+        return { kind: "usage_limit", detail: "limit", durationMs: 1 }
+      },
+    }
+    const snoozy: TaskType<unknown> = {
+      ...research,
+      onReply: async (ctx) => ({ snoozeUntil: new Date(ctx.now.getTime() + 3_600_000) }),
+    }
+    const store = new MemoryStore()
+    const { larry } = await people(store)
+    const lanes = new Lanes({
+      store,
+      clock: new FakeClock(new Date(T0)),
+      types: { research: snoozy },
+      notifier: new FakeNotifier(),
+      executor,
+    })
+    lanesRef = lanes
+    const { task } = await createTask(
+      store,
+      actor(larry),
+      larry,
+      { type: snoozy, title: "q", config: {}, schedule: { kind: "once", at: T0 } },
+      new Date(T0),
+    )
+    taskId = task.id
+    ownerId = larry.id
+    await lanes.tickExecute()
+    expect((await store.getOccurrence(occurrenceId))?.status).toBe("snoozed")
+    const queued = await store.listOccurrences({ taskId: task.id, status: "queued" })
+    expect(queued.map((o) => o.dedupeKey)).toEqual([`snooze:${occurrenceId}`])
+  })
+
+  it("tells the admins once per window when no reset time comes, and caps a far reset at a day", async () => {
+    const noReset: JobResult = { kind: "usage_limit", detail: "limit", durationMs: 1 }
+    const { executor } = scripted(noReset, noReset, {
+      kind: "usage_limit",
+      detail: "weekly limit",
+      resetsAt: "2027-03-02T12:00:00.000Z",
+      durationMs: 1,
+    })
+    const { clock, notifier, lanes, ask, admin } = await setup(executor)
+    await ask()
+    await lanes.tickExecute() // 12:00, window 1 begins
+    clock.set("2026-03-02T13:00:00.000Z")
+    await lanes.tickExecute() // same five-hour window: no second notice
+    expect(notifier.sent.filter((s) => s.userId === admin.id)).toHaveLength(1)
+    clock.set("2026-03-02T14:00:00.000Z")
+    await lanes.tickExecute() // a reset a year out
+    expect(notifier.sent.at(-1)?.message.text).toContain("until 2027-03-02T12:00:00.000Z")
+    clock.set("2026-03-03T13:59:00.000Z")
+    expect(await lanes.tickExecute()).toMatchObject({ ran: 0, skipped: 1 })
+    clock.set("2026-03-03T14:00:00.000Z")
     expect(await lanes.tickExecute()).toMatchObject({ ran: 1 })
   })
 

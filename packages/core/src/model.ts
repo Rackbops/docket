@@ -179,6 +179,8 @@ export type UsageSource = "run" | "recall"
 export interface Usage {
   id: string
   userId: string
+  /** The task it paid for, so a spend rolls up per task (plan 5.2); null outside any task. */
+  taskId: string | null
   /** The run it paid for, or null for a charge a host records outside a run. */
   occurrenceId: string | null
   source: UsageSource

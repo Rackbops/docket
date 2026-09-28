@@ -49,6 +49,10 @@ const ME = "docket"
 export const SERIES_IN_CONTEXT = 100
 /** How long the execute lane waits after a usage limit whose reset it could not read. */
 export const USAGE_LIMIT_BACKOFF_MS = 3_600_000
+/** The longest the execute lane waits on one usage limit before trying again. */
+export const MAX_USAGE_LIMIT_WAIT_MS = 86_400_000
+/** The subscription's rolling window (plan 5.12), for keying a notice with no reset time. */
+const USAGE_WINDOW_MS = 5 * 3_600_000
 
 export interface LaneDeps {
   store: Store
@@ -93,6 +97,8 @@ class UsageLimitReached extends Error {
   constructor(
     readonly until: Date,
     readonly parsed: boolean,
+    /** Names the usage window, so its notice goes once however often the lane retries. */
+    readonly window: string,
   ) {
     super(`usage limit until ${until.toISOString()}`)
   }
@@ -320,7 +326,9 @@ export class Lanes {
     } catch (err) {
       if (err instanceof ExecutorUnavailableError || err instanceof UsageLimitReached) {
         await this.event(occurrence, "status", `waiting: ${err.message}`)
-        await store.updateOccurrence(occurrence.id, { status: "queued" })
+        // A snooze the owner pressed while the run was in flight stands, as in fail().
+        const snoozed = (await store.getOccurrence(occurrence.id))?.status === "snoozed"
+        if (!snoozed) await store.updateOccurrence(occurrence.id, { status: "queued" })
         if (err instanceof UsageLimitReached) await this.usageLimit(err)
         return "stop"
       }
@@ -360,29 +368,44 @@ export class Lanes {
   private async usageLimit(err: UsageLimitReached): Promise<void> {
     const { store, notifier, clock } = this.d
     this.executeAfter = err.until
-    const key = `usage-limit:${err.until.toISOString()}`
+    const key = `usage-limit:${err.window}`
     await noticeOnce(
       store,
       notifier,
       key,
       clock.now(),
-      usageLimitAdminMessage(err.until, err.parsed),
+      usageLimitAdminMessage(err.parsed ? new Date(err.window) : err.until, err.parsed),
     )
   }
 
-  /** The run's charge to its owner: one call and its estimate. A usage limit charges nobody. */
-  private async chargeRun(occurrence: Occurrence, ownerId: string, result: JobResult) {
+  /**
+   * The run's charge to its owner: one call and its estimate. A usage limit charges nobody and
+   * stops the lane; an auth failure reached no model and charges nobody, and still goes to the
+   * type's `finish` (the runner's auth probe is what catches a dead token, plan 5.12). When the
+   * runner's fetch Jobs arrive (E9) they make no model call and must not be charged here.
+   */
+  private async chargeRun(occurrence: Occurrence, task: Task, result: JobResult) {
     if (result.kind === "usage_limit") {
-      const reset = result.resetsAt ? new Date(result.resetsAt) : null
       const now = this.d.clock.now()
+      const reset = result.resetsAt ? new Date(result.resetsAt) : null
       if (reset && !Number.isNaN(reset.getTime()) && reset > now) {
-        throw new UsageLimitReached(reset, true)
+        // A misread reset a year out must not park the lane until a restart: wait at most a
+        // day, then try once more. The notice stays keyed on the named reset, so it goes once.
+        const until = new Date(Math.min(reset.getTime(), now.getTime() + MAX_USAGE_LIMIT_WAIT_MS))
+        throw new UsageLimitReached(until, true, reset.toISOString())
       }
-      throw new UsageLimitReached(new Date(now.getTime() + USAGE_LIMIT_BACKOFF_MS), false)
+      // No usable reset: back off an hour, and tell the admins once per five-hour window.
+      const window = Math.floor(now.getTime() / USAGE_WINDOW_MS)
+      throw new UsageLimitReached(
+        new Date(now.getTime() + USAGE_LIMIT_BACKOFF_MS),
+        false,
+        `unknown:${window}`,
+      )
     }
     if (result.kind === "auth_failed") return
     await charge(this.d.store, {
-      userId: ownerId,
+      userId: task.ownerId,
+      taskId: task.id,
       occurrenceId: occurrence.id,
       source: "run",
       calls: 1,
@@ -410,7 +433,7 @@ export class Lanes {
     if (!this.d.executor) throw new ExecutorUnavailableError("no executor configured")
     const spec = await type.prepare(ctx)
     const result = await this.d.executor.run(spec, occurrence.id)
-    await this.chargeRun(occurrence, ctx.owner.id, result)
+    await this.chargeRun(occurrence, ctx.task, result)
     const outcome = await type.finish(ctx, result)
     return { outcome, costUsd: result.totalCostUsd ?? null }
   }

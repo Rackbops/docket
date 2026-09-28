@@ -234,6 +234,7 @@ export interface SeriesFilter {
 
 export interface NewUsage {
   userId: string
+  taskId: string | null
   occurrenceId: string | null
   source: UsageSource
   calls: number
