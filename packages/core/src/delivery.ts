@@ -1,4 +1,5 @@
-import type { Occurrence, ReplyKind, User } from "./model.js"
+import { RUN_KINDS } from "./answer.js"
+import type { Occurrence, User } from "./model.js"
 import type { Notifier, OutgoingMessage, Store } from "./ports.js"
 
 /**
@@ -23,12 +24,10 @@ export async function deliveredTo(store: Store, occurrenceId: string): Promise<S
   )
 }
 
-/** What only the owner answers: a run's outcome. Recipients receive only (plan 1.1). */
-const OWNER_ACTIONS: ReadonlySet<ReplyKind> = new Set(["done", "snooze", "decision"])
-
 /**
  * The copy one target receives, with the reply reference. The owner's carries the run's actions
  * and never an opt-out; a recipient's (anyone but `ownerId`) drops what only the owner answers
+ * (`RUN_KINDS`; recipients receive only, plan 1.1)
  * and carries the opt-out the consent rule promises on every message (plan 5.5).
  */
 export function messageFor(
@@ -43,7 +42,7 @@ export function messageFor(
     return { ...message, actions: actions.filter((a) => a !== "opt_out"), ref }
   }
   const { decisions: _owners, ...rest } = message
-  const kept = actions.filter((a) => !OWNER_ACTIONS.has(a) && a !== "opt_out")
+  const kept = actions.filter((a) => !RUN_KINDS.has(a) && a !== "opt_out")
   return { ...rest, actions: [...kept, "opt_out"], ref }
 }
 

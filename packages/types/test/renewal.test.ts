@@ -134,9 +134,21 @@ describe("renewal", () => {
     const later = (await t.store.listOccurrences({ taskId: t.task.id })).find(
       (o) => o.dueAt === "2026-09-26T13:00:00.000Z",
     )
+    // Snoozed again: the chain still leads back to the first run's period.
+    await t.lanes.reply({
+      ...again,
+      kind: "snooze",
+      occurrenceId: later?.id ?? null,
+      payload: { minutes: 24 * 60 },
+    })
+    t.clock.set("2026-09-27T13:00:00.000Z")
+    await t.lanes.tickNotify()
+    const third = (await t.store.listOccurrences({ taskId: t.task.id })).find(
+      (o) => o.dueAt === "2026-09-27T13:00:00.000Z",
+    )
     const kept = await t.lanes.reply({
       ...again,
-      occurrenceId: later?.id ?? null,
+      occurrenceId: third?.id ?? null,
       payload: { choice: "keep" },
     })
     expect(kept?.summary).toBe("keep for 2026-10-01 at 15.99 USD")

@@ -98,10 +98,11 @@ export class Lanes {
   /**
    * Routes a reply to the task: consent replies here, the rest to the type. A run's done, snooze
    * or decision is the owner's, once per run (`runRefusal`); anything else throws
-   * `ReplyRefusedError` and stores nothing. Text is stored and routed to the type whoever sends
-   * it; no type acts on text today. "Once" holds when the host handles one task's replies one
+   * `ReplyRefusedError` and stores nothing. Text is stored whoever sends it -- the host gates who
+   * may reply -- and routed to the type when the task is active and the reply names a run; no
+   * type acts on text today. "Once" holds when the host handles one task's replies one
    * at a time; two truly concurrent answers can both pass (a snooze still queues one run). A run
-   * reply names its run: a host's `/task done <task>` picks the task's latest fired run.
+   * reply names its run, so a host's `/task done <task>` has to pick one (the latest fired).
    */
   async reply(input: ReplyInput): Promise<Outcome | null> {
     const { store } = this.d
@@ -187,6 +188,7 @@ export class Lanes {
   private async originalDueAt(occurrence: Occurrence): Promise<string | null> {
     let current = occurrence
     let found: string | null = null
+    // Bounded, so a store that ever handed back a cycle cannot hang a run.
     for (let hops = 0; hops < 100 && current.dedupeKey.startsWith(SNOOZE_PREFIX); hops++) {
       const from = await this.d.store.getOccurrence(current.dedupeKey.slice(SNOOZE_PREFIX.length))
       if (!from) break
