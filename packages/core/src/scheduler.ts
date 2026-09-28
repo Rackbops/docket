@@ -1,4 +1,4 @@
-import { scheduledKey } from "./dedupe.js"
+import { SNOOZE_PREFIX, scheduledKey } from "./dedupe.js"
 import type { Occurrence, Task, User } from "./model.js"
 import type { Store } from "./ports.js"
 import { nextDue, type Schedule, scheduleProblems } from "./schedule.js"
@@ -25,7 +25,8 @@ export function isLate(occurrence: Occurrence, now: Date): boolean {
 
 /**
  * Creates the task's next occurrence if it has none pending. Returns it, or null when the task is
- * not active, has no schedule, already has a pending occurrence, or is never due again.
+ * not active, has no schedule, already has a pending scheduled occurrence (a snooze's run does
+ * not count), or is never due again.
  */
 export async function materialize(
   store: Store,
@@ -35,7 +36,10 @@ export async function materialize(
 ): Promise<Occurrence | null> {
   if (task.status !== "active" || !task.schedule) return null
   const pending = await store.listOccurrences({ taskId: task.id })
-  if (pending.some((o) => o.status === "queued" || o.status === "running")) return null
+  // A snooze's run re-asks an earlier one; it never stands in for the next scheduled run, so a
+  // snooze longer than the period drops none of them.
+  const scheduled = pending.filter((o) => !o.dedupeKey.startsWith(SNOOZE_PREFIX))
+  if (scheduled.some((o) => o.status === "queued" || o.status === "running")) return null
   const after = firstDueAfter(task.schedule, pending.length === 0, now)
   const due = nextDue(task.schedule, after, {
     zone: owner.timeZone,

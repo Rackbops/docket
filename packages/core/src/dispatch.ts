@@ -323,8 +323,10 @@ export class Lanes {
 
   private async fail(occurrence: Occurrence, message: string): Promise<false> {
     await this.event(occurrence, "error", message)
+    // A snooze the owner pressed while the rest were being sent stands, as in runOne.
+    const snoozed = (await this.d.store.getOccurrence(occurrence.id))?.status === "snoozed"
     await this.d.store.updateOccurrence(occurrence.id, {
-      status: "failed",
+      status: snoozed ? "snoozed" : "failed",
       finishedAt: this.d.clock.now().toISOString(),
       error: message,
     })
