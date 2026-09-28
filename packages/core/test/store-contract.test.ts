@@ -18,4 +18,23 @@ describe("the Store contract, on MemoryStore", () => {
     const dedupe = STORE_CONTRACT.find((c) => c.name.includes("dedupe key"))
     await expect(dedupe?.run(broken)).rejects.toThrow(StoreContractError)
   })
+
+  it("fails a store that never finds a block, which would switch off the decline rule", async () => {
+    const leaky = new MemoryStore()
+    const broken: Store = Object.assign(Object.create(leaky), { listBlocks: async () => [] })
+    const blocks = STORE_CONTRACT.find((c) => c.name.startsWith("blocks"))
+    await expect(blocks?.run(broken)).rejects.toThrow(StoreContractError)
+  })
+
+  it("fails a store whose ids carry a dot", async () => {
+    const leaky = new MemoryStore()
+    const broken: Store = Object.assign(Object.create(leaky), {
+      createTask: async (input: Parameters<Store["createTask"]>[0]) => ({
+        ...(await leaky.createTask(input)),
+        id: "t.1",
+      }),
+    })
+    const ids = STORE_CONTRACT.find((c) => c.name.startsWith("ids"))
+    await expect(ids?.run(broken)).rejects.toThrow(StoreContractError)
+  })
 })

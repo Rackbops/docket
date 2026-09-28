@@ -26,7 +26,8 @@ function name(user: User): string {
 }
 
 /**
- * The one consent DM an invited person gets (plan 5.5): who, what, how often in their own zone,
+ * The one consent DM an invited person gets (plan 5.5): who, what, how often (see
+ * `describeSchedule` for how the owner's times read in another zone),
  * that they only receive, that they can stop, and who else can see it. Accept and decline route
  * back through the task-level reference.
  */
@@ -79,8 +80,9 @@ export function formatTaskList(entries: readonly TaskListEntry[], viewer: User, 
   return entries
     .map(({ task, next, from }) => {
       const when = next ? `next ${formatInstant(next.dueAt, viewer.timeZone, now)}` : "nothing due"
-      const cadence = task.schedule
-        ? `, ${describeSchedule(task.schedule, from ?? viewer, viewer.timeZone)}`
+      const schedule = task.schedule?.kind === "once" ? null : task.schedule
+      const cadence = schedule
+        ? `, ${describeSchedule(schedule, from ?? viewer, viewer.timeZone, now)}`
         : ""
       const owner = from ? ` (from ${name(from)})` : ""
       return `\`${task.id}\` ${task.title}${owner} -- ${when}${cadence}`

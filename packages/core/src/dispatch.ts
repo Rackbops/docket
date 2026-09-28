@@ -109,6 +109,9 @@ export class Lanes {
       return null
     }
     const reply = await store.addReply({ ...input, at: now.toISOString() })
+    // Kept as history, but a task that is paused, done or archived is not acted on: a snooze
+    // there would queue a run for a task that is over.
+    if (task.status !== "active") return null
     const loaded = await this.load(task)
     if ("error" in loaded || !loaded.type.onReply) return null
     const occurrence = input.occurrenceId ? await store.getOccurrence(input.occurrenceId) : null
@@ -221,7 +224,6 @@ export class Lanes {
           [loaded.owner, ...loaded.recipients],
           outcome.notify,
           () => clock.now(),
-          { ownerId: loaded.owner.id },
         )
       }
       await store.updateOccurrence(occurrence.id, {
