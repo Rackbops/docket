@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pnpm biome check *)",
+      "Bash(pnpm -r run typecheck)",
+      "Bash(pnpm -r run test)",
+      "mcp__github__pull_request_read"
+    ]
+  }
+}
