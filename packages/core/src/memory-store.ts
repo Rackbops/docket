@@ -9,6 +9,7 @@ import type {
   Task,
   TaskEvent,
   TaskRecipient,
+  Usage,
   User,
 } from "./model.js"
 import type {
@@ -19,6 +20,7 @@ import type {
   NewSeriesPoint,
   NewTask,
   NewTaskEvent,
+  NewUsage,
   NewUser,
   OccurrenceFilter,
   OccurrencePatch,
@@ -26,6 +28,8 @@ import type {
   Store,
   TaskFilter,
   TaskPatch,
+  UsageFilter,
+  UserFilter,
   UserPatch,
 } from "./ports.js"
 
@@ -43,6 +47,8 @@ export class MemoryStore implements Store {
   private readonly taskEvents: TaskEvent[] = []
   private readonly replies: Reply[] = []
   private readonly series: SeriesPoint[] = []
+  private readonly usage: Usage[] = []
+  private readonly notices = new Set<string>()
   private seq = 0
 
   private id(prefix: string): string {
@@ -95,6 +101,12 @@ export class MemoryStore implements Store {
     if (patch.admin !== undefined) next.admin = patch.admin
     this.users.set(id, next)
     return MemoryStore.copy(next)
+  }
+
+  async listUsers(filter: UserFilter = {}): Promise<User[]> {
+    return [...this.users.values()]
+      .filter((u) => filter.admin === undefined || u.admin === filter.admin)
+      .map((u) => MemoryStore.copy(u))
   }
 
   async createTask(input: NewTask): Promise<Task> {
@@ -322,5 +334,26 @@ export class MemoryStore implements Store {
       .sort((a, b) => a.at.localeCompare(b.at) || a.id.localeCompare(b.id))
     const kept = filter.limit === undefined ? points : points.slice(-filter.limit)
     return kept.map((p) => MemoryStore.copy(p))
+  }
+
+  async addUsage(input: NewUsage): Promise<Usage> {
+    const usage: Usage = { id: this.id("c"), ...input }
+    this.usage.push(usage)
+    return MemoryStore.copy(usage)
+  }
+
+  async listUsage(filter: UsageFilter = {}): Promise<Usage[]> {
+    return this.usage
+      .filter((c) => filter.userId === undefined || c.userId === filter.userId)
+      .filter((c) => filter.since === undefined || c.at >= filter.since)
+      .filter((c) => filter.before === undefined || c.at < filter.before)
+      .sort((a, b) => a.at.localeCompare(b.at))
+      .map((c) => MemoryStore.copy(c))
+  }
+
+  async claimNotice(key: string, _at: string): Promise<boolean> {
+    if (this.notices.has(key)) return false
+    this.notices.add(key)
+    return true
   }
 }

@@ -16,6 +16,8 @@ import type {
   TaskEventKind,
   TaskRecipient,
   TaskStatus,
+  Usage,
+  UsageSource,
   User,
 } from "./model.js"
 import type { Schedule } from "./schedule.js"
@@ -123,6 +125,10 @@ export interface UserPatch {
   admin?: boolean
 }
 
+export interface UserFilter {
+  admin?: boolean
+}
+
 export interface NewTask {
   ownerId: string
   type: string
@@ -226,6 +232,24 @@ export interface SeriesFilter {
   limit?: number
 }
 
+export interface NewUsage {
+  userId: string
+  taskId: string | null
+  occurrenceId: string | null
+  source: UsageSource
+  calls: number
+  costUsd: number
+  at: string
+}
+
+export interface UsageFilter {
+  userId?: string
+  /** Inclusive: charges at or after this instant. */
+  since?: string
+  /** Exclusive: charges before this instant. */
+  before?: string
+}
+
 /**
  * Persistence. Every method is async so a host may back it with anything; the in-memory
  * `MemoryStore` is the reference for the semantics a host must keep, above all that
@@ -237,6 +261,8 @@ export interface Store {
   findUserBySubject(usrSubject: string): Promise<User | null>
   createUser(user: NewUser): Promise<User>
   updateUser(id: string, patch: UserPatch): Promise<User>
+  /** In creation order. */
+  listUsers(filter?: UserFilter): Promise<User[]>
 
   createTask(task: NewTask): Promise<Task>
   getTask(id: string): Promise<Task | null>
@@ -280,4 +306,14 @@ export interface Store {
   addSeriesPoint(point: NewSeriesPoint): Promise<SeriesPoint>
   /** Oldest first. */
   listSeries(taskId: string, filter?: SeriesFilter): Promise<SeriesPoint[]>
+
+  addUsage(usage: NewUsage): Promise<Usage>
+  /** Oldest first. */
+  listUsage(filter?: UsageFilter): Promise<Usage[]>
+
+  /**
+   * An exactly-once claim (plan 5.5's digest claim, 5.7's one DM): true the first time a key is
+   * claimed, false on every later call with the same key, across restarts.
+   */
+  claimNotice(key: string, at: string): Promise<boolean>
 }

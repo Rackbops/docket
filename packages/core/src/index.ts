@@ -8,6 +8,7 @@
 
 export * from "./answer.js"
 export * from "./authz.js"
+export * from "./budget.js"
 export * from "./capabilities.js"
 export * from "./consent.js"
 export * from "./contract.js"

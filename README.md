@@ -37,6 +37,12 @@ epic is Lepid-Labs/city-hall#4.
   recipients receive, and may reply in text), the opt-out on every recipient's copy,
   and `STORE_CONTRACT` for a host's Store. city-hall's half (the commands, the Discord Notifier
   on discord-ai's buttons) lives there.
+- **Budgets** (plan 5.7 and 5.12, for E7 and E8): each model run charged to its owner, daily
+  ceilings per person and for everyone (calls are the hard count), a person held until midnight
+  Eastern with one DM and the admins told once, and the usage-limit outcome that requeues,
+  charges nobody and waits for the reset. Per-task ceilings are not enforced yet (each Job's
+  `maxBudgetUsd` caps one run), but every charge carries its task. city-hall's half (the SQLite `usage` and notice
+  tables, recall's extraction charged through `charge`, raised ceilings) lives there.
 - Next: findings into recall (E7), the execute lane against the runner (E8).
 
 ## Use

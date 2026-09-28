@@ -1,8 +1,19 @@
 import { ReplyRefusedError, RUN_KINDS, runRefusal } from "./answer.js"
+import {
+  type BudgetPolicy,
+  budgetAdminMessage,
+  budgetHold,
+  budgetPersonMessage,
+  charge,
+  DEFAULT_BUDGET,
+  noticeOnce,
+  usageLimitAdminMessage,
+} from "./budget.js"
 import { optOut, respondToInvite } from "./consent.js"
 import type { Outcome, RunContext, TaskType } from "./contract.js"
 import { SNOOZE_PREFIX, snoozeKey } from "./dedupe.js"
 import { deliver } from "./delivery.js"
+import type { JobResult } from "./job.js"
 import type { Lane } from "./lanes.js"
 import type { Occurrence, Reply, ReplyKind, Task, User } from "./model.js"
 import {
@@ -25,11 +36,23 @@ import { isLate, materialize } from "./scheduler.js"
  * the task, series points are appended, `complete` finishes the task. A failed run still
  * materializes the schedule's next occurrence, so one bad fetch or one closed DM never ends a
  * recurring task on its own.
+ *
+ * The execute lane charges every model run to the task's owner and holds a run whose owner, or
+ * everyone together, has reached a daily ceiling (plan 5.7, `budget.ts`); the item stays queued
+ * and runs after midnight Eastern. A run that hits the subscription's usage limit is the third
+ * outcome (5.12): it is requeued, charged to nobody, the admins are told once per window, and
+ * the lane waits until the reset the CLI named, or an hour.
  */
 
 const ME = "docket"
 /** How many of the task's most recent series points a run sees. */
 export const SERIES_IN_CONTEXT = 100
+/** How long the execute lane waits after a usage limit whose reset it could not read. */
+export const USAGE_LIMIT_BACKOFF_MS = 3_600_000
+/** The longest the execute lane waits on one usage limit before trying again. */
+export const MAX_USAGE_LIMIT_WAIT_MS = 86_400_000
+/** The subscription's rolling window (plan 5.12), for keying a notice with no reset time. */
+const USAGE_WINDOW_MS = 5 * 3_600_000
 
 export interface LaneDeps {
   store: Store
@@ -40,6 +63,8 @@ export interface LaneDeps {
   executor?: Executor | null
   /** Plain HTTP reads for the plain-code types; absent when the host offers none. */
   fetch?: Fetch | null
+  /** Daily ceilings for model runs; `DEFAULT_BUDGET` when absent. */
+  budget?: BudgetPolicy
 }
 
 export interface TickResult {
@@ -64,7 +89,28 @@ interface Loaded {
   recipients: User[]
 }
 
+/** How one item went: run, failed, held for its owner's budget, or the lane must stop. */
+type Verdict = "ran" | "failed" | "held" | "stop"
+
+/** The subscription's usage window is spent (plan 5.12); the lane waits until `until`. */
+class UsageLimitReached extends Error {
+  constructor(
+    readonly until: Date,
+    readonly parsed: boolean,
+    /** Names the usage window, so its notice goes once however often the lane retries. */
+    readonly window: string,
+  ) {
+    super(`usage limit until ${until.toISOString()}`)
+  }
+}
+
 export class Lanes {
+  /**
+   * After a usage limit, the execute lane runs nothing before this instant. In memory: after a
+   * restart the next run meets the limit again and sets it again, which costs one call attempt.
+   */
+  private executeAfter: Date | null = null
+
   constructor(private readonly d: LaneDeps) {}
 
   /** Work left running by a crash goes back to the queue; delivered events keep it from resending. */
@@ -75,7 +121,7 @@ export class Lanes {
   async tickNotify(): Promise<TickResult> {
     const result: TickResult = { ran: 0, failed: 0, skipped: 0 }
     for (const occurrence of await this.due("notify")) {
-      ;(await this.runOne(occurrence)) ? result.ran++ : result.failed++
+      ;(await this.runOne(occurrence)) === "ran" ? result.ran++ : result.failed++
     }
     return result
   }
@@ -83,14 +129,18 @@ export class Lanes {
   async tickExecute(): Promise<TickResult> {
     const due = await this.due("execute")
     if (!this.d.executor) return { ran: 0, failed: 0, skipped: due.length }
+    if (this.executeAfter && this.d.clock.now() < this.executeAfter) {
+      return { ran: 0, failed: 0, skipped: due.length }
+    }
     const result: TickResult = { ran: 0, failed: 0, skipped: 0 }
-    for (const occurrence of due) {
-      const outcome = await this.runOne(occurrence)
-      if (outcome === null) {
-        result.skipped += due.length - result.ran - result.failed
+    for (const [i, occurrence] of due.entries()) {
+      const verdict = await this.runOne(occurrence)
+      if (verdict === "stop") {
+        result.skipped += due.length - i
         break
       }
-      outcome ? result.ran++ : result.failed++
+      if (verdict === "held") result.skipped++
+      else verdict === "ran" ? result.ran++ : result.failed++
     }
     return result
   }
@@ -224,13 +274,21 @@ export class Lanes {
     await store.addTaskEvent({ taskId: task.id, actorId, kind: "completed", detail: "", at })
   }
 
-  /** True on success, false on failure, null when the executor was unavailable (item requeued). */
-  private async runOne(occurrence: Occurrence): Promise<boolean | null> {
+  /**
+   * Runs one due item. `held` and `stop` leave it queued: `held` when its owner is at a ceiling
+   * (the lane goes on to other owners), `stop` when nothing else in the lane can run either --
+   * the executor is unavailable, everyone is at the global ceiling, or the usage limit was hit.
+   */
+  private async runOne(occurrence: Occurrence): Promise<Verdict> {
     const { store, clock } = this.d
     const task = await store.getTask(occurrence.taskId)
     if (!task) return this.fail(occurrence, `no task ${occurrence.taskId}`)
     const loaded = await this.load(task)
     if ("error" in loaded) return this.fail(occurrence, loaded.error)
+    if (loaded.type.lane === "execute") {
+      const held = await this.budgetCheck(loaded.owner)
+      if (held) return held
+    }
     const now = clock.now()
     const late = isLate(occurrence, now)
     await store.updateOccurrence(occurrence.id, {
@@ -264,17 +322,96 @@ export class Lanes {
       })
       if (outcome.complete) await this.complete(task, null, clock.now())
       else await this.next(task, loaded.owner)
-      return true
+      return "ran"
     } catch (err) {
-      if (err instanceof ExecutorUnavailableError) {
+      if (err instanceof ExecutorUnavailableError || err instanceof UsageLimitReached) {
         await this.event(occurrence, "status", `waiting: ${err.message}`)
-        await store.updateOccurrence(occurrence.id, { status: "queued" })
-        return null
+        // A snooze the owner pressed while the run was in flight stands, as in fail().
+        const snoozed = (await store.getOccurrence(occurrence.id))?.status === "snoozed"
+        if (!snoozed) await store.updateOccurrence(occurrence.id, { status: "queued" })
+        if (err instanceof UsageLimitReached) await this.usageLimit(err)
+        return "stop"
       }
       await this.fail(occurrence, err instanceof Error ? err.message : String(err))
       await this.next(task, loaded.owner)
-      return false
+      return "failed"
     }
+  }
+
+  /** `held` or `stop` when a ceiling keeps the owner's run from starting; the notices go once. */
+  private async budgetCheck(owner: User): Promise<Verdict | null> {
+    const { store, notifier, clock } = this.d
+    const now = clock.now()
+    const hold = await budgetHold(store, this.d.budget ?? DEFAULT_BUDGET, owner, now)
+    if (!hold) return null
+    if (hold.scope === "global") {
+      await noticeOnce(
+        store,
+        notifier,
+        `budget:global:${hold.day}`,
+        now,
+        budgetAdminMessage(hold, null),
+      )
+      return "stop"
+    }
+    await noticeOnce(
+      store,
+      notifier,
+      `budget:person:${owner.id}:${hold.day}`,
+      now,
+      budgetAdminMessage(hold, owner),
+      { user: owner, message: budgetPersonMessage(hold) },
+    )
+    return "held"
+  }
+
+  private async usageLimit(err: UsageLimitReached): Promise<void> {
+    const { store, notifier, clock } = this.d
+    this.executeAfter = err.until
+    const key = `usage-limit:${err.window}`
+    await noticeOnce(
+      store,
+      notifier,
+      key,
+      clock.now(),
+      usageLimitAdminMessage(err.parsed ? new Date(err.window) : err.until, err.parsed, err.until),
+    )
+  }
+
+  /**
+   * The run's charge to its owner: one call and its estimate. A usage limit charges nobody and
+   * stops the lane; an auth failure reached no model and charges nobody, and still goes to the
+   * type's `finish` (the runner's auth probe is what catches a dead token, plan 5.12). When the
+   * runner's fetch Jobs arrive (E9) they make no model call and must not be charged here.
+   */
+  private async chargeRun(occurrence: Occurrence, task: Task, result: JobResult) {
+    if (result.kind === "usage_limit") {
+      const now = this.d.clock.now()
+      const reset = result.resetsAt ? new Date(result.resetsAt) : null
+      if (reset && !Number.isNaN(reset.getTime()) && reset > now) {
+        // A misread reset a year out must not park the lane until a restart: wait at most a
+        // day, then try once more. The notice stays keyed on the named reset, so it goes once.
+        const until = new Date(Math.min(reset.getTime(), now.getTime() + MAX_USAGE_LIMIT_WAIT_MS))
+        throw new UsageLimitReached(until, true, reset.toISOString())
+      }
+      // No usable reset: back off an hour, and tell the admins once per five-hour window.
+      const window = Math.floor(now.getTime() / USAGE_WINDOW_MS)
+      throw new UsageLimitReached(
+        new Date(now.getTime() + USAGE_LIMIT_BACKOFF_MS),
+        false,
+        `unknown:${window}`,
+      )
+    }
+    if (result.kind === "auth_failed") return
+    await charge(this.d.store, {
+      userId: task.ownerId,
+      taskId: task.id,
+      occurrenceId: occurrence.id,
+      source: "run",
+      calls: 1,
+      costUsd: result.totalCostUsd ?? null,
+      at: this.d.clock.now(),
+    })
   }
 
   /** The schedule's next occurrence, from the task as it now is (a run may have ended it). */
@@ -296,6 +433,7 @@ export class Lanes {
     if (!this.d.executor) throw new ExecutorUnavailableError("no executor configured")
     const spec = await type.prepare(ctx)
     const result = await this.d.executor.run(spec, occurrence.id)
+    await this.chargeRun(occurrence, ctx.task, result)
     const outcome = await type.finish(ctx, result)
     return { outcome, costUsd: result.totalCostUsd ?? null }
   }
@@ -323,7 +461,7 @@ export class Lanes {
     })
   }
 
-  private async fail(occurrence: Occurrence, message: string): Promise<false> {
+  private async fail(occurrence: Occurrence, message: string): Promise<"failed"> {
     await this.event(occurrence, "error", message)
     // A snooze the owner pressed while the rest were being sent stands, as in runOne.
     const snoozed = (await this.d.store.getOccurrence(occurrence.id))?.status === "snoozed"
@@ -332,7 +470,7 @@ export class Lanes {
       finishedAt: this.d.clock.now().toISOString(),
       error: message,
     })
-    return false
+    return "failed"
   }
 
   private async event(

@@ -167,3 +167,24 @@ export interface SeriesPoint {
   /** Why it was recorded: `observed`, `kept`, `renewed`, ... */
   note: string | null
 }
+
+/** Where a charge came from: a run on the runner, or recall's extraction for a finding. */
+export type UsageSource = "run" | "recall"
+
+/**
+ * One charge against a person's daily budget (plan 5.2 `usage`, 5.7). Model calls only:
+ * reminders, renewals and the price tracker make none and never appear here. `costUsd` is the
+ * CLI's list-price estimate, a proxy under the subscription; `calls` is the hard count (5.12).
+ */
+export interface Usage {
+  id: string
+  userId: string
+  /** The task it paid for, so a spend rolls up per task (plan 5.2); null outside any task. */
+  taskId: string | null
+  /** The run it paid for, or null for a charge a host records outside a run. */
+  occurrenceId: string | null
+  source: UsageSource
+  calls: number
+  costUsd: number
+  at: string
+}
