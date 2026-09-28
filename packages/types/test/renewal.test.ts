@@ -1,4 +1,4 @@
-import { createTask, type PeriodSchedule } from "@rackbops/docket-core"
+import { createTask, type PeriodSchedule, ReplyRefusedError } from "@rackbops/docket-core"
 import { describe, expect, it } from "vitest"
 
 import { decisionOf, renewal } from "../src/index.js"
@@ -122,9 +122,17 @@ describe("renewal", () => {
       payload: { minutes: 30 },
     })
     expect(snoozed?.snoozeUntil?.toISOString()).toBe("2026-09-24T13:30:00.000Z")
+    // The snoozed run is answered; its decision arrives on the run the snooze queued.
+    const again = { taskId: t.task.id, userId: t.owner.id, kind: "decision" as const }
+    await expect(
+      t.lanes.reply({ ...again, occurrenceId: asked?.id ?? null, payload: { choice: "keep" } }),
+    ).rejects.toThrow(ReplyRefusedError)
+    t.clock.set("2026-09-24T13:30:00.000Z")
+    await t.lanes.tickNotify()
+    const [, later] = await t.store.listOccurrences({ taskId: t.task.id })
     const unknown = await t.lanes.reply({
       taskId: t.task.id,
-      occurrenceId: asked?.id ?? null,
+      occurrenceId: later?.id ?? null,
       userId: t.owner.id,
       kind: "decision",
       payload: { choice: "maybe" },

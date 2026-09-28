@@ -97,7 +97,12 @@ describe("parseWhen", () => {
     // A date that has passed this year is next year's; 2/29 is the next leap year's.
     expect(at("3/1")).toBe("2027-03-01T14:00:00.000Z")
     expect(at("2/29")).toBe("2028-02-29T14:00:00.000Z")
+    // The ceiling holds for dates and instants too.
+    expect(error("2999-01-01 9am")).toMatch(/more than 5 years away/)
+    expect(error("9999-12-31T00:00:00Z")).toMatch(/more than 5 years away/)
     // An unknown zone is an error to show, not a throw.
-    expect(error("9am", { zone: "Mars/Base", defaultHour: 9 })).toMatch(/time zone Mars\/Base/)
+    const mars = { zone: "Mars/Base", defaultHour: 9 }
+    expect(error("9am", mars)).toMatch(/time zone Mars\/Base/)
+    expect(error("in 2h", mars)).toBe("2026-03-02T14:00:00.000Z")
   })
 })

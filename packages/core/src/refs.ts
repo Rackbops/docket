@@ -1,3 +1,4 @@
+import { NOT_YOURS, RUN_KINDS, runRefusal } from "./answer.js"
 import type { ReplyInput } from "./dispatch.js"
 import type { ReplyKind } from "./model.js"
 import type { MessageRef, OutgoingMessage, Store } from "./ports.js"
@@ -73,15 +74,12 @@ export function decodeReplyRef(
 
 export type ReplyForRef = { ok: true; input: ReplyInput } | { ok: false; error: string }
 
-/** The kinds that answer a run: the owner's alone (plan 1.1, "they do not act on the task"). */
-const RUN_KINDS: ReadonlySet<ReplyKind> = new Set(["done", "snooze", "decision"])
-
 /**
- * The reply a press stands for, when `userId` may give it: the owner answers a run, once, while
- * the task is active; an invited person accepts or declines; an accepted recipient opts out.
- * Recipients receive only (plan 1.1), so a run's buttons are the owner's. Anything else -- an
- * unknown reference, a task or run that is gone or over, a run already answered, someone else's
- * button -- is an error to show the presser, never a reply.
+ * The reply a press stands for, when `userId` may give it: an invited person accepts or
+ * declines; an accepted recipient opts out; the owner answers a run (`runRefusal`: once, on a
+ * run that reached them, while the task is active). Recipients receive only (plan 1.1). Anything
+ * else -- an unknown reference, a task or run that is gone or over, someone else's button -- is
+ * an error to show the presser, never a reply.
  */
 export async function replyForRef(
   store: Store,
@@ -97,26 +95,18 @@ export async function replyForRef(
   if (ref.scope === "o") {
     const occurrence = await store.getOccurrence(ref.id)
     if (!occurrence) return { ok: false, error: "That run no longer exists." }
-    if (run && occurrence.status !== "done") return { ok: false, error: OVER }
     taskId = occurrence.taskId
     occurrenceId = occurrence.id
   }
   const task = await store.getTask(taskId)
   if (!task) return { ok: false, error: "That task no longer exists." }
-  const mine = (await store.listRecipients(task.id)).find((r) => r.userId === userId)
-  const allowed =
-    ref.kind === "accept" || ref.kind === "decline"
-      ? mine?.state === "invited"
-      : ref.kind === "opt_out"
-        ? mine?.state === "accepted"
-        : task.ownerId === userId
-  if (!allowed) return { ok: false, error: "That button is not yours to press any more." }
   if (run) {
-    if (task.status !== "active") return { ok: false, error: OVER }
-    const answered = (await store.listReplies(task.id)).some(
-      (r) => r.occurrenceId === occurrenceId && RUN_KINDS.has(r.kind),
-    )
-    if (answered) return { ok: false, error: "That run has already been answered." }
+    const refusal = await runRefusal(store, task, occurrenceId, userId)
+    if (refusal) return { ok: false, error: refusal }
+  } else {
+    const mine = (await store.listRecipients(task.id)).find((r) => r.userId === userId)
+    const state = ref.kind === "opt_out" ? "accepted" : "invited"
+    if (mine?.state !== state) return { ok: false, error: NOT_YOURS }
   }
   return {
     ok: true,
@@ -129,8 +119,6 @@ export async function replyForRef(
     },
   }
 }
-
-const OVER = "That run is over; answer the latest message instead."
 
 export interface ReplyButton {
   kind: ButtonReplyKind

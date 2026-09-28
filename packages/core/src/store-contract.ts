@@ -20,6 +20,7 @@ export interface StoreContractCase {
 }
 
 const AT = "2026-03-02T12:00:00.000Z"
+const MID = "2026-03-02T12:30:00.000Z"
 const LATER = "2026-03-02T13:00:00.000Z"
 
 function check(ok: boolean, what: string): asserts ok {
@@ -194,7 +195,7 @@ export const STORE_CONTRACT: readonly StoreContractCase[] = [
       )
       same((await store.listOccurrences({ dueBefore: AT })).length, 2, "dueBefore inclusive")
       const second = await store.createOccurrence({ ...occurrence(t.id, AT, "k4"), at: LATER })
-      const first = await store.createOccurrence(occurrence(t.id, AT, "k5"))
+      const first = await store.createOccurrence({ ...occurrence(t.id, AT, "k5"), at: MID })
       same(
         (await store.listOccurrences({ taskId: t.id, lane: "notify", dueBefore: AT })).map(
           (o) => o.id,
@@ -288,7 +289,7 @@ export const STORE_CONTRACT: readonly StoreContractCase[] = [
         userId: u.id,
         kind: "done",
         payload: null,
-        at: AT,
+        at: LATER,
       })
       const replies = await store.listReplies(t.id)
       same(

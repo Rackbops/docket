@@ -1,6 +1,7 @@
+import { ReplyRefusedError, RUN_KINDS, runRefusal } from "./answer.js"
 import { optOut, respondToInvite } from "./consent.js"
 import type { Outcome, RunContext, TaskType } from "./contract.js"
-import { manualKey } from "./dedupe.js"
+import { snoozeKey } from "./dedupe.js"
 import { deliver } from "./delivery.js"
 import type { Lane } from "./lanes.js"
 import type { Occurrence, Reply, ReplyKind, Task, User } from "./model.js"
@@ -94,7 +95,11 @@ export class Lanes {
     return result
   }
 
-  /** Routes a recipient's reply to the task: consent replies here, the rest to the type. */
+  /**
+   * Routes a reply to the task: consent replies here, the rest to the type. A run's done, snooze
+   * or decision is the owner's, once per run (`runRefusal`); anything else throws
+   * `ReplyRefusedError` and stores nothing. Text from any recipient routes to the type.
+   */
   async reply(input: ReplyInput): Promise<Outcome | null> {
     const { store } = this.d
     const now = this.d.clock.now()
@@ -108,9 +113,12 @@ export class Lanes {
       await optOut(store, task, input.userId, now, input.occurrenceId)
       return null
     }
+    if (RUN_KINDS.has(input.kind)) {
+      const refusal = await runRefusal(store, task, input.occurrenceId, input.userId)
+      if (refusal) throw new ReplyRefusedError(refusal)
+    }
     const reply = await store.addReply({ ...input, at: now.toISOString() })
-    // Kept as history, but a task that is paused, done or archived is not acted on: a snooze
-    // there would queue a run for a task that is over.
+    // A text reply to a paused, done or archived task is kept as history, never acted on.
     if (task.status !== "active") return null
     const loaded = await this.load(task)
     if ("error" in loaded || !loaded.type.onReply) return null
@@ -278,7 +286,6 @@ export class Lanes {
     now: Date,
   ): Promise<void> {
     const { store } = this.d
-    const count = (await store.listOccurrences({ taskId: task.id })).length
     await store.updateOccurrence(occurrence.id, { status: "snoozed" })
     await this.event(
       occurrence,
@@ -289,7 +296,7 @@ export class Lanes {
       taskId: task.id,
       lane: task.lane,
       dueAt: until.toISOString(),
-      dedupeKey: manualKey(task.id, count + 1),
+      dedupeKey: snoozeKey(occurrence.id),
       at: now.toISOString(),
     })
   }

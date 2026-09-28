@@ -29,11 +29,16 @@ function name(user: User): string {
  * The one consent DM an invited person gets (plan 5.5): who, what, how often (see
  * `describeSchedule` for how the owner's times read in another zone),
  * that they only receive, that they can stop, and who else can see it. Accept and decline route
- * back through the task-level reference.
+ * back through the task-level reference. With `now`, a one-off in another year says which.
  */
-export function inviteMessage(task: Task, owner: User, recipient: User): OutgoingMessage {
+export function inviteMessage(
+  task: Task,
+  owner: User,
+  recipient: User,
+  now?: Date,
+): OutgoingMessage {
   const cadence = task.schedule
-    ? `, which runs ${describeSchedule(task.schedule, owner, recipient.timeZone)}`
+    ? `, which runs ${describeSchedule(task.schedule, owner, recipient.timeZone, now)}`
     : ""
   return {
     text: [

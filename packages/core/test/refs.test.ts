@@ -6,12 +6,16 @@ import {
   encodeReplyRef,
   invite,
   Lanes,
+  messageFor,
+  ReplyRefusedError,
   replyButtons,
   replyForRef,
   respondToInvite,
   type TaskType,
 } from "../src/index.js"
 import { actor, FakeClock, FakeNotifier, MemoryStore, people, T0 } from "./helpers.js"
+
+const run = { taskId: "t1", occurrenceId: "o1" }
 
 const reminder: TaskType<{ text: string }> = {
   id: "reminder",
@@ -22,7 +26,9 @@ const reminder: TaskType<{ text: string }> = {
   onReply: async (ctx) =>
     ctx.reply.kind === "done"
       ? { summary: "done" }
-      : { snoozeUntil: new Date(ctx.now.getTime() + 3_600_000) },
+      : ctx.reply.kind === "snooze"
+        ? { snoozeUntil: new Date(ctx.now.getTime() + 3_600_000) }
+        : {},
 }
 
 describe("reply references", () => {
@@ -71,6 +77,30 @@ describe("reply references", () => {
       ref: { taskId: "t1", occurrenceId: "o2" },
     })
     expect(twice.map((b) => b.ref)).toEqual(["d.o.o2", "c.o.o2.keep"])
+  })
+
+  it("gives the owner the run's actions and a recipient only the opt-out", () => {
+    const occurrence = { id: "o1", taskId: "t1" } as Parameters<typeof messageFor>[1]
+    const message = {
+      text: "Renew?",
+      actions: ["decision", "snooze", "text", "opt_out"] as const,
+      decisions: ["keep", "cancel"],
+    }
+    const owner = { id: "u1" } as Parameters<typeof messageFor>[2]
+    const other = { id: "u2" } as Parameters<typeof messageFor>[2]
+    const mine = messageFor({ ...message, actions: [...message.actions] }, occurrence, owner, "u1")
+    expect([mine.actions, mine.decisions, mine.ref]).toEqual([
+      ["decision", "snooze", "text"],
+      ["keep", "cancel"],
+      run,
+    ])
+    const theirs = messageFor(
+      { ...message, actions: [...message.actions] },
+      occurrence,
+      other,
+      "u1",
+    )
+    expect([theirs.actions, theirs.decisions]).toEqual([["text", "opt_out"], undefined])
   })
 })
 
@@ -147,12 +177,56 @@ describe("a press, end to end", () => {
     }
     expect((await store.listOccurrences({ taskId: task.id, status: "queued" })).length).toBe(1)
 
-    // A delivered run of a task that has since finished cannot be answered either.
+    // A run of a task that has since finished cannot be answered either.
     clock.set("2026-03-02T15:00:30.000Z")
     await lanes.tickNotify()
     const latest = replyButtons(notifier.sent[1]?.message ?? { text: "" })[1]?.ref ?? ""
     await store.updateTask(task.id, { status: "done", at: clock.now().toISOString() })
     expect((await replyForRef(store, latest, larry.id)).ok).toBe(false)
+  })
+
+  it("enforces the same rule in Lanes.reply, whatever calls it, and stores nothing refused", async () => {
+    const { store, clock, lanes, task, larry, moe } = await setup()
+    await invite(store, actor(larry), task, moe.id, clock.now())
+    await respondToInvite(store, task, moe.id, "accept", clock.now())
+    clock.set("2026-03-02T14:00:30.000Z")
+    await lanes.tickNotify()
+    const [fired] = await store.listOccurrences({ taskId: task.id })
+    const snooze = { taskId: task.id, occurrenceId: fired?.id ?? null, payload: null }
+    await expect(lanes.reply({ ...snooze, userId: moe.id, kind: "snooze" })).rejects.toThrow(
+      ReplyRefusedError,
+    )
+    await lanes.reply({ ...snooze, userId: larry.id, kind: "snooze" })
+    await expect(lanes.reply({ ...snooze, userId: larry.id, kind: "snooze" })).rejects.toThrow(
+      "That run is over",
+    )
+    expect((await store.listOccurrences({ taskId: task.id, status: "queued" })).length).toBe(1)
+    // A recipient's text still routes; on a paused task it is kept and not acted on.
+    const text = { ...snooze, userId: moe.id, kind: "text" as const, payload: "thanks" }
+    expect(await lanes.reply(text)).toEqual({})
+    await store.updateTask(task.id, { status: "paused", at: clock.now().toISOString() })
+    expect(await lanes.reply(text)).toBeNull()
+    expect((await store.listReplies(task.id)).map((r) => [r.kind, r.userId])).toEqual([
+      ["accept", moe.id],
+      ["snooze", larry.id],
+      ["text", moe.id],
+      ["text", moe.id],
+    ])
+  })
+
+  it("lets the owner answer a run whose delivery to a recipient failed", async () => {
+    const { store, clock, notifier, lanes, task, larry, moe } = await setup()
+    await invite(store, actor(larry), task, moe.id, clock.now())
+    await respondToInvite(store, task, moe.id, "accept", clock.now())
+    const send = notifier.sendDm.bind(notifier)
+    notifier.sendDm = async (userId, message) => {
+      if (userId === moe.id) throw new Error("DMs closed")
+      return send(userId, message)
+    }
+    clock.set("2026-03-02T14:00:30.000Z")
+    expect(await lanes.tickNotify()).toMatchObject({ failed: 1 })
+    const done = replyButtons(notifier.sent[0]?.message ?? { text: "" })[0]?.ref ?? ""
+    expect((await replyForRef(store, done, larry.id)).ok).toBe(true)
   })
 
   it("refuses a run button scoped to a task, and a reference too long for Discord", async () => {

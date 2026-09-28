@@ -116,12 +116,21 @@ function weekday(word: string): number {
   return WEEKDAYS.findIndex((d) => d.startsWith(word))
 }
 
-/** Resolves the person's words to an instant after `now`, or says why it cannot. */
+/**
+ * Resolves the person's words to an instant after `now` and at most five years ahead, or says
+ * why it cannot.
+ */
 export function parseWhen(text: string, now: Date, options: WhenOptions): WhenResult {
+  const result = resolve(text, now, options)
+  if (result.ok && result.at.getTime() - now.getTime() > MAX_AHEAD_MS) {
+    return fail(text, `${text} is more than ${MAX_AHEAD_YEARS} years away.`)
+  }
+  return result
+}
+
+function resolve(text: string, now: Date, options: WhenOptions): WhenResult {
   const words = text.trim().toLowerCase().replace(/\s+/g, " ").replace(/,/g, "")
   if (words === "") return fail(text, "Say when.")
-
-  if (!knownZone(options.zone)) return fail(text, `I don't know the time zone ${options.zone}.`)
 
   if (ISO_RE.test(words)) {
     const [year, month, day] = words.slice(0, 10).split("-").map(Number)
@@ -141,6 +150,8 @@ export function parseWhen(text: string, now: Date, options: WhenOptions): WhenRe
       return fail(text, `${text} is more than ${MAX_AHEAD_YEARS} years away.`)
     return { ok: true, at: new Date(now.getTime() + n * unit) }
   }
+
+  if (!knownZone(options.zone)) return fail(text, `I don't know the time zone ${options.zone}.`)
 
   let dayWord: string | undefined
   let timeWord: string | undefined

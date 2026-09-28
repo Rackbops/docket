@@ -189,7 +189,7 @@ describe("two lanes", () => {
     expect(notifier.sent).toHaveLength(1)
   })
 
-  it("queues a new occurrence when a recipient snoozes", async () => {
+  it("queues a new occurrence when the owner snoozes", async () => {
     const { store, clock, lanes, larry } = await setup()
     const { task } = await createTask(
       store,
@@ -215,7 +215,7 @@ describe("two lanes", () => {
     expect(outcome?.snoozeUntil?.toISOString()).toBe("2026-03-02T13:00:00.000Z")
     const all = await store.listOccurrences({ taskId: task.id })
     expect(all.map((o) => o.status)).toEqual(["snoozed", "queued"])
-    expect(all[1]?.dedupeKey).toBe(`manual:${task.id}:2`)
+    expect(all[1]?.dedupeKey).toBe(`snooze:${all[0]?.id}`)
     expect((await store.listReplies(task.id)).map((r) => r.kind)).toEqual(["snooze"])
   })
 

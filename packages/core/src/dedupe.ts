@@ -10,9 +10,17 @@ export function scheduledKey(taskId: string, dueAt: Date | string): string {
   return `sched:${taskId}:${iso}`
 }
 
-/** An on-demand run, a snooze, or anything a person asked for outside the schedule. */
+/** An on-demand run, or anything else a person asked for outside the schedule. */
 export function manualKey(taskId: string, seq: number): string {
   return `manual:${taskId}:${seq}`
+}
+
+/**
+ * The run a snooze of `occurrenceId` queues: one per snoozed run, so a double-tapped Snooze that
+ * gets past every other check still queues one reminder.
+ */
+export function snoozeKey(occurrenceId: string): string {
+  return `snooze:${occurrenceId}`
 }
 
 /** city-hall's issue-label claim, `(repo, issue, workflow)`, re-homed (plan 5.11). */
