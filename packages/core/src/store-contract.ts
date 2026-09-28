@@ -357,6 +357,7 @@ export const STORE_CONTRACT: readonly StoreContractCase[] = [
     name: "usage lists oldest first; since is inclusive, before exclusive; filters on user",
     async run(store) {
       const u = await owner(store)
+      const t = await task(store, u.id)
       const v = await store.createUser({ discordId: "d2", at: AT })
       for (const [userId, at, calls] of [
         [u.id, LATER, 2],
@@ -365,7 +366,7 @@ export const STORE_CONTRACT: readonly StoreContractCase[] = [
       ] as const) {
         await store.addUsage({
           userId,
-          taskId: null,
+          taskId: userId === u.id ? t.id : null,
           occurrenceId: null,
           source: "run",
           calls,
@@ -389,7 +390,11 @@ export const STORE_CONTRACT: readonly StoreContractCase[] = [
         "since inclusive, before exclusive",
       )
       const [first] = await store.listUsage({ userId: u.id })
-      same([first?.source, first?.costUsd, first?.occurrenceId], ["run", 0.5, null], "fields")
+      same(
+        [first?.source, first?.costUsd, first?.occurrenceId, first?.taskId],
+        ["run", 0.5, null, t.id],
+        "fields",
+      )
     },
   },
   {

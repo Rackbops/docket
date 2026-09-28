@@ -358,7 +358,9 @@ describe("the execute lane under budgets", () => {
     expect(notifier.sent.filter((s) => s.userId === admin.id)).toHaveLength(1)
     clock.set("2026-03-02T14:00:00.000Z")
     await lanes.tickExecute() // a reset a year out
-    expect(notifier.sent.at(-1)?.message.text).toContain("until 2027-03-02T12:00:00.000Z")
+    expect(notifier.sent.at(-1)?.message.text).toContain(
+      "until 2027-03-02T12:00:00.000Z, trying again at 2026-03-03T14:00:00.000Z",
+    )
     clock.set("2026-03-03T13:59:00.000Z")
     expect(await lanes.tickExecute()).toMatchObject({ ran: 0, skipped: 1 })
     clock.set("2026-03-03T14:00:00.000Z")

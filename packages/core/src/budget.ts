@@ -201,9 +201,17 @@ export function budgetAdminMessage(h: BudgetHold, who: User | null): OutgoingMes
 }
 
 /** What the admins are told once per usage window when the subscription's limit is hit. */
-export function usageLimitAdminMessage(until: Date, parsed: boolean): OutgoingMessage {
+export function usageLimitAdminMessage(
+  until: Date,
+  parsed: boolean,
+  retryAt?: Date,
+): OutgoingMessage {
+  const retry =
+    retryAt && retryAt < until
+      ? `, trying again at ${retryAt.toISOString()} in case it was misread`
+      : ""
   const when = parsed
-    ? `until ${until.toISOString()}`
+    ? `until ${until.toISOString()}${retry}`
     : "for an hour, then try again (no usable reset time came with it)"
   return {
     text: [
