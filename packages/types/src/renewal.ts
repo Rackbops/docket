@@ -76,9 +76,12 @@ export function decisionOf(payload: unknown): {
   return { choice: null, amount: null }
 }
 
-/** The period date this occurrence is about: from the schedule, or the due day itself. */
+/**
+ * The period date this occurrence is about: from the schedule, or the due day itself. A snooze's
+ * run is about the period its first run asked about, so it reads that run's due instant.
+ */
 function periodDateOf(ctx: RunContext<RenewalConfig>): string {
-  const due = new Date(ctx.occurrence.dueAt)
+  const due = new Date(ctx.originalDueAt ?? ctx.occurrence.dueAt)
   const zone = ctx.owner.timeZone
   if (ctx.task.schedule?.kind === "period") return periodDate(ctx.task.schedule, due, zone)
   const w = wallClock(due, zone)

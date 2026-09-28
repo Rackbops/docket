@@ -21,6 +21,12 @@ export interface TypePorts {
 export interface RunContext<Config = unknown> {
   task: Task
   occurrence: Occurrence
+  /**
+   * For a run a snooze queued: the due instant of the run it re-asks, following a chain of
+   * snoozes back to the first. A type that reads meaning from the due instant (a renewal's
+   * period date) reads this instead. Absent on any other run.
+   */
+  originalDueAt?: string
   owner: User
   /** Recipients who accepted, in addition to the owner. */
   recipients: User[]
@@ -91,7 +97,7 @@ export interface TaskType<Config = unknown> {
   prepare?(ctx: RunContext<Config>): Promise<JobSpec>
   /** Execute lane: what the model's answer means. */
   finish?(ctx: RunContext<Config>, result: JobResult): Promise<Outcome>
-  /** A recipient replied (done, snooze, decision, text). */
+  /** A reply: done, snooze or decision from the owner (`runRefusal`), text from anyone. */
   onReply?(ctx: ReplyContext<Config>): Promise<Outcome>
   intake?: IntakeSpec
 }

@@ -20,8 +20,10 @@ export function manualKey(taskId: string, seq: number): string {
  * gets past every other check still queues one reminder.
  */
 export function snoozeKey(occurrenceId: string): string {
-  return `snooze:${occurrenceId}`
+  return `${SNOOZE_PREFIX}${occurrenceId}`
 }
+
+export const SNOOZE_PREFIX = "snooze:"
 
 /** city-hall's issue-label claim, `(repo, issue, workflow)`, re-homed (plan 5.11). */
 export function issueKey(repo: string, issue: number, workflow: string): string {

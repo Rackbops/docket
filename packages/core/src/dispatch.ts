@@ -1,7 +1,7 @@
 import { ReplyRefusedError, RUN_KINDS, runRefusal } from "./answer.js"
 import { optOut, respondToInvite } from "./consent.js"
 import type { Outcome, RunContext, TaskType } from "./contract.js"
-import { snoozeKey } from "./dedupe.js"
+import { SNOOZE_PREFIX, snoozeKey } from "./dedupe.js"
 import { deliver } from "./delivery.js"
 import type { Lane } from "./lanes.js"
 import type { Occurrence, Reply, ReplyKind, Task, User } from "./model.js"
@@ -100,7 +100,8 @@ export class Lanes {
    * or decision is the owner's, once per run (`runRefusal`); anything else throws
    * `ReplyRefusedError` and stores nothing. Text is stored and routed to the type whoever sends
    * it; no type acts on text today. "Once" holds when the host handles one task's replies one
-   * at a time; two truly concurrent answers can both pass (a snooze still queues one run).
+   * at a time; two truly concurrent answers can both pass (a snooze still queues one run). A run
+   * reply names its run: a host's `/task done <task>` picks the task's latest fired run.
    */
   async reply(input: ReplyInput): Promise<Outcome | null> {
     const { store } = this.d
@@ -163,9 +164,11 @@ export class Lanes {
     occurrence: Occurrence,
     now: Date,
   ): Promise<RunContext<unknown>> {
+    const originalDueAt = await this.originalDueAt(occurrence)
     return {
       task: loaded.task,
       occurrence,
+      ...(originalDueAt ? { originalDueAt } : {}),
       owner: loaded.owner,
       recipients: loaded.recipients,
       config: loaded.task.config,
@@ -178,6 +181,19 @@ export class Lanes {
         series: await this.d.store.listSeries(loaded.task.id, { limit: SERIES_IN_CONTEXT }),
       },
     }
+  }
+
+  /** The due instant of the run a snooze run re-asks, back through any chain of snoozes. */
+  private async originalDueAt(occurrence: Occurrence): Promise<string | null> {
+    let current = occurrence
+    let found: string | null = null
+    for (let hops = 0; hops < 100 && current.dedupeKey.startsWith(SNOOZE_PREFIX); hops++) {
+      const from = await this.d.store.getOccurrence(current.dedupeKey.slice(SNOOZE_PREFIX.length))
+      if (!from) break
+      found = from.dueAt
+      current = from
+    }
+    return found
   }
 
   /** Stores what the outcome carries for the task: new state, series points. */

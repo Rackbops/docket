@@ -232,10 +232,10 @@ describe("a press, end to end", () => {
   it("refuses a run button scoped to a task, and a reference too long for Discord", async () => {
     const { store, task, larry } = await setup()
     expect((await replyForRef(store, `d.t.${task.id}`, larry.id)).ok).toBe(false)
-    const choice = "x".repeat(100)
+    const choice = "x".repeat(80)
     expect(() =>
       encodeReplyRef({ taskId: "t", occurrenceId: "o", kind: "decision", choice }),
-    ).toThrow(/over 100/)
+    ).toThrow(/over 80/)
   })
 
   it("routes an invitation's accept, and only for the person invited, once", async () => {

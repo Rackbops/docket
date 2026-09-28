@@ -32,7 +32,7 @@ Lepid-Labs/city-hall#4.
 - **The bot's words** (Lepid-Labs/city-hall#8, the library half): parsing a person's "when",
   schedules in words, the consent DM and registration disclosure, the `/tasks` list, reply
   references that route a button press back as a reply (the owner answers a run, once;
-  recipients receive only), the opt-out on every recipient's copy,
+  recipients receive, and may reply in text), the opt-out on every recipient's copy,
   and `STORE_CONTRACT` for a host's Store. city-hall's half (the commands, the Discord Notifier
   on discord-ai's buttons) lives there.
 - Next: findings into recall (E7), the execute lane against the runner (E8).

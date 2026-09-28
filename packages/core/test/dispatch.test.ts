@@ -238,6 +238,33 @@ describe("two lanes", () => {
     ])
   })
 
+  it("queues one run for two snoozes that both got past the checks", async () => {
+    const { store, clock, lanes, larry } = await setup()
+    const { task } = await createTask(
+      store,
+      actor(larry),
+      larry,
+      {
+        type: reminder,
+        title: "dentist",
+        config: { text: "dentist" },
+        schedule: { kind: "once", at: "2026-03-02T12:00:00.000Z" },
+      },
+      clock.now(),
+    )
+    await lanes.tickNotify()
+    const [fired] = await store.listOccurrences({ taskId: task.id })
+    const snooze = {
+      taskId: task.id,
+      occurrenceId: fired?.id ?? null,
+      userId: larry.id,
+      kind: "snooze" as const,
+      payload: null,
+    }
+    await Promise.allSettled([lanes.reply(snooze), lanes.reply(snooze)])
+    expect((await store.listOccurrences({ taskId: task.id, status: "queued" })).length).toBe(1)
+  })
+
   it("keeps a snooze pressed while the run's messages are still going out", async () => {
     const { store, clock, lanes, notifier, larry, moe } = await setup()
     const { task } = await createTask(

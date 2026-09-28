@@ -11,12 +11,13 @@ import type { MessageRef, OutgoingMessage, Store } from "./ports.js"
  *
  * The encoding is `<kind>.<o|t>.<id>[.<choice>]`: `d.o.o17` is "done" on occurrence o17,
  * `a.t.t4` is "accept" on task t4's invitation, `c.o.o17.keep` is the decision "keep". It must
- * fit a Discord custom id (at most 100 characters), so ids are the Store's, as short as it makes
- * them; a Store id must not contain a dot, and an encoding over `MAX_REF_LENGTH` throws.
+ * fit a Discord custom id (at most 100 characters) with the component's own id beside it, so ids
+ * are the Store's, as short as it makes them; a Store id must not contain a dot, and an encoding
+ * over `MAX_REF_LENGTH` throws.
  */
 
-/** Discord's limit on a component's custom id. */
-export const MAX_REF_LENGTH = 100
+/** Discord allows 100 characters per custom id; 20 are left for the component's own id. */
+export const MAX_REF_LENGTH = 80
 
 /** The reply kinds a button can carry; `text` arrives as a message, never a press. */
 export type ButtonReplyKind = Exclude<ReplyKind, "text">
