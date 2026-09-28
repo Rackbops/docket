@@ -330,4 +330,66 @@ export const STORE_CONTRACT: readonly StoreContractCase[] = [
       same((await store.listSeries(t.id))[0]?.unit, null, "unit defaults to null")
     },
   },
+  {
+    name: "users list in creation order and filter on admin",
+    async run(store) {
+      const a = await store.createUser({ discordId: "d1", at: AT })
+      const b = await store.createUser({ discordId: "d2", admin: true, at: AT })
+      const c = await store.createUser({ discordId: "d3", at: AT })
+      same(
+        (await store.listUsers()).map((u) => u.id),
+        [a.id, b.id, c.id],
+        "every user",
+      )
+      same(
+        (await store.listUsers({ admin: true })).map((u) => u.id),
+        [b.id],
+        "admins",
+      )
+      same(
+        (await store.listUsers({ admin: false })).map((u) => u.id),
+        [a.id, c.id],
+        "non-admins",
+      )
+    },
+  },
+  {
+    name: "usage lists oldest first; since is inclusive, before exclusive; filters on user",
+    async run(store) {
+      const u = await owner(store)
+      const v = await store.createUser({ discordId: "d2", at: AT })
+      for (const [userId, at, calls] of [
+        [u.id, LATER, 2],
+        [u.id, AT, 1],
+        [v.id, MID, 5],
+      ] as const) {
+        await store.addUsage({ userId, occurrenceId: null, source: "run", calls, costUsd: 0.5, at })
+      }
+      same(
+        (await store.listUsage()).map((c) => c.calls),
+        [1, 5, 2],
+        "oldest first",
+      )
+      same(
+        (await store.listUsage({ userId: u.id })).map((c) => c.calls),
+        [1, 2],
+        "one user",
+      )
+      same(
+        (await store.listUsage({ since: MID, before: LATER })).map((c) => c.calls),
+        [5],
+        "since inclusive, before exclusive",
+      )
+      const [first] = await store.listUsage({ userId: u.id })
+      same([first?.source, first?.costUsd, first?.occurrenceId], ["run", 0.5, null], "fields")
+    },
+  },
+  {
+    name: "a notice key is claimed once",
+    async run(store) {
+      same(await store.claimNotice("budget:u1:2026-03-02", AT), true, "first claim")
+      same(await store.claimNotice("budget:u1:2026-03-02", LATER), false, "second claim")
+      same(await store.claimNotice("budget:u2:2026-03-02", LATER), true, "another key")
+    },
+  },
 ]

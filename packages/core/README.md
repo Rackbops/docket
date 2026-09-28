@@ -7,7 +7,7 @@ the adapters behind the ports and gets a tracker. Design: Rackbops/Tooling,
 
 | Module | What it holds |
 |---|---|
-| `model` | the records: users, tasks (config and type state), occurrences, events, task history, recipients, blocks, replies, series |
+| `model` | the records: users, tasks (config and type state), occurrences, events, task history, recipients, blocks, replies, series, usage |
 | `ports` | `Store`, `Clock`, `Identity`, `Notifier`, `Executor`, `Memory`, `Fetch`, and the Store's input shapes |
 | `memory-store`, `store-contract` | the Store in memory: the reference semantics and the test fake; `STORE_CONTRACT`, those semantics as cases a host runs against its own Store |
 | `schedule`, `zoned` | `once`, `calendar`, `poll` and `period` schedules, `nextDue`, `periodDate`, zone-aware wall-clock arithmetic on Intl alone |
@@ -15,6 +15,7 @@ the adapters behind the ports and gets a tracker. Design: Rackbops/Tooling,
 | `dispatch`, `delivery` | the notify and execute lanes, idempotent DM delivery, crash recovery, replies and snooze; a type's outcome applied: state stored, series appended, `complete` ends the task |
 | `authz`, `consent` | every read takes an identity, the series included; invitations, accept, the decline rule, opt-out, admin lifts |
 | `when`, `describe`, `messages`, `refs` | what the bot says and hears: a person's "when" (`parseWhen`), cadences and instants in words, the consent DM, the registration disclosure, the `/tasks` list, and buttons whose reply references route a press back as a reply (`replyButtons`, `replyForRef`): a run's done, snooze and decision are the owner's, once per fired run while the task is active (when the host handles a task's replies one at a time), enforced in `Lanes.reply` on every path; a recipient's copy carries the opt-out and no run actions |
+| `budget` | daily ceilings for model runs (plan 5.7, 5.12): `DEFAULT_BUDGET` (2 USD and 20 calls a person, 10 USD and 100 calls in all), days from midnight Eastern, `charge` (a host charges recall's extraction here), `budgetHold`, and the one-time notices; the execute lane charges each run to its owner, holds a person at a ceiling until midnight, stops at the global one, and backs off after a usage limit without charging anyone |
 | `contract`, `capabilities`, `job` | `TaskType`, `defineTaskType`, the grantable capability enum (tier 0 and tier 1 only; tier 2 has no name here), the `JobSpec` and `JobResult` a runner speaks |
 
 ```ts
