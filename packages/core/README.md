@@ -14,7 +14,7 @@ the adapters behind the ports and gets a tracker. Design: Rackbops/Tooling,
 | `scheduler`, `dedupe`, `tasks` | one upcoming occurrence per task through its dedupe key; cancel-and-replace on edit; `createTask` |
 | `dispatch`, `delivery` | the notify and execute lanes, idempotent DM delivery, crash recovery, replies and snooze; a type's outcome applied: state stored, series appended, `complete` ends the task |
 | `authz`, `consent` | every read takes an identity, the series included; invitations, accept, the decline rule, opt-out, admin lifts |
-| `when`, `describe`, `messages`, `refs` | what the bot says and hears: a person's "when" (`parseWhen`), cadences and instants in words, the consent DM, the registration disclosure, the `/tasks` list, and buttons whose reply references route a press back as a reply (`replyButtons`, `replyForRef`): a run's done, snooze and decision are the owner's, once per run while the task is active; a recipient's copy carries only the opt-out |
+| `when`, `describe`, `messages`, `refs` | what the bot says and hears: a person's "when" (`parseWhen`), cadences and instants in words, the consent DM, the registration disclosure, the `/tasks` list, and buttons whose reply references route a press back as a reply (`replyButtons`, `replyForRef`): a run's done, snooze and decision are the owner's, once per fired run while the task is active, enforced in `Lanes.reply` on every path; a recipient's copy carries the opt-out and no run actions |
 | `contract`, `capabilities`, `job` | `TaskType`, `defineTaskType`, the grantable capability enum, the `JobSpec` and `JobResult` a runner speaks |
 
 ```ts

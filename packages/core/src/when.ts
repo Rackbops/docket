@@ -51,7 +51,7 @@ const DAY_TIME_RE = new RegExp(`^(?:on )?(${DAY})(?: (?:at )?(${TIME}))?$`)
 const TIME_DAY_RE = new RegExp(`^(?:at )?(${TIME})(?: (?:on )?(${DAY}))?$`)
 
 const MAX_AHEAD_YEARS = 5
-const MAX_AHEAD_MS = MAX_AHEAD_YEARS * 366 * 86_400_000
+const MAX_AHEAD_MS = MAX_AHEAD_YEARS * 365.25 * 86_400_000
 
 function knownZone(zone: string): boolean {
   try {

@@ -98,7 +98,9 @@ export class Lanes {
   /**
    * Routes a reply to the task: consent replies here, the rest to the type. A run's done, snooze
    * or decision is the owner's, once per run (`runRefusal`); anything else throws
-   * `ReplyRefusedError` and stores nothing. Text from any recipient routes to the type.
+   * `ReplyRefusedError` and stores nothing. Text is stored and routed to the type whoever sends
+   * it; no type acts on text today. "Once" holds when the host handles one task's replies one
+   * at a time; two truly concurrent answers can both pass (a snooze still queues one run).
    */
   async reply(input: ReplyInput): Promise<Outcome | null> {
     const { store } = this.d
@@ -234,8 +236,10 @@ export class Lanes {
           () => clock.now(),
         )
       }
+      // The owner may have snoozed this run while the rest were still being sent; keep that.
+      const snoozed = (await store.getOccurrence(occurrence.id))?.status === "snoozed"
       await store.updateOccurrence(occurrence.id, {
-        status: "done",
+        status: snoozed ? "snoozed" : "done",
         finishedAt: clock.now().toISOString(),
         summary: outcome.summary ?? null,
         costUsd,

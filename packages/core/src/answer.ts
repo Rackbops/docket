@@ -10,7 +10,7 @@ import type { Store } from "./ports.js"
 /** The kinds that answer a run: the owner's alone. `text` is a reply, not an answer. */
 export const RUN_KINDS: ReadonlySet<ReplyKind> = new Set(["done", "snooze", "decision"])
 
-export const NOT_YOURS = "That button is not yours to press any more."
+export const NOT_YOURS = "That is not yours to answer."
 export const OVER = "That run is over; answer the latest message instead."
 
 /** A run reply `Lanes.reply` would not act on; its message is the reason to show. */
@@ -20,10 +20,11 @@ export class ReplyRefusedError extends Error {
 
 /**
  * Why `userId` may not answer `occurrenceId` of `task` with a run kind, or null when they may:
- * the owner, on a run of an active task that is not snoozed and not yet answered. The run's own
- * status is otherwise no bar: the owner's copy goes out first, so a press can land while the
- * rest are still sending or after another recipient's send failed the run, and `/task snooze`
- * may name a run that has not fired yet.
+ * the owner, on a run of an active task that has fired (running, done or failed), is not
+ * snoozed and is not yet answered. A failed or running run still counts: the owner's copy goes
+ * out first, so a press can land while the rest are still sending or after another recipient's
+ * send failed the run. A queued run cannot be answered: snoozing one would hand its scheduled
+ * slot to the snooze and the recurring task would never be materialized again.
  */
 export async function runRefusal(
   store: Store,
@@ -36,6 +37,7 @@ export async function runRefusal(
   const occurrence = await store.getOccurrence(occurrenceId)
   if (!occurrence || occurrence.taskId !== task.id) return "That run no longer exists."
   if (task.status !== "active") return `That task is ${task.status}.`
+  if (occurrence.status === "queued") return "That run has not fired yet."
   if (occurrence.status === "snoozed") return OVER
   const answered = (await store.listReplies(task.id)).some(
     (r) => r.occurrenceId === occurrence.id && RUN_KINDS.has(r.kind),

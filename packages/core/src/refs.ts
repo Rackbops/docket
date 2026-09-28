@@ -77,7 +77,7 @@ export type ReplyForRef = { ok: true; input: ReplyInput } | { ok: false; error: 
 /**
  * The reply a press stands for, when `userId` may give it: an invited person accepts or
  * declines; an accepted recipient opts out; the owner answers a run (`runRefusal`: once, on a
- * run that reached them, while the task is active). Recipients receive only (plan 1.1). Anything
+ * run that has fired, while the task is active). Recipients receive only (plan 1.1). Anything
  * else -- an unknown reference, a task or run that is gone or over, someone else's button -- is
  * an error to show the presser, never a reply.
  */

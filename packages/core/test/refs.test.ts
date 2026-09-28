@@ -141,7 +141,7 @@ describe("a press, end to end", () => {
 
     expect(await replyForRef(store, done, curly.id)).toEqual({
       ok: false,
-      error: "That button is not yours to press any more.",
+      error: "That is not yours to answer.",
     })
     // Moe receives only: the owner's Done is not his to press (plan 1.1).
     expect((await replyForRef(store, done, moe.id)).ok).toBe(false)

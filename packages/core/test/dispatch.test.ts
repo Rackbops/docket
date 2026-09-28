@@ -199,7 +199,7 @@ describe("two lanes", () => {
         type: reminder,
         title: "dentist",
         config: { text: "dentist" },
-        schedule: { kind: "once", at: "2026-03-02T13:00:00.000Z" },
+        schedule: { kind: "once", at: "2026-03-02T12:00:00.000Z" },
       },
       clock.now(),
     )
@@ -217,6 +217,62 @@ describe("two lanes", () => {
     expect(all.map((o) => o.status)).toEqual(["snoozed", "queued"])
     expect(all[1]?.dedupeKey).toBe(`snooze:${all[0]?.id}`)
     expect((await store.listReplies(task.id)).map((r) => r.kind)).toEqual(["snooze"])
+  })
+
+  it("refuses to snooze a run that has not fired, which would end a recurring task", async () => {
+    const { store, lanes, clock, larry } = await setup()
+    const { task } = await createTask(
+      store,
+      actor(larry),
+      larry,
+      { type: reminder, title: "dentist", config: { text: "dentist" }, schedule: daily },
+      clock.now(),
+    )
+    const [queued] = await store.listOccurrences({ taskId: task.id })
+    const snooze = { taskId: task.id, userId: larry.id, kind: "snooze" as const, payload: null }
+    await expect(lanes.reply({ ...snooze, occurrenceId: queued?.id ?? null })).rejects.toThrow(
+      "That run has not fired yet.",
+    )
+    expect((await store.listOccurrences({ taskId: task.id })).map((o) => o.status)).toEqual([
+      "queued",
+    ])
+  })
+
+  it("keeps a snooze pressed while the run's messages are still going out", async () => {
+    const { store, clock, lanes, notifier, larry, moe } = await setup()
+    const { task } = await createTask(
+      store,
+      actor(larry),
+      larry,
+      {
+        type: reminder,
+        title: "dentist",
+        config: { text: "dentist" },
+        schedule: { kind: "once", at: "2026-03-02T12:00:00.000Z" },
+      },
+      clock.now(),
+    )
+    await invite(store, actor(larry), task, moe.id, clock.now())
+    await respondToInvite(store, task, moe.id, "accept", clock.now())
+    const send = notifier.sendDm.bind(notifier)
+    notifier.sendDm = async (userId, message) => {
+      if (userId === moe.id) {
+        const occurrenceId = message.ref?.occurrenceId ?? null
+        await lanes.reply({
+          taskId: task.id,
+          occurrenceId,
+          userId: larry.id,
+          kind: "snooze",
+          payload: null,
+        })
+      }
+      return send(userId, message)
+    }
+    await lanes.tickNotify()
+    expect((await store.listOccurrences({ taskId: task.id })).map((o) => o.status)).toEqual([
+      "snoozed",
+      "queued",
+    ])
   })
 
   it("runs an execute-lane type through the executor and requeues when it is unavailable", async () => {
