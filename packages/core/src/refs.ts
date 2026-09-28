@@ -1,3 +1,4 @@
+import { NOT_YOURS, RUN_KINDS, runRefusal } from "./answer.js"
 import type { ReplyInput } from "./dispatch.js"
 import type { ReplyKind } from "./model.js"
 import type { MessageRef, OutgoingMessage, Store } from "./ports.js"
@@ -10,9 +11,13 @@ import type { MessageRef, OutgoingMessage, Store } from "./ports.js"
  *
  * The encoding is `<kind>.<o|t>.<id>[.<choice>]`: `d.o.o17` is "done" on occurrence o17,
  * `a.t.t4` is "accept" on task t4's invitation, `c.o.o17.keep` is the decision "keep". It must
- * fit a Discord custom id with the component id beside it, so ids are the Store's, as short as
- * it makes them; a Store id must not contain a dot.
+ * fit a Discord custom id (at most 100 characters) with the component's own id beside it, so ids
+ * are the Store's, as short as it makes them; a Store id must not contain a dot, and an encoding
+ * over `MAX_REF_LENGTH` throws.
  */
+
+/** Discord allows 100 characters per custom id; 20 are left for the component's own id. */
+export const MAX_REF_LENGTH = 80
 
 /** The reply kinds a button can carry; `text` arrives as a message, never a press. */
 export type ButtonReplyKind = Exclude<ReplyKind, "text">
@@ -44,9 +49,14 @@ export function encodeReplyRef(ref: ReplyRef): string {
   const [scope, id] = ref.occurrenceId === null ? ["t", ref.taskId] : ["o", ref.occurrenceId]
   if (id.includes(".")) throw new ReplyRefError(`a Store id with a dot cannot be encoded: ${id}`)
   const base = `${CODE[ref.kind]}.${scope}.${id}`
-  if (ref.kind !== "decision") return base
-  if (!ref.choice) throw new ReplyRefError("a decision needs its choice")
-  return `${base}.${ref.choice}`
+  if (ref.kind === "decision" && !ref.choice) {
+    throw new ReplyRefError("a decision needs its choice")
+  }
+  const encoded = ref.kind === "decision" ? `${base}.${ref.choice}` : base
+  if (encoded.length > MAX_REF_LENGTH) {
+    throw new ReplyRefError(`a reference over ${MAX_REF_LENGTH} characters: ${encoded}`)
+  }
+  return encoded
 }
 
 /** The parts of an encoded reference, or null when the string is not one. */
@@ -66,10 +76,11 @@ export function decodeReplyRef(
 export type ReplyForRef = { ok: true; input: ReplyInput } | { ok: false; error: string }
 
 /**
- * The reply a press stands for, when `userId` may give it: the owner or an accepted recipient
- * answers a run; an invited person accepts or declines; a recipient opts out. Anything else --
- * an unknown reference, a task that is gone, someone else's button -- is an error to show the
- * presser, never a reply.
+ * The reply a press stands for, when `userId` may give it: an invited person accepts or
+ * declines; an accepted recipient opts out; the owner answers a run (`runRefusal`: once, on a
+ * run that has fired, while the task is active). Recipients receive only (plan 1.1). Anything
+ * else -- an unknown reference, a task or run that is gone or over, someone else's button -- is
+ * an error to show the presser, never a reply.
  */
 export async function replyForRef(
   store: Store,
@@ -78,6 +89,8 @@ export async function replyForRef(
 ): Promise<ReplyForRef> {
   const ref = decodeReplyRef(encoded)
   if (!ref) return { ok: false, error: "That button is not one of mine." }
+  const run = RUN_KINDS.has(ref.kind)
+  if (run && ref.scope !== "o") return { ok: false, error: "That button is not one of mine." }
   let taskId = ref.id
   let occurrenceId: string | null = null
   if (ref.scope === "o") {
@@ -88,15 +101,14 @@ export async function replyForRef(
   }
   const task = await store.getTask(taskId)
   if (!task) return { ok: false, error: "That task no longer exists." }
-  const mine = (await store.listRecipients(task.id)).find((r) => r.userId === userId)
-  const owner = task.ownerId === userId
-  const allowed =
-    ref.kind === "accept" || ref.kind === "decline"
-      ? mine?.state === "invited"
-      : ref.kind === "opt_out"
-        ? mine?.state === "accepted"
-        : owner || mine?.state === "accepted"
-  if (!allowed) return { ok: false, error: "That button is not yours to press any more." }
+  if (run) {
+    const refusal = await runRefusal(store, task, occurrenceId, userId)
+    if (refusal) return { ok: false, error: refusal }
+  } else {
+    const mine = (await store.listRecipients(task.id)).find((r) => r.userId === userId)
+    const state = ref.kind === "opt_out" ? "accepted" : "invited"
+    if (mine?.state !== state) return { ok: false, error: NOT_YOURS }
+  }
   return {
     ok: true,
     input: {
@@ -127,21 +139,25 @@ const LABELS: Record<Exclude<ButtonReplyKind, "decision">, string> = {
 /**
  * The buttons a message offers, in order, each with its label and encoded reference. Empty when
  * the message has no `ref` (nothing to route a press to). A `decision` becomes one button per
- * choice.
+ * choice. A repeated action or choice is offered once: Discord refuses two components with one
+ * custom id.
  */
 export function replyButtons(message: OutgoingMessage): ReplyButton[] {
   const ref = message.ref
   if (!ref) return []
   const buttons: ReplyButton[] = []
+  const add = (button: ReplyButton) => {
+    if (!buttons.some((b) => b.ref === button.ref)) buttons.push(button)
+  }
   for (const kind of message.actions ?? []) {
     if (kind === "text") continue
     if (kind === "decision") {
       for (const choice of message.decisions ?? []) {
-        buttons.push({ kind, label: choice, ref: encodeReplyRef({ ...ref, kind, choice }) })
+        add({ kind, label: choice, ref: encodeReplyRef({ ...ref, kind, choice }) })
       }
       continue
     }
-    buttons.push({ kind, label: LABELS[kind], ref: encodeReplyRef({ ...ref, kind }) })
+    add({ kind, label: LABELS[kind], ref: encodeReplyRef({ ...ref, kind }) })
   }
   return buttons
 }

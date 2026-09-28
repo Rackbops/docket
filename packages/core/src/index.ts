@@ -6,6 +6,7 @@
  * holds a credential or calls a model: a host implements the ports and gets a tracker.
  */
 
+export * from "./answer.js"
 export * from "./authz.js"
 export * from "./capabilities.js"
 export * from "./consent.js"

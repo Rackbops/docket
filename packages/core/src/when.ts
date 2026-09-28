@@ -50,6 +50,18 @@ const TIME = String.raw`noon|midnight|\d{1,2}(?::\d{2})? ?(?:am|pm)?`
 const DAY_TIME_RE = new RegExp(`^(?:on )?(${DAY})(?: (?:at )?(${TIME}))?$`)
 const TIME_DAY_RE = new RegExp(`^(?:at )?(${TIME})(?: (?:on )?(${DAY}))?$`)
 
+const MAX_AHEAD_YEARS = 5
+const MAX_AHEAD_MS = MAX_AHEAD_YEARS * 365.25 * 86_400_000
+
+function knownZone(zone: string): boolean {
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: zone })
+    return true
+  } catch {
+    return false
+  }
+}
+
 const HINT = `Try "in 2 hours", "9am", "tomorrow 9am", "friday 17:30" or "2026-10-01 9:00".`
 
 interface CalendarDate {
@@ -104,12 +116,26 @@ function weekday(word: string): number {
   return WEEKDAYS.findIndex((d) => d.startsWith(word))
 }
 
-/** Resolves the person's words to an instant after `now`, or says why it cannot. */
+/**
+ * Resolves the person's words to an instant after `now` and at most five years ahead, or says
+ * why it cannot.
+ */
 export function parseWhen(text: string, now: Date, options: WhenOptions): WhenResult {
+  const result = resolve(text, now, options)
+  if (result.ok && result.at.getTime() - now.getTime() > MAX_AHEAD_MS) {
+    return fail(text, `${text} is more than ${MAX_AHEAD_YEARS} years away.`)
+  }
+  return result
+}
+
+function resolve(text: string, now: Date, options: WhenOptions): WhenResult {
   const words = text.trim().toLowerCase().replace(/\s+/g, " ").replace(/,/g, "")
   if (words === "") return fail(text, "Say when.")
 
   if (ISO_RE.test(words)) {
+    const [year, month, day] = words.slice(0, 10).split("-").map(Number)
+    if (!validDate({ year: year ?? 0, month: month ?? 0, day: day ?? 0 }))
+      return fail(text, `${words.slice(0, 10)} is not a date.`)
     const at = new Date(Date.parse(words.toUpperCase()))
     if (Number.isNaN(at.getTime())) return fail(text)
     return at > now ? { ok: true, at } : fail(text, `${text} has already passed.`)
@@ -120,8 +146,12 @@ export function parseWhen(text: string, now: Date, options: WhenOptions): WhenRe
     const n = rel[1] === "a" || rel[1] === "an" ? 1 : Number(rel[1])
     const unit = UNITS[rel[2] ?? ""]
     if (unit === undefined || n < 1) return fail(text)
+    if (n * unit > MAX_AHEAD_MS)
+      return fail(text, `${text} is more than ${MAX_AHEAD_YEARS} years away.`)
     return { ok: true, at: new Date(now.getTime() + n * unit) }
   }
+
+  if (!knownZone(options.zone)) return fail(text, `I don't know the time zone ${options.zone}.`)
 
   let dayWord: string | undefined
   let timeWord: string | undefined
@@ -166,13 +196,18 @@ export function parseWhen(text: string, now: Date, options: WhenOptions): WhenRe
 
   const md = /^(\d{1,2})\/(\d{1,2})$/.exec(dayWord)
   if (md) {
-    const date = { year: today.year, month: Number(md[1]), day: Number(md[2]) }
-    if (!validDate(date) && !validDate({ ...date, year: date.year + 1 })) {
-      return fail(text, `${dayWord} is not a date.`)
+    const month = Number(md[1])
+    const day = Number(md[2])
+    if (month === today.month && day === today.day) {
+      const when = at(today)
+      return when > now ? { ok: true, at: when } : fail(text, `${text} has already passed.`)
     }
-    if (validDate(date) && at(date) > now) return { ok: true, at: at(date) }
-    const next = { ...date, year: date.year + 1 }
-    return validDate(next) ? { ok: true, at: at(next) } : fail(text, `${dayWord} is not a date.`)
+    // The next such date: this year's if it is still ahead, else the first year it exists (2/29).
+    for (let year = today.year; year <= today.year + 4; year++) {
+      const date = { year, month, day }
+      if (validDate(date) && at(date) > now) return { ok: true, at: at(date) }
+    }
+    return fail(text, `${dayWord} is not a date.`)
   }
 
   const wd = weekday(dayWord)

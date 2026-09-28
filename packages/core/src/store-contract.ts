@@ -20,6 +20,7 @@ export interface StoreContractCase {
 }
 
 const AT = "2026-03-02T12:00:00.000Z"
+const MID = "2026-03-02T12:30:00.000Z"
 const LATER = "2026-03-02T13:00:00.000Z"
 
 function check(ok: boolean, what: string): asserts ok {
@@ -54,6 +55,21 @@ function occurrence(taskId: string, dueAt: string, dedupeKey: string, lane = "no
 }
 
 export const STORE_CONTRACT: readonly StoreContractCase[] = [
+  {
+    name: "ids fit a reply reference: none contains a dot",
+    async run(store) {
+      const u = await owner(store)
+      const t = await task(store, u.id)
+      const o = await store.createOccurrence(occurrence(t.id, AT, "k"))
+      for (const [what, id] of [
+        ["user", u.id],
+        ["task", t.id],
+        ["occurrence", o?.id ?? ""],
+      ] as const) {
+        check(id !== "" && !id.includes("."), `${what} id ${JSON.stringify(id)} has a dot`)
+      }
+    },
+  },
   {
     name: "a user is created with defaults and found by Discord id and usr subject",
     async run(store) {
@@ -141,6 +157,11 @@ export const STORE_CONTRACT: readonly StoreContractCase[] = [
         at: AT,
       })
       same([block.liftedBy, block.liftedAt], [null, null], "new block")
+      same(
+        (await store.listBlocks(u.id, r.id)).map((b) => b.id),
+        [block.id],
+        "found by pair",
+      )
       same((await store.listBlocks(r.id, u.id)).length, 0, "pair is directional")
       const lifted = await store.liftBlock(block.id, u.id, LATER)
       same([lifted.liftedBy, lifted.liftedAt], [u.id, LATER], "lifted")
@@ -173,8 +194,17 @@ export const STORE_CONTRACT: readonly StoreContractCase[] = [
         "sorted by dueAt",
       )
       same((await store.listOccurrences({ dueBefore: AT })).length, 2, "dueBefore inclusive")
+      const second = await store.createOccurrence({ ...occurrence(t.id, AT, "k4"), at: LATER })
+      const first = await store.createOccurrence({ ...occurrence(t.id, AT, "k5"), at: MID })
+      same(
+        (await store.listOccurrences({ taskId: t.id, lane: "notify", dueBefore: AT })).map(
+          (o) => o.id,
+        ),
+        [early?.id, first?.id, second?.id],
+        "same dueAt: by creation",
+      )
       await store.updateOccurrence(early?.id ?? "", { status: "done", summary: "ok" })
-      same((await store.listOccurrences({ status: "queued" })).length, 2, "by status")
+      same((await store.listOccurrences({ status: "queued" })).length, 4, "by status")
       same((await store.getOccurrence(early?.id ?? ""))?.summary, "ok", "patched")
     },
   },
@@ -253,7 +283,21 @@ export const STORE_CONTRACT: readonly StoreContractCase[] = [
         payload,
         at: AT,
       })
-      same((await store.listReplies(t.id))[0]?.payload, payload, "payload round-trips")
+      await store.addReply({
+        occurrenceId: null,
+        taskId: t.id,
+        userId: u.id,
+        kind: "done",
+        payload: null,
+        at: LATER,
+      })
+      const replies = await store.listReplies(t.id)
+      same(
+        replies.map((r) => r.kind),
+        ["snooze", "done"],
+        "replies in order",
+      )
+      same(replies[0]?.payload, payload, "payload round-trips")
     },
   },
   {

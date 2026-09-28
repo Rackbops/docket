@@ -63,7 +63,10 @@ export interface Occurrence {
   status: OccurrenceStatus
   /** Set when the run started well after `dueAt` (a missed occurrence fired late). */
   late: boolean
-  /** Per-source identity: `sched:<task>:<due>`, `manual:<task>:<seq>`, `issue:<repo>:<n>:<wf>`. */
+  /**
+   * Per-source identity: `sched:<task>:<due>`, `manual:<task>:<seq>`, `snooze:<occurrence>`,
+   * `issue:<repo>:<n>:<wf>`.
+   */
   dedupeKey: string
   summary: string | null
   costUsd: number | null

@@ -1,6 +1,7 @@
+import { ReplyRefusedError, RUN_KINDS, runRefusal } from "./answer.js"
 import { optOut, respondToInvite } from "./consent.js"
 import type { Outcome, RunContext, TaskType } from "./contract.js"
-import { manualKey } from "./dedupe.js"
+import { SNOOZE_PREFIX, snoozeKey } from "./dedupe.js"
 import { deliver } from "./delivery.js"
 import type { Lane } from "./lanes.js"
 import type { Occurrence, Reply, ReplyKind, Task, User } from "./model.js"
@@ -94,7 +95,15 @@ export class Lanes {
     return result
   }
 
-  /** Routes a recipient's reply to the task: consent replies here, the rest to the type. */
+  /**
+   * Routes a reply to the task: consent replies here, the rest to the type. A run's done, snooze
+   * or decision is the owner's, once per run (`runRefusal`); anything else throws
+   * `ReplyRefusedError` and stores nothing. Text is stored whoever sends it -- the host gates who
+   * may reply -- and routed to the type when the task is active and the reply names a run; no
+   * type acts on text today. "Once" holds when the host handles one task's replies one
+   * at a time; two truly concurrent answers can both pass (a snooze still queues one run). A run
+   * reply names its run, so a host's `/task done <task>` has to pick one (the latest fired).
+   */
   async reply(input: ReplyInput): Promise<Outcome | null> {
     const { store } = this.d
     const now = this.d.clock.now()
@@ -108,7 +117,13 @@ export class Lanes {
       await optOut(store, task, input.userId, now, input.occurrenceId)
       return null
     }
+    if (RUN_KINDS.has(input.kind)) {
+      const refusal = await runRefusal(store, task, input.occurrenceId, input.userId)
+      if (refusal) throw new ReplyRefusedError(refusal)
+    }
     const reply = await store.addReply({ ...input, at: now.toISOString() })
+    // A text reply to a paused, done or archived task is kept as history, never acted on.
+    if (task.status !== "active") return null
     const loaded = await this.load(task)
     if ("error" in loaded || !loaded.type.onReply) return null
     const occurrence = input.occurrenceId ? await store.getOccurrence(input.occurrenceId) : null
@@ -150,9 +165,11 @@ export class Lanes {
     occurrence: Occurrence,
     now: Date,
   ): Promise<RunContext<unknown>> {
+    const originalDueAt = await this.originalDueAt(occurrence)
     return {
       task: loaded.task,
       occurrence,
+      ...(originalDueAt ? { originalDueAt } : {}),
       owner: loaded.owner,
       recipients: loaded.recipients,
       config: loaded.task.config,
@@ -165,6 +182,20 @@ export class Lanes {
         series: await this.d.store.listSeries(loaded.task.id, { limit: SERIES_IN_CONTEXT }),
       },
     }
+  }
+
+  /** The due instant of the run a snooze run re-asks, back through any chain of snoozes. */
+  private async originalDueAt(occurrence: Occurrence): Promise<string | null> {
+    let current = occurrence
+    let found: string | null = null
+    // Bounded, so a store that ever handed back a cycle cannot hang a run.
+    for (let hops = 0; hops < 100 && current.dedupeKey.startsWith(SNOOZE_PREFIX); hops++) {
+      const from = await this.d.store.getOccurrence(current.dedupeKey.slice(SNOOZE_PREFIX.length))
+      if (!from) break
+      found = from.dueAt
+      current = from
+    }
+    return found
   }
 
   /** Stores what the outcome carries for the task: new state, series points. */
@@ -221,11 +252,12 @@ export class Lanes {
           [loaded.owner, ...loaded.recipients],
           outcome.notify,
           () => clock.now(),
-          { ownerId: loaded.owner.id },
         )
       }
+      // The owner may have snoozed this run while the rest were still being sent; keep that.
+      const snoozed = (await store.getOccurrence(occurrence.id))?.status === "snoozed"
       await store.updateOccurrence(occurrence.id, {
-        status: "done",
+        status: snoozed ? "snoozed" : "done",
         finishedAt: clock.now().toISOString(),
         summary: outcome.summary ?? null,
         costUsd,
@@ -276,7 +308,6 @@ export class Lanes {
     now: Date,
   ): Promise<void> {
     const { store } = this.d
-    const count = (await store.listOccurrences({ taskId: task.id })).length
     await store.updateOccurrence(occurrence.id, { status: "snoozed" })
     await this.event(
       occurrence,
@@ -287,15 +318,17 @@ export class Lanes {
       taskId: task.id,
       lane: task.lane,
       dueAt: until.toISOString(),
-      dedupeKey: manualKey(task.id, count + 1),
+      dedupeKey: snoozeKey(occurrence.id),
       at: now.toISOString(),
     })
   }
 
   private async fail(occurrence: Occurrence, message: string): Promise<false> {
     await this.event(occurrence, "error", message)
+    // A snooze the owner pressed while the rest were being sent stands, as in runOne.
+    const snoozed = (await this.d.store.getOccurrence(occurrence.id))?.status === "snoozed"
     await this.d.store.updateOccurrence(occurrence.id, {
-      status: "failed",
+      status: snoozed ? "snoozed" : "failed",
       finishedAt: this.d.clock.now().toISOString(),
       error: message,
     })

@@ -3,8 +3,10 @@ import { wallClock } from "./zoned.js"
 
 /**
  * Schedules and instants in words (plan section 5.5): the consent DM states the cadence, the
- * task list shows what is next, and both read in the person's own zone. English only, and short
- * enough for a Discord line.
+ * task list shows what is next. An instant reads in the viewer's own zone. A recurring
+ * wall-clock time stays the owner's and names that zone when the viewer's differs: the owner's
+ * 9:00 is not one fixed hour elsewhere once the two zones change clocks on different dates.
+ * English only, and short enough for a Discord line.
  */
 
 const WD = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
@@ -51,18 +53,20 @@ export interface ScheduleOwner {
 
 /**
  * The cadence in words: `daily at 9:00`, `every 2 weeks on Mon and Thu at 9:00`, `once, Tue
- * Sep 29, 14:00`. A `once` instant is shown in `viewerZone`; recurring wall-clock times are the
- * owner's, and say so when the viewer's zone is another.
+ * Sep 29, 14:00`. A `once` instant is shown in `viewerZone`, with its year when it differs from
+ * `now`'s; recurring wall-clock times are the owner's, and say so when the viewer's zone is
+ * another.
  */
 export function describeSchedule(
   schedule: Schedule,
   owner: ScheduleOwner,
   viewerZone: string = owner.timeZone,
+  now?: Date,
 ): string {
   const zoneNote = viewerZone === owner.timeZone ? "" : ` (${owner.timeZone} time)`
   switch (schedule.kind) {
     case "once":
-      return `once, ${formatInstant(schedule.at, viewerZone)}`
+      return `once, ${formatInstant(schedule.at, viewerZone, now)}`
     case "calendar": {
       const at = `at ${clockTime(schedule.hour ?? owner.preferredHour, schedule.minute ?? 0)}`
       const start = dateParts(schedule.start)
@@ -86,7 +90,8 @@ export function describeSchedule(
         schedule.every === 1
           ? `every ${schedule.unit}`
           : `every ${schedule.every} ${schedule.unit}s`
-      const lead = schedule.leadDays ? `, ${schedule.leadDays} days ahead` : ""
+      const days = schedule.leadDays === 1 ? "day" : "days"
+      const lead = schedule.leadDays ? `, ${schedule.leadDays} ${days} ahead` : ""
       return `${cadence} from ${schedule.anchor}${lead}`
     }
   }

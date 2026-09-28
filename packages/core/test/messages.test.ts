@@ -56,6 +56,13 @@ describe("the consent DM", () => {
     expect(message.ref).toEqual({ taskId: task.id, occurrenceId: null })
   })
 
+  it("gives a one-off in another year its year when told the time", async () => {
+    const { make, clock, larry, moe } = await setup()
+    const { task } = await make(larry, "Passport", { kind: "once", at: "2027-01-05T14:00:00.000Z" })
+    expect(inviteMessage(task, larry, moe, clock.now()).text).toMatch(/runs once, Tue Jan 5 2027/)
+    expect(inviteMessage(task, larry, moe).text).toMatch(/runs once, Tue Jan 5, 9:00/)
+  })
+
   it("puts the disclosure in the registration reply too", () => {
     const text = registrationText("https://usr.example/r/abc")
     expect(text).toContain("https://usr.example/r/abc")
@@ -75,17 +82,24 @@ describe("the task list", () => {
       start: "2026-03-02",
     })
     await make(larry, "Someday", null)
+    await make(larry, "Dentist", { kind: "once", at: "2026-03-05T15:00:00.000Z" })
     await make(admin, "Admin's own", null)
     await invite(store, actor(moe), shared, larry.id, clock.now())
     await respondToInvite(store, shared, larry.id, "accept", clock.now())
 
     const entries = await taskList(store, actor(larry))
-    expect(entries.map((e) => e.task.title)).toEqual(["Water the plants", "Trash day", "Someday"])
+    expect(entries.map((e) => e.task.title)).toEqual([
+      "Water the plants",
+      "Dentist",
+      "Trash day",
+      "Someday",
+    ])
     expect(formatTaskList(entries, larry, clock.now())).toBe(
       [
         `\`${entries[0]?.task.id}\` Water the plants -- next Mon Mar 2, 9:00, daily at 9:00`,
+        `\`${entries[1]?.task.id}\` Dentist -- next Thu Mar 5, 10:00`,
         `\`${shared.id}\` Trash day (from Moe) -- next Mon Mar 9, 7:00, weekly on Mon at 7:00`,
-        `\`${entries[2]?.task.id}\` Someday -- nothing due`,
+        `\`${entries[3]?.task.id}\` Someday -- nothing due`,
       ].join("\n"),
     )
     expect((await taskList(store, actor(admin))).map((e) => e.task.title)).toEqual(["Admin's own"])

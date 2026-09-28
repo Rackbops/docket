@@ -1,3 +1,4 @@
+import { RUN_KINDS } from "./answer.js"
 import type { Occurrence, User } from "./model.js"
 import type { Notifier, OutgoingMessage, Store } from "./ports.js"
 
@@ -23,32 +24,32 @@ export async function deliveredTo(store: Store, occurrenceId: string): Promise<S
   )
 }
 
-export interface DeliverOptions {
-  /**
-   * The task's owner. Every other target is a recipient, and a recipient's copy carries the
-   * opt-out the consent rule promises on every message (plan 5.5).
-   */
-  ownerId?: string
-}
-
-/** The copy one target receives: the reply reference, and the opt-out for a recipient. */
+/**
+ * The copy one target receives, with the reply reference. The owner's carries the run's actions
+ * and never an opt-out; a recipient's (anyone but `ownerId`) drops what only the owner answers
+ * (`RUN_KINDS`; recipients receive only, plan 1.1)
+ * and carries the opt-out the consent rule promises on every message (plan 5.5).
+ */
 export function messageFor(
   message: OutgoingMessage,
   occurrence: Occurrence,
   target: User,
-  options: DeliverOptions = {},
+  ownerId: string,
 ): OutgoingMessage {
   const ref = { taskId: occurrence.taskId, occurrenceId: occurrence.id }
-  const recipient = options.ownerId !== undefined && target.id !== options.ownerId
   const actions = message.actions ?? []
-  if (!recipient || actions.includes("opt_out")) return { ...message, ref }
-  return { ...message, actions: [...actions, "opt_out"], ref }
+  if (target.id === ownerId) {
+    return { ...message, actions: actions.filter((a) => a !== "opt_out"), ref }
+  }
+  const { decisions: _owners, ...rest } = message
+  const kept = actions.filter((a) => !RUN_KINDS.has(a) && a !== "opt_out")
+  return { ...rest, actions: [...kept, "opt_out"], ref }
 }
 
 /**
  * Sends `message` to every target not yet delivered to, recording each send as it happens.
- * Each copy carries the occurrence as its reply reference; with `ownerId`, recipients' copies
- * also carry the opt-out.
+ * Each copy carries the occurrence as its reply reference; the task's owner, read from the
+ * store, decides which copy is the owner's (`messageFor`), so no caller can leave the opt-out off.
  */
 export async function deliver(
   store: Store,
@@ -57,8 +58,9 @@ export async function deliver(
   targets: readonly User[],
   message: OutgoingMessage,
   now: () => Date,
-  options: DeliverOptions = {},
 ): Promise<DeliveryReport> {
+  const task = await store.getTask(occurrence.taskId)
+  if (!task) throw new Error(`no task ${occurrence.taskId}`)
   const done = await deliveredTo(store, occurrence.id)
   const report: DeliveryReport = { sent: [], skipped: [] }
   for (const target of targets) {
@@ -68,7 +70,7 @@ export async function deliver(
     }
     const { messageId } = await notifier.sendDm(
       target.id,
-      messageFor(message, occurrence, target, options),
+      messageFor(message, occurrence, target, task.ownerId),
     )
     await store.addEvent({
       occurrenceId: occurrence.id,

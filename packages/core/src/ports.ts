@@ -274,6 +274,7 @@ export interface Store {
   addTaskEvent(event: NewTaskEvent): Promise<TaskEvent>
   listTaskEvents(taskId: string): Promise<TaskEvent[]>
   addReply(reply: NewReply): Promise<Reply>
+  /** Oldest first. */
   listReplies(taskId: string): Promise<Reply[]>
 
   addSeriesPoint(point: NewSeriesPoint): Promise<SeriesPoint>

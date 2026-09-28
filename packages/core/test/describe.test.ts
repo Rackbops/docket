@@ -61,5 +61,15 @@ describe("describeSchedule", () => {
         owner,
       ),
     ).toBe("every year from 2026-10-01, 14 days ahead")
+    expect(
+      describeSchedule(
+        { kind: "period", every: 1, unit: "year", anchor: "2026-10-01", leadDays: 1 },
+        owner,
+      ),
+    ).toBe("every year from 2026-10-01, 1 day ahead")
+    const nextYear = { kind: "once", at: "2027-01-05T14:00:00.000Z" } as const
+    expect(
+      describeSchedule(nextYear, owner, owner.timeZone, new Date("2026-09-29T12:00:00Z")),
+    ).toBe("once, Tue Jan 5 2027, 9:00")
   })
 })

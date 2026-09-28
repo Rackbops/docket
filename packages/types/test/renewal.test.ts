@@ -1,4 +1,4 @@
-import { createTask, type PeriodSchedule } from "@rackbops/docket-core"
+import { createTask, type PeriodSchedule, ReplyRefusedError } from "@rackbops/docket-core"
 import { describe, expect, it } from "vitest"
 
 import { decisionOf, renewal } from "../src/index.js"
@@ -109,7 +109,7 @@ describe("renewal", () => {
     expect(t.notifier.sent[1]?.message.text).toContain("in 7 days: 17.99 USD.")
   })
 
-  it("snoozes like a reminder and shrugs at a decision it does not know", async () => {
+  it("snoozes like a reminder, and decides on the snooze's run for the original period", async () => {
     const t = await netflix()
     t.clock.set("2026-09-24T13:00:00.000Z")
     await t.lanes.tickNotify()
@@ -119,9 +119,46 @@ describe("renewal", () => {
       occurrenceId: asked?.id ?? null,
       userId: t.owner.id,
       kind: "snooze",
-      payload: { minutes: 30 },
+      payload: { minutes: 2 * 24 * 60 },
     })
-    expect(snoozed?.snoozeUntil?.toISOString()).toBe("2026-09-24T13:30:00.000Z")
+    expect(snoozed?.snoozeUntil?.toISOString()).toBe("2026-09-26T13:00:00.000Z")
+    // The snoozed run is answered; its decision arrives on the run the snooze queued.
+    const again = { taskId: t.task.id, userId: t.owner.id, kind: "decision" as const }
+    await expect(
+      t.lanes.reply({ ...again, occurrenceId: asked?.id ?? null, payload: { choice: "keep" } }),
+    ).rejects.toThrow(ReplyRefusedError)
+    t.clock.set("2026-09-26T13:00:00.000Z")
+    await t.lanes.tickNotify()
+    // Two days later, still about the 2026-10-01 renewal, not 2026-10-03.
+    expect(t.notifier.sent[1]?.message.text).toMatch(/^Netflix renews on 2026-10-01, in 5 days/)
+    const later = (await t.store.listOccurrences({ taskId: t.task.id })).find(
+      (o) => o.dueAt === "2026-09-26T13:00:00.000Z",
+    )
+    // Snoozed again: the chain still leads back to the first run's period.
+    await t.lanes.reply({
+      ...again,
+      kind: "snooze",
+      occurrenceId: later?.id ?? null,
+      payload: { minutes: 24 * 60 },
+    })
+    t.clock.set("2026-09-27T13:00:00.000Z")
+    await t.lanes.tickNotify()
+    const third = (await t.store.listOccurrences({ taskId: t.task.id })).find(
+      (o) => o.dueAt === "2026-09-27T13:00:00.000Z",
+    )
+    const kept = await t.lanes.reply({
+      ...again,
+      occurrenceId: third?.id ?? null,
+      payload: { choice: "keep" },
+    })
+    expect(kept?.summary).toBe("keep for 2026-10-01 at 15.99 USD")
+  })
+
+  it("shrugs at a decision it does not know", async () => {
+    const t = await netflix()
+    t.clock.set("2026-09-24T13:00:00.000Z")
+    await t.lanes.tickNotify()
+    const [asked] = await t.store.listOccurrences({ taskId: t.task.id })
     const unknown = await t.lanes.reply({
       taskId: t.task.id,
       occurrenceId: asked?.id ?? null,
