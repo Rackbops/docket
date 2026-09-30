@@ -50,8 +50,9 @@ epic is Rackbops/Tooling#816.
   `registrationText`); nothing goes to recall (no Memory port, no recall charges, no `issueKey`).
   Delivery is one Store row per recipient, claimed before each send, so a host keeps no claim
   table and nobody gets a copy twice; one recipient's failure never stops the others. A person
-  who cannot be messaged fails at once, a failed send retries with a backoff (three sends), a
-  deferral backs off up to eight times, and a send that may have gone out is never resent. A run
+  who cannot be messaged fails at once, a failed send retries after 1 and 2 minutes (three
+  sends), a deferral backs off up to eight times, and a send that may have gone out is never
+  resent. A run
   records its outcome first (that is when it has fired), advances its schedule, then applies and
   delivers, so a retry never runs the type again or loses the alert. `tickNotify` takes an
   AbortSignal; a paused task's runs wait; a schedule edit keeps a queued snooze. Host changes:

@@ -78,22 +78,29 @@ API key.
 - How a send fails decides what happens next, so map Discord's errors carefully:
   - `DeliveryFailedError(message, true)` -- the person cannot be messaged at all (DMs closed,
     left the server, bot blocked): failed for good at once;
-  - `DeliveryFailedError(message)` -- nothing went out this time: retried with a backoff (1, 2,
-    4 min ... capped at an hour), three sends in all;
+  - `DeliveryFailedError(message)` -- nothing went out this time: retried after 1 minute, then
+    after 2 more, three sends in all;
   - `ExecutorUnavailableError` -- not now, nothing went out: deferred, no attempt counted,
-    retried with the same backoff, eight times in all;
+    retried after 1, 2, 4 ... minutes (doubling, capped at an hour), eight times in all;
   - any other error -- it may have gone out: `unconfirmed`, never resent.
 - A claim left open past `STALE_CLAIM_MS` (10 min), or found by `recover()` at start, settles as
-  `unconfirmed`.
+  `unconfirmed`. A fired run left `running` past `STALE_RUN_MS` (10 min) goes back to be resumed.
 
 **Lanes and replies**
 
 - Call `recover()` once at start. Owed sends go out on `tickNotify`, never `tickExecute`.
-- A paused task's runs do not start, and its owed sends wait. Each pause gives its owed rows a
-  fresh round, so pause and resume buy three more sends; that is intended.
-- A run that has fired can be answered whatever its status (it may be `queued` or `running` while
-  it finishes, then `done` or `snoozed`). A host lookup that finds "the latest run" to route a
-  text reply to must include runs that still owe a delivery, not only `done` ones.
-- `visibleOccurrences` hides `record` from anyone but the owner and admins; `visibleDeliveries`
-  shows a recipient only their own row.
+- A paused task's runs do not start, and its owed sends wait; a run that fired before the pause
+  is still applied, and its sends wait too. Each pause gives its owed rows a fresh round, so
+  pause and resume buy three more sends; that is intended.
+- A run is answered once it has finished (`done`, or `failed`), whatever it still owes anyone; a
+  fired run still finishing (`isFinishing`) is refused with "still finishing". A host lookup that
+  finds "the latest run" to route a reply to must include runs that still owe a delivery, not
+  only those whose copies all went out.
+- Serialize per task: a task's replies, its edits (`reschedule`) and its runs one at a time. The
+  core guards a run's start and a snooze by compare-and-set, but a schedule edit racing a firing
+  run can leave a run of the old schedule beside the new one.
+- `visibleOccurrences` hides `record` from anyone but the owner and admins; `visibleDeliveries`,
+  `visibleReplies` and `visibleHistory` show a recipient only their own rows, so no recipient
+  learns who else receives a task. A host writing `recipient_*`, `blocked` or `block_lifted`
+  history starts `detail` with the recipient's id.
 - `registrationText(user, { first, notes? })` no longer takes or shows a usr link.
