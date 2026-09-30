@@ -71,6 +71,12 @@ API key.
     or before it), oldest first.
   - `deleteDeliveries(userId)` erases a person's rows: forget-me must call it.
 - `UsageSource` is `"run"` only: there are no recall charges.
+- The budgets ([#17](https://github.com/Rackbops/docket/pull/17), first released in 0.4.0) add
+  `listUsers`, `addUsage`, `listUsage` and `claimNotice`; a 0.3.0 host needs all four, with the
+  `usage` and notice rows behind them.
+- Forget-me erases more than `deleteDeliveries`: the person's `usage` rows and their
+  `budget:person:<id>:*` notices name them too. `deleteDeliveries` is async, so a host that erases
+  inside a synchronous database transaction runs the same delete there instead.
 
 **Notifier**
 
@@ -98,7 +104,12 @@ API key.
   only those whose copies all went out.
 - Serialize per task: a task's replies, its edits (`reschedule`) and its runs one at a time. The
   core guards a run's start and a snooze by compare-and-set, but a schedule edit racing a firing
-  run can leave a run of the old schedule beside the new one.
+  run can leave a run of the old schedule beside the new one. `tickNotify` walks every task, so a
+  host either holds one lock around the whole tick and its edits, or (as the tracker plugin does)
+  runs one tick per task with work, under that task's lock, through a Store view that narrows the
+  occurrence and delivery lists to that task and leaves users, usage and notices whole.
+- The core checks the abort signal between runs; a type whose fetch throws on abort is the host's
+  to stop, by passing the signal to its `Fetch` port.
 - `visibleOccurrences` hides `record` from anyone but the owner and admins; `visibleDeliveries`,
   `visibleReplies` and `visibleHistory` show a recipient only their own rows, so no recipient
   learns who else receives a task. A host writing `recipient_*`, `blocked` or `block_lifted`
