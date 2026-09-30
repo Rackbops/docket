@@ -43,16 +43,19 @@ epic is Rackbops/Tooling#816.
   ceilings per person and for everyone (calls are the hard count), a person held until midnight
   Eastern with one DM and the admins told once, and the usage-limit outcome that requeues,
   charges nobody and waits for the reset. Per-task ceilings are not enforced yet (each Job's
-  `maxBudgetUsd` caps one run), but every charge carries its task. city-hall's half (the SQLite `usage` and notice
-  tables, recall's extraction charged through `charge`, raised ceilings) lives there.
+  `maxBudgetUsd` caps one run), but every charge carries its task. The host keeps the `usage` and notice tables and any raised
+  ceilings.
 - **0.4.0 -- plan rev17** ([#18](https://github.com/Rackbops/docket/issues/18)): the tracker
   plugin hosts docket and people live in its store (no `usrSubject`, no usr link in
   `registrationText`); nothing goes to recall (no Memory port, no recall charges, no `issueKey`).
-  Delivery claims each send in the Store before it is made, so a host keeps no claim table;
-  one recipient's failure never stops the others and is retried up to three sends; a run records
-  its outcome before applying it, so a failed or deferred send is retried without running the
-  type again or losing the alert. `tickNotify` takes an AbortSignal; a paused task's runs wait;
-  a schedule edit keeps a queued snooze.
+  Delivery is one Store row per recipient, claimed before each send, so a host keeps no claim
+  table and nobody gets a copy twice; one recipient's failure never stops the others. A person
+  who cannot be messaged fails at once, a failed send retries with a backoff (three sends), a
+  deferral backs off up to eight times, and a send that may have gone out is never resent. A run
+  records its outcome first (that is when it has fired), advances its schedule, then applies and
+  delivers, so a retry never runs the type again or loses the alert. `tickNotify` takes an
+  AbortSignal; a paused task's runs wait; a schedule edit keeps a queued snooze. Host changes:
+  the core README's "Adopting 0.4.0".
 - Next: the execute lane against city-hall and the runner (E8), findings in the tracker's store.
 
 ## Use

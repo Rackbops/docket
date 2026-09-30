@@ -1,9 +1,10 @@
 # @rackbops/docket-core
 
 The tracker's domain, scheduler, two lanes, task-type contract and ports, with no platform code:
-no Hono, no discord.js, no sqlite, no fetch. A host (the tracker plugin in
-Rackbops/rackbops-bot-plugins) supplies the adapters behind the ports and gets a tracker. Design: Rackbops/Tooling,
-`research/city-hall-task-tracker.md`, section 5; this slice is Lepid-Labs/city-hall#7.
+no Hono, no discord.js, no sqlite, no fetch. A host -- the tracker plugin in
+Rackbops/rackbops-bot-plugins (`plugins/tracker`) -- supplies the adapters behind the ports and
+gets a tracker; Lepid-Labs/city-hall only queues and runs its model Jobs. Design:
+Rackbops/Tooling, `research/city-hall-task-tracker.md`, section 5 (plan rev17).
 
 | Module | What it holds |
 |---|---|
@@ -34,3 +35,65 @@ for the plain-code types (the price tracker reads pages through it, via `RunCont
 `Executor` that hands Jobs to the runner. The core never calls a model and holds no credential:
 every model call runs in the runner, through the Claude Code CLI on roshne's subscription, never an
 API key.
+
+## Adopting 0.4.0
+
+0.4.0 ([#18](https://github.com/Rackbops/docket/issues/18)) changes what a host implements. Run
+`STORE_CONTRACT` against the host's Store after each step; every rule below is a case there.
+
+**Store**
+
+- `findUserBySubject` is gone, with `User.usrSubject`: people live in the host's own store.
+  `deleteQueuedOccurrences` is gone too. (Outside the Store: `Identity.actorForSubject` and the
+  `Memory` port are gone.)
+- `deleteOccurrence(id)` deletes one row, only while it is `queued`, and says whether it did.
+  `reschedule` cancels through it one row at a time, keeping a snooze's run and any run that has
+  fired.
+- `updateOccurrenceIf(id, expected, patch)` is a compare-and-set on status: it patches only while
+  the row's status is `expected` and returns null otherwise. It must be atomic (one SQL
+  `UPDATE ... WHERE id = ? AND status = ?`); the lanes start every run through it.
+- `Occurrence.record` is a new nullable JSON column (`OccurrencePatch.record` writes it). A run
+  has **fired** once its record is stored, whatever its status; `startedAt` no longer means that.
+  `requeueRunning` must set `startedAt` back to null, and keep `record`.
+- `SeriesPoint.key` is a new nullable, unique-when-set column: `addSeriesPoint` with a key already
+  stored adds nothing and returns the stored point, so a run applied again never appends twice.
+- A `deliveries` table, keyed by (`occurrenceId`, `userId`), with `status` (`pending`, `claimed`,
+  `sent`, `deferred`, `failed`, `unconfirmed`), `messageId`, `error`, `attempts`, `deferrals`,
+  `retryAt`, `createdAt`, `claimedAt` and `settledAt`. A row is **owed** while `retryAt` is set.
+  - `planDelivery` inserts a `pending` row owed from `at`; a no-op returning null when the row
+    exists.
+  - `claimDelivery` takes an owed row: `claimed`, `claimedAt` = `at`, `retryAt` null. Null when
+    the row is missing or not owed. Atomic: two callers never both win (`UPDATE ... WHERE
+    retryAt IS NOT NULL`).
+  - `settleDelivery` writes every field of `DeliverySettle`, so an absent `messageId` or `error`
+    clears it.
+  - `listDeliveries` filters by run, person, status, and `dueBefore` (owed rows with `retryAt` at
+    or before it), oldest first.
+  - `deleteDeliveries(userId)` erases a person's rows: forget-me must call it.
+- `UsageSource` is `"run"` only: there are no recall charges.
+
+**Notifier**
+
+- It keeps no claim table of its own: `deliver` claims each send in the Store first.
+- How a send fails decides what happens next, so map Discord's errors carefully:
+  - `DeliveryFailedError(message, true)` -- the person cannot be messaged at all (DMs closed,
+    left the server, bot blocked): failed for good at once;
+  - `DeliveryFailedError(message)` -- nothing went out this time: retried with a backoff (1, 2,
+    4 min ... capped at an hour), three sends in all;
+  - `ExecutorUnavailableError` -- not now, nothing went out: deferred, no attempt counted,
+    retried with the same backoff, eight times in all;
+  - any other error -- it may have gone out: `unconfirmed`, never resent.
+- A claim left open past `STALE_CLAIM_MS` (10 min), or found by `recover()` at start, settles as
+  `unconfirmed`.
+
+**Lanes and replies**
+
+- Call `recover()` once at start. Owed sends go out on `tickNotify`, never `tickExecute`.
+- A paused task's runs do not start, and its owed sends wait. Each pause gives its owed rows a
+  fresh round, so pause and resume buy three more sends; that is intended.
+- A run that has fired can be answered whatever its status (it may be `queued` or `running` while
+  it finishes, then `done` or `snoozed`). A host lookup that finds "the latest run" to route a
+  text reply to must include runs that still owe a delivery, not only `done` ones.
+- `visibleOccurrences` hides `record` from anyone but the owner and admins; `visibleDeliveries`
+  shows a recipient only their own row.
+- `registrationText(user, { first, notes? })` no longer takes or shows a usr link.
