@@ -463,6 +463,9 @@ export const STORE_CONTRACT: readonly StoreContractCase[] = [
     },
   },
   {
+    // The Store must make the claim atomic -- one guarded write (`UPDATE ... WHERE retryAt IS NOT
+    // NULL`), never a read then a write. This case can pass on a Store that reads then writes
+    // when its two calls happen not to interleave, so it is a floor, not a proof.
     name: "two claims at once: exactly one wins",
     async run(store) {
       const u = await owner(store)
@@ -474,6 +477,23 @@ export const STORE_CONTRACT: readonly StoreContractCase[] = [
         store.claimDelivery(id, u.id, AT),
       ])
       same(both.filter((c) => c !== null).length, 1, "one claim")
+    },
+  },
+  {
+    name: "deliveries planned at the same instant list in the order they were planned",
+    async run(store) {
+      const a = await owner(store)
+      const b = await store.createUser({ discordId: "d2", at: AT })
+      const c = await store.createUser({ discordId: "d3", at: AT })
+      const t = await task(store, a.id)
+      const id = (await store.createOccurrence(occurrence(t.id, AT, "k")))?.id ?? ""
+      // Not in id order, so a Store that sorts by user id instead fails.
+      for (const u of [c, a, b]) await store.planDelivery(id, u.id, AT)
+      same(
+        (await store.listDeliveries({ occurrenceId: id })).map((d) => d.userId),
+        [c.id, a.id, b.id],
+        "ties on createdAt keep insertion order (the owner's copy is planned, and sent, first)",
+      )
     },
   },
   {

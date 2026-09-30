@@ -100,3 +100,13 @@ export function parseRunRecord(value: unknown): RunRecord | null {
 export function hasFired(occurrence: Occurrence): boolean {
   return occurrence.record !== null && occurrence.record !== undefined
 }
+
+/**
+ * Whether the run has fired and not yet finished: its outcome is recorded and its remaining steps
+ * (apply, plan, mark done) have not all been stored (`finishedAt` is still null). While one is,
+ * the task's next run waits (it would read state the outcome has not yet written) and the run
+ * cannot be answered (the snooze or done would race the steps still to come).
+ */
+export function isFinishing(occurrence: Occurrence): boolean {
+  return hasFired(occurrence) && occurrence.finishedAt === null
+}

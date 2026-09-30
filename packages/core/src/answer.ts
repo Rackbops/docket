@@ -1,6 +1,6 @@
 import type { ReplyKind, Task } from "./model.js"
 import type { Store } from "./ports.js"
-import { hasFired } from "./record.js"
+import { hasFired, isFinishing } from "./record.js"
 
 /**
  * Who may answer a run, and when (plan 1.1: recipients "receive only; they do not act on the
@@ -13,6 +13,7 @@ export const RUN_KINDS: ReadonlySet<ReplyKind> = new Set(["done", "snooze", "dec
 
 export const NOT_YOURS = "That is not yours to answer."
 export const OVER = "That run is over; answer the latest message instead."
+export const STILL_FINISHING = "That run is still finishing; try again in a minute."
 
 /** A run reply `Lanes.reply` would not act on; its message is the reason to show. */
 export class ReplyRefusedError extends Error {
@@ -25,6 +26,9 @@ export class ReplyRefusedError extends Error {
  * snoozed and is not yet answered. A failed or running run still counts: the owner's copy goes
  * out first, so a press can land while the rest are still sending or after another recipient's
  * send failed. A run counts as fired once its outcome is recorded, whatever it still owes anyone.
+ * A fired run still finishing (`isFinishing`: its outcome not yet applied and the run not yet
+ * marked done, for instance put back after a Store error) cannot be answered either, so a snooze
+ * or done never races the steps that finish it.
  * A queued or running run that has not fired cannot be answered: a snoozed row
  * keeps the run's scheduled key, so a snooze that fired before the run's own due time would leave
  * the task nothing to materialize, and a recurring task would stall.
@@ -46,6 +50,7 @@ export async function runRefusal(
   ) {
     return "That run has not fired yet."
   }
+  if (isFinishing(occurrence)) return STILL_FINISHING
   if (occurrence.status === "snoozed" || occurrence.status === "skipped") return OVER
   const answered = (await store.listReplies(task.id)).some(
     (r) => r.occurrenceId === occurrence.id && RUN_KINDS.has(r.kind),

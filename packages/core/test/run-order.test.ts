@@ -10,6 +10,7 @@ import {
   parseRunRecord,
   reschedule,
   type Schedule,
+  STILL_FINISHING,
   type TaskType,
 } from "../src/index.js"
 import { actor, FakeClock, FakeNotifier, MemoryStore, people, T0 } from "./helpers.js"
@@ -283,25 +284,30 @@ describe("answers and edits while a run still owes a copy", () => {
     expect(notifier.sent.map((s) => s.userId)).toEqual([larry.id, moe.id, larry.id])
   })
 
-  it("keeps a snooze the owner pressed between the record and the run's end", async () => {
+  it("refuses a snooze pressed while the run is finishing, and takes it once it is done", async () => {
     const { store, lanes, notifier, task, runId, share, larry, moe } = await setup()
     await share(moe)
+    const snooze = (occurrenceId: string) =>
+      lanes.reply({
+        taskId: task.id,
+        occurrenceId,
+        userId: larry.id,
+        kind: "snooze",
+        payload: null,
+      })
+    let refusal = ""
     const plan = store.planDelivery.bind(store)
     store.planDelivery = async (occurrenceId, userId, at) => {
-      if (userId === moe.id) {
-        await lanes.reply({
-          taskId: task.id,
-          occurrenceId,
-          userId: larry.id,
-          kind: "snooze",
-          payload: null,
-        })
-      }
+      if (userId === moe.id) await snooze(occurrenceId).catch((e: Error) => (refusal = e.message))
       return plan(occurrenceId, userId, at)
     }
     await lanes.tickNotify()
-    expect((await store.getOccurrence(await runId()))?.status).toBe("snoozed")
+    expect(refusal).toBe(STILL_FINISHING)
+    const id = await runId()
+    expect((await store.getOccurrence(id))?.status).toBe("done")
     expect(notifier.sent.map((s) => s.userId)).toEqual([larry.id, moe.id])
+    await snooze(id)
+    expect((await store.getOccurrence(id))?.status).toBe("snoozed")
   })
 
   it("lets the owner finish the task: recipients still owed a copy get it", async () => {
@@ -327,21 +333,21 @@ describe("answers and edits while a run still owes a copy", () => {
     expect(notifier.sent.map((s) => s.userId)).toEqual([larry.id, moe.id])
   })
 
-  it("keeps a fired run put back to finish when the owner completes the task, and finishes it", async () => {
-    const { store, lanes, notifier, runs, task, runId, larry } = await setup({
+  it("keeps a fired run put back to finish when the task completes, and finishes it", async () => {
+    const { store, lanes, notifier, runs, task, type, runId, larry } = await setup({
       schedule: { kind: "once", at: T0 },
     })
     failing(store, "planDelivery", () => true)
     await lanes.tickNotify()
     const id = await runId()
     expect((await store.getOccurrence(id))?.status).toBe("queued")
-    await lanes.reply({
-      taskId: task.id,
-      occurrenceId: id,
-      userId: larry.id,
-      kind: "done",
-      payload: null,
-    })
+    const answer = (kind: "done" | "text") =>
+      lanes.reply({ taskId: task.id, occurrenceId: id, userId: larry.id, kind, payload: null })
+    // The owner's done waits for the run to finish ...
+    await expect(answer("done")).rejects.toThrow(STILL_FINISHING)
+    // ... but the task can still complete meanwhile (here a type ending it on a text reply).
+    type.onReply = async () => ({ complete: true })
+    await answer("text")
     expect((await store.getTask(task.id))?.status).toBe("done")
     expect(await store.getOccurrence(id)).not.toBeNull()
     await lanes.tickNotify()

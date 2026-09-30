@@ -89,6 +89,11 @@ export async function cancelScheduledRuns(store: Store, taskId: string): Promise
 /**
  * Replaces the schedule: cancels the queued scheduled runs (`cancelScheduledRuns`, snoozes kept),
  * records the edit, materializes the next.
+ *
+ * The host serializes this with the lanes per task: a run firing between the cancel and the
+ * schedule write materializes its next run from the old schedule, and that run survives beside
+ * the new one. Run a task's edits and its ticks one at a time (the tracker plugin's per-task
+ * queue), as for replies (`Lanes.reply`).
  */
 export async function reschedule(
   store: Store,
