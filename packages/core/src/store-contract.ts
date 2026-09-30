@@ -410,50 +410,56 @@ export const STORE_CONTRACT: readonly StoreContractCase[] = [
     },
   },
   {
-    name: "a delivery is claimed once; a failed one is taken again with its attempts kept",
+    name: "a delivery is planned once, claimed only while owed, and settled as told",
     async run(store) {
       const u = await owner(store)
       const t = await task(store, u.id)
-      const o = await store.createOccurrence(occurrence(t.id, AT, "k"))
-      const id = o?.id ?? ""
-      const first = await store.claimDelivery(id, u.id, AT)
+      const id = (await store.createOccurrence(occurrence(t.id, AT, "k")))?.id ?? ""
+      same(await store.claimDelivery(id, u.id, AT), null, "nothing planned: no claim")
+      const planned = await store.planDelivery(id, u.id, AT)
       same(
-        [first?.status, first?.attempts, first?.messageId, first?.settledAt, first?.claimedAt],
-        ["claimed", 0, null, null, AT],
-        "first claim",
+        [
+          planned?.status,
+          planned?.attempts,
+          planned?.deferrals,
+          planned?.retryAt,
+          planned?.claimedAt,
+        ],
+        ["pending", 0, 0, AT, null],
+        "planned row",
       )
+      same(await store.planDelivery(id, u.id, LATER), null, "planning twice is a no-op")
+      const claim = await store.claimDelivery(id, u.id, MID)
+      same([claim?.status, claim?.retryAt, claim?.claimedAt], ["claimed", null, MID], "claimed")
       same(await store.claimDelivery(id, u.id, MID), null, "a held claim is not taken again")
       await store.settleDelivery(id, u.id, {
         status: "failed",
         error: "closed",
         attempts: 1,
+        deferrals: 2,
+        retryAt: LATER,
         at: MID,
       })
       const again = await store.claimDelivery(id, u.id, LATER)
       same(
-        [again?.status, again?.attempts, again?.error, again?.settledAt, again?.claimedAt],
-        ["claimed", 1, null, null, LATER],
-        "a failed claim taken again",
+        [again?.status, again?.attempts, again?.deferrals, again?.error, again?.retryAt],
+        ["claimed", 1, 2, "closed", null],
+        "an owed failure taken again, its counts kept",
       )
       const sent = await store.settleDelivery(id, u.id, {
         status: "sent",
         messageId: "m1",
         attempts: 1,
+        deferrals: 2,
+        retryAt: null,
         at: LATER,
       })
       same(
-        [sent.status, sent.messageId, sent.error, sent.settledAt],
-        ["sent", "m1", null, LATER],
-        "sent",
+        [sent.status, sent.messageId, sent.error, sent.settledAt, sent.retryAt],
+        ["sent", "m1", null, LATER, null],
+        "sent, and an absent error cleared",
       )
-      same(await store.claimDelivery(id, u.id, LATER), null, "a sent claim is never taken again")
-      await store.settleDelivery(id, u.id, {
-        status: "unconfirmed",
-        error: "?",
-        attempts: 1,
-        at: LATER,
-      })
-      same(await store.claimDelivery(id, u.id, LATER), null, "nor an unconfirmed one")
+      same(await store.claimDelivery(id, u.id, LATER), null, "a final row is never claimed")
     },
   },
   {
@@ -461,8 +467,8 @@ export const STORE_CONTRACT: readonly StoreContractCase[] = [
     async run(store) {
       const u = await owner(store)
       const t = await task(store, u.id)
-      const o = await store.createOccurrence(occurrence(t.id, AT, "k"))
-      const id = o?.id ?? ""
+      const id = (await store.createOccurrence(occurrence(t.id, AT, "k")))?.id ?? ""
+      await store.planDelivery(id, u.id, AT)
       const both = await Promise.all([
         store.claimDelivery(id, u.id, AT),
         store.claimDelivery(id, u.id, AT),
@@ -471,38 +477,114 @@ export const STORE_CONTRACT: readonly StoreContractCase[] = [
     },
   },
   {
-    name: "deliveries list by occurrence and status, oldest claim first",
+    name: "deliveries list by run, person, status and due time, oldest first; forget-me deletes",
     async run(store) {
       const u = await owner(store)
       const v = await store.createUser({ discordId: "d2", at: AT })
       const t = await task(store, u.id)
       const o1 = (await store.createOccurrence(occurrence(t.id, AT, "k1")))?.id ?? ""
       const o2 = (await store.createOccurrence(occurrence(t.id, AT, "k2")))?.id ?? ""
-      await store.claimDelivery(o1, v.id, MID)
-      await store.claimDelivery(o1, u.id, AT)
-      await store.claimDelivery(o2, u.id, LATER)
-      await store.settleDelivery(o1, u.id, { status: "sent", messageId: "m", attempts: 0, at: MID })
+      await store.planDelivery(o1, u.id, AT)
+      await store.planDelivery(o1, v.id, MID)
+      await store.planDelivery(o2, v.id, LATER)
+      await store.claimDelivery(o1, u.id, MID)
       same(
         (await store.listDeliveries({ occurrenceId: o1 })).map((d) => d.userId),
         [u.id, v.id],
-        "one occurrence, oldest claim first",
+        "one run, oldest first",
       )
       same(
-        (await store.listDeliveries({ status: "claimed" })).map((d) => [d.occurrenceId, d.userId]),
-        [
-          [o1, v.id],
-          [o2, u.id],
-        ],
+        (await store.listDeliveries({ userId: v.id })).map((d) => d.occurrenceId),
+        [o1, o2],
+        "one person",
+      )
+      same(
+        (await store.listDeliveries({ status: "claimed" })).map((d) => d.userId),
+        [u.id],
         "by status",
       )
-      same((await store.listDeliveries()).length, 3, "every claim")
+      same(
+        (await store.listDeliveries({ dueBefore: MID })).map((d) => [d.occurrenceId, d.userId]),
+        [[o1, v.id]],
+        "owed and due, inclusive; a claimed row is not owed",
+      )
+      same(await store.deleteDeliveries(v.id), 2, "forget-me deletes that person's rows")
+      same(
+        (await store.listDeliveries()).map((d) => d.userId),
+        [u.id],
+        "the rest remain",
+      )
       let threw = false
       try {
-        await store.settleDelivery(o2, v.id, { status: "sent", attempts: 0, at: LATER })
+        await store.settleDelivery(o2, v.id, {
+          status: "sent",
+          attempts: 0,
+          deferrals: 0,
+          retryAt: null,
+          at: LATER,
+        })
       } catch {
         threw = true
       }
-      check(threw, "settling a claim that does not exist throws")
+      check(threw, "settling a row that does not exist throws")
+    },
+  },
+  {
+    name: "a conditional update applies only to the expected status; a record round-trips",
+    async run(store) {
+      const u = await owner(store)
+      const t = await task(store, u.id)
+      const o = await store.createOccurrence(occurrence(t.id, AT, "k"))
+      const id = o?.id ?? ""
+      same(o?.record, null, "no record at first")
+      const started = await store.updateOccurrenceIf(id, "queued", {
+        status: "running",
+        startedAt: MID,
+      })
+      same([started?.status, started?.startedAt], ["running", MID], "applied")
+      same(
+        await store.updateOccurrenceIf(id, "queued", { status: "running" }),
+        null,
+        "not queued: nothing applied",
+      )
+      same(await store.updateOccurrenceIf("nope", "queued", { status: "running" }), null, "no row")
+      const record = {
+        outcome: { notify: { text: "hi", actions: ["done" as const] }, state: { n: 1 } },
+        costUsd: null,
+        firedAt: MID,
+        appliedAt: null,
+        resumes: 0,
+      }
+      await store.updateOccurrence(id, { record })
+      same((await store.getOccurrence(id))?.record, record, "record round-trips")
+      same(
+        (await store.requeueRunning()).length === 1 &&
+          (await store.getOccurrence(id))?.startedAt === null,
+        true,
+        "requeueRunning puts a run back unstarted",
+      )
+      same((await store.getOccurrence(id))?.record, record, "and keeps its record")
+    },
+  },
+  {
+    name: "a series point with a stored key is not added again",
+    async run(store) {
+      const u = await owner(store)
+      const t = await task(store, u.id)
+      const first = await store.addSeriesPoint({ taskId: t.id, at: AT, value: 1, key: "o1:0" })
+      const again = await store.addSeriesPoint({ taskId: t.id, at: LATER, value: 2, key: "o1:0" })
+      await store.addSeriesPoint({ taskId: t.id, at: AT, value: 3 })
+      await store.addSeriesPoint({ taskId: t.id, at: AT, value: 4 })
+      same([first.key, again.id, again.value], ["o1:0", first.id, 1], "the stored point returned")
+      same(
+        (await store.listSeries(t.id)).map((p) => [p.value, p.key]),
+        [
+          [1, "o1:0"],
+          [3, null],
+          [4, null],
+        ],
+        "keyless points are always added",
+      )
     },
   },
 ]

@@ -295,20 +295,19 @@ describe("the execute lane under budgets", () => {
     expect(sent).toEqual([admin.id, admin.id, moe.id])
   })
 
-  it("keeps a snooze pressed while the run was in flight when the usage limit sends it back", async () => {
+  it("refuses a snooze of a run in flight, which has not fired, and requeues it on the limit", async () => {
     let lanesRef: Lanes | undefined
     let occurrenceId = ""
     let taskId = ""
     let ownerId = ""
+    let refusal = ""
     const executor: Executor = {
       run: async (_spec, id) => {
-        await lanesRef?.reply({
-          taskId,
-          occurrenceId: id,
-          userId: ownerId,
-          kind: "snooze",
-          payload: { hours: 1 },
-        })
+        await lanesRef
+          ?.reply({ taskId, occurrenceId: id, userId: ownerId, kind: "snooze", payload: null })
+          .catch((err: Error) => {
+            refusal = err.message
+          })
         occurrenceId = id
         return { kind: "usage_limit", detail: "limit", durationMs: 1 }
       },
@@ -337,9 +336,9 @@ describe("the execute lane under budgets", () => {
     taskId = task.id
     ownerId = larry.id
     await lanes.tickExecute()
-    expect((await store.getOccurrence(occurrenceId))?.status).toBe("snoozed")
-    const queued = await store.listOccurrences({ taskId: task.id, status: "queued" })
-    expect(queued.map((o) => o.dedupeKey)).toEqual([`snooze:${occurrenceId}`])
+    expect(refusal).toBe("That run has not fired yet.")
+    const run = await store.getOccurrence(occurrenceId)
+    expect([run?.status, run?.startedAt]).toEqual(["queued", null])
   })
 
   it("tells the admins once per window when no reset time comes, and caps a far reset at a day", async () => {

@@ -221,14 +221,20 @@ describe("a press, end to end", () => {
     await respondToInvite(store, task, moe.id, "accept", clock.now())
     const send = notifier.sendDm.bind(notifier)
     notifier.sendDm = async (userId, message) => {
-      if (userId === moe.id) throw new DeliveryFailedError("DMs closed", true)
+      if (userId === moe.id) throw new DeliveryFailedError("Discord said 500")
       return send(userId, message)
     }
     clock.set("2026-03-02T14:00:30.000Z")
     expect(await lanes.tickNotify()).toMatchObject({ ran: 1, failed: 0 })
-    // Waiting to retry Moe: queued again, yet it has fired, so the owner may answer it.
+    // The run is done while Moe's copy is still owed.
     const [run] = await store.listOccurrences({ taskId: task.id })
-    expect([run?.status, run?.startedAt !== null]).toEqual(["queued", true])
+    expect(run?.status).toBe("done")
+    const moeRow = (await store.listDeliveries({ occurrenceId: run?.id ?? "" }))[1]
+    expect([moeRow?.userId, moeRow?.status, moeRow?.retryAt !== null]).toEqual([
+      moe.id,
+      "failed",
+      true,
+    ])
     const done = replyButtons(notifier.sent[0]?.message ?? { text: "" })[0]?.ref ?? ""
     expect((await replyForRef(store, done, larry.id)).ok).toBe(true)
   })

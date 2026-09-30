@@ -1,4 +1,5 @@
 import type { Capability } from "./capabilities.js"
+import type { Outcome } from "./contract.js"
 import type { Lane } from "./lanes.js"
 import type { Schedule } from "./schedule.js"
 
@@ -54,8 +55,9 @@ export interface Task {
 export type OccurrenceStatus = "queued" | "running" | "done" | "failed" | "skipped" | "snoozed"
 
 /**
- * One due instance of a task. A `queued` row with a `startedAt` has fired and is waiting to finish
- * its delivery (`dispatch.ts`); one with none has not run.
+ * One due instance of a task. It has **fired** once its outcome is recorded (`record` is set):
+ * from then on the type never runs for it again, whatever its status, and what it owes anyone is
+ * in its deliveries. A `queued` row with no record has not run.
  */
 export interface Occurrence {
   id: string
@@ -72,24 +74,33 @@ export interface Occurrence {
   summary: string | null
   costUsd: number | null
   error: string | null
+  /** What the run produced, written by the dispatcher alone; null until the run fired. */
+  record: RunRecord | null
   createdAt: string
 }
 
 /**
- * `outcome` is a run's Outcome as JSON, stored before it is applied, so a run whose delivery has
- * to finish later never runs its type again (`dispatch.ts`). `delivered` and `undelivered` are one
- * recipient each: the user id, then the provider's message id or the reason.
+ * A run's outcome, stored on its occurrence before any of it is applied (`dispatch.ts`), so a run
+ * that stopped after it (a crash, a Store error) resumes without running its type again. The
+ * dispatcher is its only writer and validates it on every read (`parseRunRecord`). Readers other
+ * than the owner and admins never see it (`visibleOccurrences`).
  */
-export type EventType =
-  | "status"
-  | "text"
-  | "tool"
-  | "handoff"
-  | "verdict"
-  | "error"
-  | "outcome"
-  | "delivered"
-  | "undelivered"
+export interface RunRecord {
+  /** The type's outcome; never `snoozeUntil`, which only a reply produces. */
+  outcome: Omit<Outcome, "snoozeUntil">
+  costUsd: number | null
+  firedAt: string
+  /** When state and series were applied; null until then. */
+  appliedAt: string | null
+  /** Times the steps after the record were retried after an error. */
+  resumes: number
+}
+
+/**
+ * `delivered` is only on rows written before 0.4.0 (the user id, then the message id); who got a
+ * run's message, and how each send went, is in its deliveries now, never in the shared event log.
+ */
+export type EventType = "status" | "text" | "tool" | "handoff" | "verdict" | "error" | "delivered"
 
 /** One line of a run, or of the tracker talking about it. Append-only, keyed by occurrence. */
 export interface OccurrenceEvent {
@@ -175,6 +186,12 @@ export interface Reply {
 export interface SeriesPoint {
   id: string
   taskId: string
+  /**
+   * Identity for a point a run appends (`<occurrence>:<index>`): adding a point whose key is
+   * stored is a no-op, so an outcome applied twice after a crash appends nothing twice. Null for a
+   * point a host adds by hand.
+   */
+  key: string | null
   at: string
   value: number
   /** A currency code or other unit, when the value has one. */
@@ -208,29 +225,39 @@ export interface Usage {
 }
 
 /**
- * How one recipient's copy of a run's message stands (plan 5.5, "Delivery idempotency"):
+ * How one recipient's copy of a run's message stands (plan 5.5, "Delivery idempotency"). A row
+ * is **owed** while `retryAt` is set -- `pending`, `deferred`, or `failed` with tries left -- and
+ * final once it is null (`sent`, `unconfirmed`, `failed` for good). `claimed` is the moment of the
+ * send: written before it, settled after.
  *
- * - `claimed`: written before the send. Found still `claimed` later, the send never reported
- *   back (a crash, an abandoned tick) and may have gone out.
+ * - `pending`: planned when the run fired; not tried yet.
+ * - `claimed`: a send is out. Found still `claimed` later -- after a crash, or long after -- it
+ *   may have gone out, so it is settled `unconfirmed`, never resent.
  * - `sent`: the Notifier returned the provider's message id.
- * - `failed`: nothing went out -- the Notifier said so (`DeliveryFailedError`) or deferred the
- *   send (`ExecutorUnavailableError`). A later delivery of the run may claim it again.
- * - `unconfirmed`: the send failed in a way that does not say whether it went out, or a stale
- *   claim was found. Never resent automatically; a host shows these to an admin.
+ * - `deferred`: the Notifier said not now (`ExecutorUnavailableError`); nothing went out.
+ * - `failed`: nothing went out (`DeliveryFailedError`). Retried with a backoff unless the person
+ *   cannot be messaged at all or the attempts are spent; then final.
+ * - `unconfirmed`: failed in a way that does not say whether it went out. Never resent; a host
+ *   shows these to an admin.
  */
-export type DeliveryStatus = "claimed" | "sent" | "failed" | "unconfirmed"
+export type DeliveryStatus = "pending" | "claimed" | "sent" | "deferred" | "failed" | "unconfirmed"
 
-/** The delivery claim: one row per occurrence and recipient, owned by `deliver`. */
+/** One recipient's copy of one run: the delivery claim, owned by `delivery.ts`. */
 export interface Delivery {
   occurrenceId: string
   userId: string
   status: DeliveryStatus
   /** The provider's message id, once `sent`. */
   messageId: string | null
-  /** Why it failed or is unconfirmed. */
+  /** Why it failed, was deferred, or is unconfirmed. */
   error: string | null
-  /** Sends that failed with nothing sent; a deferral does not count one. */
+  /** Failed sends with nothing sent; a deferral does not count one. */
   attempts: number
-  claimedAt: string
+  /** Deferrals so far. */
+  deferrals: number
+  /** When it is next tried; null while claimed and once final. */
+  retryAt: string | null
+  createdAt: string
+  claimedAt: string | null
   settledAt: string | null
 }

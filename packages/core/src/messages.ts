@@ -2,6 +2,7 @@ import { visibleTasks } from "./authz.js"
 import { describeSchedule, formatInstant } from "./describe.js"
 import type { Occurrence, Task, User } from "./model.js"
 import type { Actor, OutgoingMessage, Store } from "./ports.js"
+import { hasFired } from "./record.js"
 
 /**
  * What the bot says in the first slice (plan sections 5.5, 5.10, E2): the disclosure at
@@ -82,7 +83,9 @@ export async function taskList(store: Store, actor: Actor): Promise<TaskListEntr
   const tasks = await visibleTasks(store, { ...actor, admin: false }, { status: "active" })
   const entries: TaskListEntry[] = []
   for (const task of tasks) {
-    const queued = await store.listOccurrences({ taskId: task.id, status: "queued" })
+    const queued = (await store.listOccurrences({ taskId: task.id, status: "queued" })).filter(
+      (o) => !hasFired(o),
+    )
     const from = task.ownerId === actor.userId ? null : await store.getUser(task.ownerId)
     entries.push({ task, next: queued[0] ?? null, from })
   }

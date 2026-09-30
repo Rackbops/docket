@@ -1,12 +1,13 @@
 import { SNOOZE_PREFIX, scheduledKey } from "./dedupe.js"
 import type { Occurrence, Task, User } from "./model.js"
 import type { Store } from "./ports.js"
+import { hasFired } from "./record.js"
 import { nextDue, type Schedule, scheduleProblems } from "./schedule.js"
 
 /**
  * Materialization (plan section 5.3): a task keeps exactly one upcoming occurrence, created
  * through its dedupe key so a repeated call is a no-op. A schedule edit cancels the queued
- * occurrence and replaces it, keeping a snooze's run and a run still finishing its delivery. Catch-up is per kind: a missed `once` fires late and is marked late;
+ * occurrence and replaces it, keeping a snooze's run and any run that has fired. Catch-up is per kind: a missed `once` fires late and is marked late;
  * a missed calendar or period occurrence fires once late, then the next is computed from now; a
  * poll's first occurrence is its `start` (so a tracker observes at once), every later one the
  * next grid instant after now.
@@ -37,8 +38,9 @@ export async function materialize(
   if (task.status !== "active" || !task.schedule) return null
   const pending = await store.listOccurrences({ taskId: task.id })
   // A snooze's run re-asks an earlier one; it never stands in for the next scheduled run, so a
-  // snooze longer than the period drops none of them.
-  const scheduled = pending.filter((o) => !o.dedupeKey.startsWith(SNOOZE_PREFIX))
+  // snooze longer than the period drops none of them. Nor does a run that has fired: whatever it
+  // still has to finish or send, the schedule moves on the moment its outcome is recorded.
+  const scheduled = pending.filter((o) => !o.dedupeKey.startsWith(SNOOZE_PREFIX) && !hasFired(o))
   if (scheduled.some((o) => o.status === "queued" || o.status === "running")) return null
   const after = firstDueAfter(task.schedule, pending.length === 0, now)
   const due = nextDue(task.schedule, after, {
@@ -70,15 +72,15 @@ export interface RescheduleResult {
 }
 
 /**
- * Cancels the task's queued scheduled runs that have not started: what a schedule computed, at a
+ * Cancels the task's queued scheduled runs that have not fired: what a schedule computed, at a
  * time the edit makes stale (plan 5.3). A snooze's run stays -- it is an instant the owner asked
- * for, not one the schedule computed -- and so does a run that fired and is still finishing its
- * delivery (`dispatch.ts`). Returns how many were cancelled.
+ * for, not one the schedule computed -- and so does a run that fired and was put back to finish
+ * (`dispatch.ts`). Returns how many were cancelled.
  */
 export async function cancelScheduledRuns(store: Store, taskId: string): Promise<number> {
   let removed = 0
   for (const o of await store.listOccurrences({ taskId, status: "queued" })) {
-    if (o.dedupeKey.startsWith(SNOOZE_PREFIX) || o.startedAt !== null) continue
+    if (o.dedupeKey.startsWith(SNOOZE_PREFIX) || hasFired(o)) continue
     if (await store.deleteOccurrence(o.id)) removed += 1
   }
   return removed

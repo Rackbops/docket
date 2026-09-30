@@ -12,10 +12,26 @@ import {
 import { optOut, respondToInvite } from "./consent.js"
 import type { Outcome, RunContext, TaskType } from "./contract.js"
 import { SNOOZE_PREFIX, snoozeKey } from "./dedupe.js"
-import { DEFAULT_DELIVERY_ATTEMPTS, type DeliveryReport, deliver } from "./delivery.js"
+import {
+  DEFAULT_DELIVERY_POLICY,
+  type DeliveryPolicy,
+  deliver,
+  dropOwed,
+  freshRoundForPause,
+  settleStaleClaims,
+} from "./delivery.js"
 import type { JobResult } from "./job.js"
 import type { Lane } from "./lanes.js"
-import type { Occurrence, Reply, ReplyKind, Task, TaskStatus, User } from "./model.js"
+import type {
+  Delivery,
+  Occurrence,
+  Reply,
+  ReplyKind,
+  RunRecord,
+  Task,
+  TaskStatus,
+  User,
+} from "./model.js"
 import {
   type Clock,
   type Executor,
@@ -24,6 +40,7 @@ import {
   type Notifier,
   type Store,
 } from "./ports.js"
+import { hasFired, parseRunRecord } from "./record.js"
 import { isLate, materialize } from "./scheduler.js"
 
 /**
@@ -35,7 +52,8 @@ import { isLate, materialize } from "./scheduler.js"
  * The dispatcher owns status and applies what a type's Outcome asks for: state is stored on
  * the task, series points are appended, `complete` finishes the task. A failed run still
  * materializes the schedule's next occurrence, so one bad fetch never ends a recurring task on its
- * own. Only an active task's runs are taken: a paused, done or archived task's queued runs wait.
+ * own. Only an active task's runs are taken, and each is re-checked and started by a
+ * compare-and-set (`updateOccurrenceIf`), so a paused task never runs and no run starts twice.
  *
  * **The order of a run, so a failed send is retried without running the type twice or losing an
  * alert** (plan 5.5, item 58). A type's outcome carries both the state that remembers what it
@@ -43,21 +61,29 @@ import { isLate, materialize } from "./scheduler.js"
  * other loses something: state first and a failed DM is never retried (the next run sees no
  * crossing); DM first and a crash before the state is stored runs the type again. So a run goes:
  *
- * 1. the signal is checked, then the type runs (or, on the execute lane, prepare, the Executor,
- *    finish, and the charge);
- * 2. the signal is checked again: an aborted tick drops the outcome before anything is stored,
- *    and the run goes back to the queue unstarted, so the one run whose outcome counts is the
- *    next tick's;
- * 3. the outcome is recorded on the run (an `outcome` event), then applied (state, series), then
- *    marked applied;
- * 4. it is delivered, each send claimed first (`delivery.ts`);
- * 5. a send that failed with nothing sent, or was deferred, puts the run back in the queue with
- *    its start time kept: the next tick finds the recorded outcome and only delivers what is
- *    still owed -- the type never runs again and the state is never applied twice. A crash
- *    anywhere after step 3 resumes the same way from `recover()`. After `deliveryAttempts` failed
- *    sends to one person the run gives up on them and finishes; if the host paused the task for
- *    those failures (plan 5.5's pause rule, the host's), the run waits for the resume instead,
- *    with its attempts counted afresh, so the alert still goes out when the person is back.
+ * 1. the type runs (on the execute lane: prepare, the Executor, the charge, finish);
+ * 2. the tick's signal is checked: an aborted tick drops the outcome before anything is stored
+ *    and the run goes back to the queue unstarted, so the one outcome that counts is the next
+ *    tick's;
+ * 3. **the run fires**: its outcome is recorded on the occurrence (`Occurrence.record`). From here
+ *    the type never runs for it again;
+ * 4. the schedule's next run is materialized at once, so nothing owed by this one holds up the
+ *    schedule;
+ * 5. the outcome is applied (state, then series points keyed by the run, so applying twice adds
+ *    nothing) and the record marked applied;
+ * 6. one delivery row is planned per person it goes to -- the owner and accepted recipients; for
+ *    a snooze's run the owner alone, since a snooze re-asks the owner -- and the run is marked
+ *    done;
+ * 7. it is delivered (`delivery.ts`). What cannot go out now stays owed on its row and is retried
+ *    by later notify ticks with a backoff, from the recorded message: owed delivery is the notify
+ *    side's work, whichever lane the run was on, so it never waits on a model or a runner.
+ *
+ * A Store error during steps 4 to 6 puts the fired run back in the queue, and the next notify tick
+ * resumes it from the record (`resume`), at most `MAX_RESUMES` times; then it is marked done with
+ * the error on record, never failed -- the type did not fail. A crash anywhere after step 3
+ * resumes the same way from `recover()`, which also settles any claim left mid-send as
+ * unconfirmed. A crash between the Executor's answer and step 3 re-runs the Job on restart: that
+ * is a second model call, and it is charged as one.
  *
  * The execute lane charges every model run to the task's owner and holds a run whose owner, or
  * everyone together, has reached a daily ceiling (plan 5.7, `budget.ts`); the item stays queued
@@ -87,12 +113,12 @@ export interface LaneDeps {
   fetch?: Fetch | null
   /** Daily ceilings for model runs; `DEFAULT_BUDGET` when absent. */
   budget?: BudgetPolicy
-  /** Sends of one run to one person before it gives up; `DEFAULT_DELIVERY_ATTEMPTS` when absent. */
-  deliveryAttempts?: number
+  /** Retries, backoff and limits for owed sends; `DEFAULT_DELIVERY_POLICY` when absent. */
+  delivery?: DeliveryPolicy
 }
 
 export interface TickResult {
-  /** Runs whose outcome was applied, or whose owed delivery was finished or retried. */
+  /** Runs that fired, or fired runs this tick finished. Owed sends are not counted here. */
   ran: number
   failed: number
   /** Due items left queued: their lane has no runtime, a ceiling holds them, or the tick aborted. */
@@ -114,29 +140,14 @@ interface Loaded {
   recipients: User[]
 }
 
-/** How one item went: run, failed, held for its owner's budget, or the lane must stop. */
+/**
+ * How one item went: run, failed, left for later (`held`: its owner's budget, or it was no longer
+ * due when re-checked), or the lane must stop.
+ */
 type Verdict = "ran" | "failed" | "held" | "stop"
 
-/** The `outcome` event's text: what a run produced, so its delivery can finish without a rerun. */
-interface RecordedOutcome {
-  outcome: Outcome
-  costUsd: number | null
-}
-
-/** The status event written once a recorded outcome is applied. */
-const APPLIED = "outcome applied"
-
-/** A run's recorded outcome and whether it was applied; null when the run has none. */
-async function recorded(
-  store: Store,
-  occurrenceId: string,
-): Promise<(RecordedOutcome & { applied: boolean }) | null> {
-  const events = await store.listEvents(occurrenceId)
-  const last = events.filter((e) => e.type === "outcome" && e.agent === ME).at(-1)
-  if (!last) return null
-  const applied = events.some((e) => e.type === "status" && e.agent === ME && e.text === APPLIED)
-  return { ...(JSON.parse(last.text) as RecordedOutcome), applied }
-}
+/** Times a fired run's remaining steps are retried after a Store error before it is given up. */
+export const MAX_RESUMES = 3
 
 /** The subscription's usage window is spent (plan 5.12); the lane waits until `until`. */
 class UsageLimitReached extends Error {
@@ -160,33 +171,46 @@ export class Lanes {
   constructor(private readonly d: LaneDeps) {}
 
   /**
-   * Work left running by a crash goes back to the queue. A run that had recorded its outcome
-   * resumes at delivery, and its delivery claims keep anyone from receiving it twice.
+   * On start: work left running by a crash goes back to the queue unstarted (a fired run resumes
+   * from its record), and every claim left mid-send is settled unconfirmed, never resent.
    */
   async recover(): Promise<string[]> {
-    return this.d.store.requeueRunning()
+    const ids = await this.d.store.requeueRunning()
+    await settleStaleClaims(this.d.store, this.d.clock.now(), true)
+    return ids
   }
 
   /**
-   * Runs every due notify-lane item. With a signal (the host's tick), nothing starts once it has
-   * aborted: it is checked before each run, before an outcome is stored, and before each send,
-   * so an abort leaves the rest queued and never runs a type twice (see the order above).
+   * The notify tick: every due notify-lane run, then fired runs of either lane left part way,
+   * then the sends still owed. With a signal (the host's tick), nothing new starts once it has
+   * aborted: it is checked before each run, before an outcome is stored, and before each send, so
+   * an abort leaves the rest for the next tick and never runs a type twice (the order above).
    */
   async tickNotify(signal?: AbortSignal): Promise<TickResult> {
     const result: TickResult = { ran: 0, failed: 0, skipped: 0 }
+    const count = (verdict: Verdict) => {
+      if (verdict === "stop" || verdict === "held") result.skipped++
+      else verdict === "ran" ? result.ran++ : result.failed++
+    }
+    // Listed first, so a run put back during this tick waits for the next one.
+    const unfinished = await this.unfinished()
     const due = await this.due("notify")
     for (const [i, occurrence] of due.entries()) {
       if (signal?.aborted) {
         result.skipped += due.length - i
-        break
+        return result
       }
-      const verdict = await this.runOne(occurrence, signal)
-      if (verdict === "stop" || verdict === "held") result.skipped++
-      else verdict === "ran" ? result.ran++ : result.failed++
+      count(await this.runOne(occurrence, signal))
     }
+    for (const occurrence of unfinished) {
+      if (signal?.aborted) return result
+      count(await this.resume(occurrence, signal))
+    }
+    if (!signal?.aborted) await this.deliverOwed(signal)
     return result
   }
 
+  /** The execute tick: due model runs only. What a fired run still owes goes out on the notify tick. */
   async tickExecute(): Promise<TickResult> {
     // No signal here: an execute-lane outcome cost a model call, so it is recorded, never dropped.
     const due = await this.due("execute")
@@ -242,7 +266,7 @@ export class Lanes {
     if (!occurrence) return null
     const ctx = await this.context(loaded, occurrence, now)
     const outcome = await loaded.type.onReply({ ...ctx, reply })
-    await this.apply(task, outcome, now)
+    await this.apply(task, outcome, now, null)
     if (outcome.complete) await this.complete(task, input.userId, now)
     else if (outcome.snoozeUntil) {
       await this.snooze(task, occurrence, outcome.snoozeUntil, reply, now)
@@ -251,8 +275,9 @@ export class Lanes {
   }
 
   /**
-   * The lane's due queued runs whose task is active. A paused, done or archived task's runs are
-   * left queued, never run; a run whose task is gone is kept, so it fails with the reason on record.
+   * The lane's due runs that have not fired, whose task is active. A paused, done or archived
+   * task's runs are left queued, never run; a run whose task is gone is kept, so it fails with
+   * the reason on record.
    */
   private async due(lane: Lane): Promise<Occurrence[]> {
     const queued = await this.d.store.listOccurrences({
@@ -263,6 +288,7 @@ export class Lanes {
     const status = new Map<string, TaskStatus | null>()
     const kept: Occurrence[] = []
     for (const o of queued) {
+      if (hasFired(o)) continue
       if (!status.has(o.taskId)) {
         status.set(o.taskId, (await this.d.store.getTask(o.taskId))?.status ?? null)
       }
@@ -272,18 +298,34 @@ export class Lanes {
     return kept
   }
 
-  private async load(task: Task): Promise<Loaded | { error: string }> {
-    const type = this.d.types[task.type]
-    if (!type) return { error: `no task type ${task.type}` }
+  /** Fired runs of either lane put back in the queue part way (a Store error, a crash). */
+  private async unfinished(): Promise<Occurrence[]> {
+    const queued = await this.d.store.listOccurrences({
+      status: "queued",
+      dueBefore: this.d.clock.now().toISOString(),
+    })
+    return queued.filter(hasFired)
+  }
+
+  /** The owner and accepted recipients: who a run of `task` goes to. */
+  private async audience(task: Task): Promise<{ owner: User; recipients: User[] } | null> {
     const owner = await this.d.store.getUser(task.ownerId)
-    if (!owner) return { error: `no owner ${task.ownerId}` }
+    if (!owner) return null
     const recipients: User[] = []
     for (const r of await this.d.store.listRecipients(task.id)) {
       if (r.state !== "accepted") continue
       const user = await this.d.store.getUser(r.userId)
       if (user) recipients.push(user)
     }
-    return { task, type, owner, recipients }
+    return { owner, recipients }
+  }
+
+  private async load(task: Task): Promise<Loaded | { error: string }> {
+    const type = this.d.types[task.type]
+    if (!type) return { error: `no task type ${task.type}` }
+    const people = await this.audience(task)
+    if (!people) return { error: `no owner ${task.ownerId}` }
+    return { task, type, ...people }
   }
 
   private async context(
@@ -324,128 +366,104 @@ export class Lanes {
     return found
   }
 
-  /** Stores what the outcome carries for the task: new state, series points. */
-  private async apply(task: Task, outcome: Outcome, now: Date): Promise<void> {
+  /**
+   * Stores what the outcome carries for the task: new state, series points. A run's points are
+   * keyed `<occurrence>:<index>`, so applying one outcome twice appends nothing twice.
+   */
+  private async apply(
+    task: Task,
+    outcome: Omit<Outcome, "snoozeUntil">,
+    now: Date,
+    occurrenceId: string | null,
+  ): Promise<void> {
     const { store } = this.d
     if (outcome.state !== undefined) {
       await store.updateTask(task.id, { state: outcome.state, at: now.toISOString() })
     }
-    for (const point of outcome.series ?? []) {
+    for (const [i, point] of (outcome.series ?? []).entries()) {
       await store.addSeriesPoint({
         taskId: task.id,
         at: point.at ?? now.toISOString(),
         value: point.value,
         unit: point.unit ?? null,
         note: point.note ?? null,
+        key: occurrenceId === null ? null : `${occurrenceId}:${i}`,
       })
     }
   }
 
   /**
    * The type said the task is finished: no more occurrences, status done, on record. A queued run
-   * that has not started is dropped; one still owing a delivery ends with the task.
+   * that has not fired is dropped; a fired one is kept, to finish, and what any run still owes
+   * its recipients goes on being sent.
    */
   private async complete(task: Task, actorId: string | null, now: Date): Promise<void> {
     const { store } = this.d
     const at = now.toISOString()
     for (const o of await store.listOccurrences({ taskId: task.id, status: "queued" })) {
-      if (o.startedAt === null) await store.deleteOccurrence(o.id)
-      else await store.updateOccurrence(o.id, { status: "done", finishedAt: at })
+      if (!hasFired(o)) await store.deleteOccurrence(o.id)
     }
     await store.updateTask(task.id, { status: "done", at })
     await store.addTaskEvent({ taskId: task.id, actorId, kind: "completed", detail: "", at })
   }
 
   /**
-   * Runs one due item, or finishes the delivery a run still owes (the order is in the header).
-   * `held` and `stop` leave it queued: `held` when its owner is at a ceiling (the lane goes on to
-   * other owners), `stop` when nothing else in the lane can run either -- the executor is
+   * Runs one due item (the order is in the header). `held` and `stop` leave it queued: `held`
+   * when its owner is at a ceiling (the lane goes on to other owners) or it is no longer due when
+   * re-checked, `stop` when nothing else in the lane can run either -- the executor is
    * unavailable, everyone is at the global ceiling, the usage limit was hit, or the tick aborted.
    */
   private async runOne(occurrence: Occurrence, signal?: AbortSignal): Promise<Verdict> {
     const { store, clock } = this.d
     const task = await store.getTask(occurrence.taskId)
     if (!task) return this.fail(occurrence, `no task ${occurrence.taskId}`)
+    // Re-checked: the task may have been paused since the lane listed its due runs.
+    if (task.status !== "active") return "held"
     const loaded = await this.load(task)
     if ("error" in loaded) return this.fail(occurrence, loaded.error)
-    const record = await recorded(store, occurrence.id)
-    if (!record && loaded.type.lane === "execute") {
+    if (loaded.type.lane === "execute") {
       const held = await this.budgetCheck(loaded.owner)
       if (held) return held
     }
-    if (signal?.aborted) return "stop"
+    const now = clock.now()
+    const late = isLate(occurrence, now)
+    // Started only if it is still queued: another tick, a reply or a reschedule may have moved it.
+    const started = await store.updateOccurrenceIf(occurrence.id, "queued", {
+      status: "running",
+      startedAt: now.toISOString(),
+      late,
+      error: null,
+    })
+    if (!started || hasFired(started)) return "held"
+    await this.event(occurrence, "status", late ? "started late" : "started")
+    let record: RunRecord
     try {
-      let outcome: Outcome
-      let costUsd: number | null
-      if (record) {
-        ;({ outcome, costUsd } = record)
-        await store.updateOccurrence(occurrence.id, { status: "running" })
-        await this.event(occurrence, "status", "finishing delivery")
-      } else {
-        const now = clock.now()
-        const late = isLate(occurrence, now)
-        await store.updateOccurrence(occurrence.id, {
-          status: "running",
-          startedAt: now.toISOString(),
-          late,
-          error: null,
-        })
-        await this.event(occurrence, "status", late ? "started late" : "started")
-        const ctx = await this.context(loaded, occurrence, now)
-        ;({ outcome, costUsd } = await this.execute(loaded.type, ctx, occurrence))
-        if (signal?.aborted) {
-          await this.requeue(occurrence, "the tick was aborted before the outcome was stored")
-          return "stop"
-        }
-        const { snoozeUntil: _replyOnly, ...kept } = outcome
-        await this.event(occurrence, "outcome", JSON.stringify({ outcome: kept, costUsd }))
+      const ctx = await this.context(loaded, started, now)
+      const { outcome, costUsd } = await this.execute(loaded.type, ctx, started)
+      if (signal?.aborted) {
+        await this.requeue(started, "the tick was aborted before the outcome was stored")
+        return "stop"
       }
-      if (!record?.applied) {
-        await this.apply(task, outcome, clock.now())
-        await this.event(occurrence, "status", APPLIED)
-      }
-      const report = outcome.notify
-        ? await deliver(
-            store,
-            this.d.notifier,
-            occurrence,
-            [loaded.owner, ...loaded.recipients],
-            outcome.notify,
-            {
-              now: () => clock.now(),
-              attempts: this.d.deliveryAttempts ?? DEFAULT_DELIVERY_ATTEMPTS,
-              ...(signal ? { signal } : {}),
-            },
-          )
-        : null
-      // The owner may have snoozed this run while the rest were still being sent; keep that.
-      const snoozed = (await store.getOccurrence(occurrence.id))?.status === "snoozed"
-      if (report && !snoozed && (await this.owesDelivery(occurrence, task, report))) {
-        await store.updateOccurrence(occurrence.id, { summary: outcome.summary ?? null, costUsd })
-        return signal?.aborted ? "stop" : "ran"
-      }
-      await store.updateOccurrence(occurrence.id, {
-        status: snoozed ? "snoozed" : "done",
-        finishedAt: clock.now().toISOString(),
-        summary: outcome.summary ?? null,
+      const { snoozeUntil: _replyOnly, ...kept } = outcome
+      record = {
+        outcome: kept,
         costUsd,
-      })
-      if (outcome.complete) await this.complete(task, null, clock.now())
-      else await this.next(task, loaded.owner)
-      return "ran"
+        firedAt: clock.now().toISOString(),
+        appliedAt: null,
+        resumes: 0,
+      }
+      await store.updateOccurrence(started.id, { record })
     } catch (err) {
       if (err instanceof ExecutorUnavailableError || err instanceof UsageLimitReached) {
-        // A snooze the owner pressed while the run was in flight stands, as in fail().
-        const snoozed = (await store.getOccurrence(occurrence.id))?.status === "snoozed"
-        if (snoozed) await this.event(occurrence, "status", `waiting: ${err.message}`)
-        else await this.requeue(occurrence, err.message)
+        await this.requeue(started, err.message)
         if (err instanceof UsageLimitReached) await this.usageLimit(err)
         return "stop"
       }
-      await this.fail(occurrence, err instanceof Error ? err.message : String(err))
+      await this.fail(started, err instanceof Error ? err.message : String(err))
       await this.next(task, loaded.owner)
       return "failed"
     }
+    return this.finishFired({ ...started, record }, task, record, signal)
   }
 
   /** Back to the queue unstarted: nothing of this attempt was stored, so it runs afresh. */
@@ -454,37 +472,164 @@ export class Lanes {
     await this.d.store.updateOccurrence(occurrence.id, { status: "queued", startedAt: null })
   }
 
+  /** A fired run put back part way: its remaining steps, from its record. The type never runs. */
+  private async resume(occurrence: Occurrence, signal?: AbortSignal): Promise<Verdict> {
+    const { store, clock } = this.d
+    const started = await store.updateOccurrenceIf(occurrence.id, "queued", {
+      status: "running",
+    })
+    if (!started) return "held"
+    const record = parseRunRecord(started.record)
+    const task = await store.getTask(started.taskId)
+    if (!record || !task) {
+      const error = record ? `no task ${started.taskId}` : "the run's record could not be read"
+      await this.event(started, "error", error)
+      await store.updateOccurrence(started.id, {
+        status: "done",
+        finishedAt: clock.now().toISOString(),
+        error,
+      })
+      await dropOwed(
+        store,
+        await store.listDeliveries({ occurrenceId: started.id }),
+        error,
+        clock.now(),
+      )
+      return "failed"
+    }
+    await this.event(started, "status", "resumed")
+    return this.finishFired(started, task, record, signal)
+  }
+
   /**
-   * Whether the run goes back to the queue to finish its delivery, and if so puts it there with
-   * its start time kept. It does while a send was deferred or failed short of the attempt limit
-   * and the task is still active; and while the task is paused -- the host's pause rule reacting
-   * to these failures -- with the failed sends' attempts counted afresh, so the resume retries.
+   * Steps 4 to 7 of a fired run (the header). Resumable: each step is idempotent or marked done
+   * on the record, so a run put back after a Store error picks up where it stopped.
    */
-  private async owesDelivery(
+  private async finishFired(
     occurrence: Occurrence,
     task: Task,
-    report: DeliveryReport,
-  ): Promise<boolean> {
+    record: RunRecord,
+    signal?: AbortSignal,
+  ): Promise<Verdict> {
     const { store, clock } = this.d
-    const status = (await store.getTask(task.id))?.status
-    const retrying = report.deferred.length > 0 || report.failed.some((f) => !f.gaveUp)
-    const paused = status === "paused" && (report.deferred.length > 0 || report.failed.length > 0)
-    if (!paused && !(retrying && status === "active")) return false
-    if (paused) {
-      for (const f of report.failed) {
-        await store.settleDelivery(occurrence.id, f.userId, {
-          status: "failed",
-          error: f.error,
-          attempts: 0,
-          at: clock.now().toISOString(),
-        })
+    const { outcome } = record
+    let people: { owner: User; recipients: User[] } | null = null
+    try {
+      people = await this.audience(task)
+      if (people && !outcome.complete) await this.next(task, people.owner)
+      if (record.appliedAt === null) {
+        await this.apply(task, outcome, new Date(record.firedAt), occurrence.id)
+        const applied = { ...record, appliedAt: clock.now().toISOString() }
+        await store.updateOccurrence(occurrence.id, { record: applied })
+        record = applied
+      }
+      if (outcome.notify && people) {
+        const at = clock.now().toISOString()
+        // A snooze's run re-asks the owner; recipients had their copy of the run it re-asks.
+        const snoozeRun = occurrence.dedupeKey.startsWith(SNOOZE_PREFIX)
+        const to = snoozeRun ? [people.owner] : [people.owner, ...people.recipients]
+        for (const u of to) await store.planDelivery(occurrence.id, u.id, at)
+      }
+      // The owner may have snoozed this run in the meantime; keep that.
+      const snoozed = (await store.getOccurrence(occurrence.id))?.status === "snoozed"
+      await store.updateOccurrence(occurrence.id, {
+        status: snoozed ? "snoozed" : "done",
+        finishedAt: clock.now().toISOString(),
+        summary: outcome.summary ?? null,
+        costUsd: record.costUsd,
+        error: people ? null : `no owner ${task.ownerId}`,
+      })
+      const current = await store.getTask(task.id)
+      if (outcome.complete && current && current.status !== "done") {
+        await this.complete(current, null, clock.now())
+      }
+    } catch (err) {
+      return this.putBack(occurrence, record, err)
+    }
+    if (outcome.notify && people) {
+      try {
+        await this.deliverRun(occurrence, task, people, outcome.notify, signal)
+      } catch {
+        // A Store error mid-send: the rows stay owed (a claim left open settles as unconfirmed).
       }
     }
-    const failed = report.failed.filter((f) => paused || !f.gaveUp).map((f) => f.userId)
-    const owed = [...report.deferred, ...failed]
-    await this.event(occurrence, "status", `waiting to deliver to ${owed.join(", ")}`)
-    await store.updateOccurrence(occurrence.id, { status: "queued" })
-    return true
+    return "ran"
+  }
+
+  /** After a Store error past the record: back to the queue to resume, a bounded number of times. */
+  private async putBack(occurrence: Occurrence, record: RunRecord, err: unknown): Promise<Verdict> {
+    const { store, clock } = this.d
+    const message = err instanceof Error ? err.message : String(err)
+    const resumes = record.resumes + 1
+    await this.event(occurrence, "error", message)
+    if (resumes > MAX_RESUMES) {
+      // The type did not fail, so neither does the run: it ends with the error on record.
+      await store.updateOccurrence(occurrence.id, {
+        status: "done",
+        finishedAt: clock.now().toISOString(),
+        error: `could not finish after ${MAX_RESUMES} tries: ${message}`,
+      })
+      return "failed"
+    }
+    await store.updateOccurrence(occurrence.id, {
+      status: "queued",
+      startedAt: null,
+      record: { ...record, resumes },
+    })
+    return "held"
+  }
+
+  /** Sends what a run owes now, to the owner and whoever still receives the task. */
+  private async deliverRun(
+    occurrence: Occurrence,
+    task: Task,
+    people: { owner: User; recipients: User[] },
+    message: NonNullable<Outcome["notify"]>,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    const targets = new Map<string, User>()
+    for (const u of [people.owner, ...people.recipients]) targets.set(u.id, u)
+    await deliver(this.d.store, this.d.notifier, occurrence, task.ownerId, targets, message, {
+      now: () => this.d.clock.now(),
+      policy: this.d.delivery ?? DEFAULT_DELIVERY_POLICY,
+      ...(signal ? { signal } : {}),
+    })
+  }
+
+  /**
+   * The sends still owed and due (retries, deferrals, rows a crash or an abort left), grouped by
+   * run, from each run's recorded message. A paused task's rows wait (a pause buys them a fresh
+   * round); rows whose run, record or task is gone, or whose task was archived, end unsent. A
+   * claim left open past `STALE_CLAIM_MS` settles as unconfirmed. Writes no event.
+   */
+  private async deliverOwed(signal?: AbortSignal): Promise<void> {
+    const { store, clock } = this.d
+    await settleStaleClaims(store, clock.now())
+    const byRun = new Map<string, Delivery[]>()
+    for (const row of await store.listDeliveries({ dueBefore: clock.now().toISOString() })) {
+      byRun.set(row.occurrenceId, [...(byRun.get(row.occurrenceId) ?? []), row])
+    }
+    for (const [occurrenceId, rows] of byRun) {
+      if (signal?.aborted) return
+      try {
+        const occurrence = await store.getOccurrence(occurrenceId)
+        const record = occurrence ? parseRunRecord(occurrence.record) : null
+        const task = occurrence ? await store.getTask(occurrence.taskId) : null
+        const message = record?.outcome.notify
+        const people = task ? await this.audience(task) : null
+        if (!occurrence || !message || !task || !people || task.status === "archived") {
+          await dropOwed(store, rows, "the run or its task is gone", clock.now())
+          continue
+        }
+        if (task.status === "paused") {
+          await freshRoundForPause(store, rows)
+          continue
+        }
+        await this.deliverRun(occurrence, task, people, message, signal)
+      } catch {
+        // A Store error: the rows stay owed and are tried again on a later tick.
+      }
+    }
   }
 
   /** `held` or `stop` when a ceiling keeps the owner's run from starting; the notices go once. */
@@ -624,7 +769,7 @@ export class Lanes {
 
   private async event(
     occurrence: Occurrence,
-    type: "status" | "error" | "outcome",
+    type: "status" | "error",
     text: string,
   ): Promise<void> {
     await this.d.store.addEvent({

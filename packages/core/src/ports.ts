@@ -12,6 +12,7 @@ import type {
   OccurrenceStatus,
   Reply,
   ReplyKind,
+  RunRecord,
   SeriesPoint,
   Task,
   TaskEvent,
@@ -72,10 +73,11 @@ export interface MessageRef {
 
 /**
  * Sends to a user, never to a channel, at tier 0 (plan 5.5). How a send fails says what `deliver`
- * does next: `DeliveryFailedError` when nothing went out (retried, up to a limit),
- * `ExecutorUnavailableError` to defer the send (not now, nothing went out, no attempt counted),
- * and any other error when the send may have gone out (never resent). A Notifier keeps no claim
- * of its own: `deliver` claims each send in the Store before it calls `sendDm`.
+ * does next: `DeliveryFailedError` when nothing went out -- failed for good at once when
+ * `unreachable`, else retried with a backoff up to a limit; `ExecutorUnavailableError` to defer
+ * the send (not now, nothing went out, no attempt counted; retried with a backoff up to its own
+ * limit); any other error when the send may have gone out (unconfirmed, never resent). A Notifier
+ * keeps no claim of its own: `deliver` claims each send in the Store before it calls `sendDm`.
  */
 export interface Notifier {
   sendDm(userId: string, message: OutgoingMessage): Promise<{ messageId: string }>
@@ -188,6 +190,7 @@ export interface OccurrencePatch {
   summary?: string | null
   costUsd?: number | null
   error?: string | null
+  record?: RunRecord | null
 }
 
 export interface OccurrenceFilter {
@@ -237,6 +240,8 @@ export interface NewSeriesPoint {
   value: number
   unit?: string | null
   note?: string | null
+  /** A point with a key already stored is not added again (`SeriesPoint.key`). */
+  key?: string | null
 }
 
 export interface SeriesFilter {
@@ -258,7 +263,10 @@ export interface NewUsage {
 
 export interface DeliveryFilter {
   occurrenceId?: string
+  userId?: string
   status?: DeliveryStatus
+  /** Inclusive: owed rows whose `retryAt` is at or before this instant. */
+  dueBefore?: string
 }
 
 /** What settling a claim writes; every field is written, so an absent detail clears it. */
@@ -267,6 +275,9 @@ export interface DeliverySettle {
   messageId?: string | null
   error?: string | null
   attempts: number
+  deferrals: number
+  /** When to try again; null makes the row final. */
+  retryAt: string | null
   at: string
 }
 
@@ -321,7 +332,20 @@ export interface Store {
    * replaces through it (`reschedule`), one row at a time, so a snooze's run survives.
    */
   deleteOccurrence(id: string): Promise<boolean>
-  /** Work left running by a crash goes back to the queue on start. Returns the ids. */
+  /**
+   * Compare-and-set: applies `patch` only while the row's status is `expected`, and returns the
+   * row as patched, or null -- changing nothing -- when it is not. Atomic, so two lanes or two
+   * overlapping ticks never both start one run.
+   */
+  updateOccurrenceIf(
+    id: string,
+    expected: OccurrenceStatus,
+    patch: OccurrencePatch,
+  ): Promise<Occurrence | null>
+  /**
+   * Work left running by a crash goes back to the queue on start, fully unstarted: status
+   * `queued`, `startedAt` null (its `record`, if any, is kept). Returns the ids.
+   */
   requeueRunning(lane?: Lane): Promise<string[]>
 
   addEvent(event: NewEvent): Promise<OccurrenceEvent>
@@ -348,14 +372,21 @@ export interface Store {
   claimNotice(key: string, at: string): Promise<boolean>
 
   /**
-   * Claims one recipient's copy of a run before it is sent (plan 5.5). With no row, writes one
-   * `claimed` with no attempts; with a `failed` row, takes it again as `claimed` (message id,
-   * error and settled time cleared, attempts kept). Returns the claim, or null -- changing
-   * nothing -- when any other row exists. Atomic: two callers never both get the claim.
+   * Plans one recipient's copy of a run when it fires: a `pending` row owed from `at` (`retryAt`
+   * = `at`), no attempts or deferrals. Null -- changing nothing -- when the row exists, so
+   * planning twice is a no-op.
+   */
+  planDelivery(occurrenceId: string, userId: string, at: string): Promise<Delivery | null>
+  /**
+   * Claims an owed row (`retryAt` set) before its send: status `claimed`, `claimedAt` = `at`,
+   * `retryAt` null, the rest kept. Null -- changing nothing -- when there is no row or it is not
+   * owed. Atomic: two callers never both get the claim.
    */
   claimDelivery(occurrenceId: string, userId: string, at: string): Promise<Delivery | null>
-  /** Writes a claim's outcome. Throws when there is no row. */
+  /** Writes a row's outcome (`settledAt` = `settle.at`). Throws when there is no row. */
   settleDelivery(occurrenceId: string, userId: string, settle: DeliverySettle): Promise<Delivery>
-  /** Oldest claim first. */
+  /** Oldest row first (by `createdAt`, then insertion). */
   listDeliveries(filter?: DeliveryFilter): Promise<Delivery[]>
+  /** Forget-me: deletes every delivery row for this person. Returns how many. */
+  deleteDeliveries(userId: string): Promise<number>
 }
