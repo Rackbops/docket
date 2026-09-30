@@ -24,8 +24,3 @@ export function snoozeKey(occurrenceId: string): string {
 }
 
 export const SNOOZE_PREFIX = "snooze:"
-
-/** city-hall's issue-label claim, `(repo, issue, workflow)`, re-homed (plan 5.11). */
-export function issueKey(repo: string, issue: number, workflow: string): string {
-  return `issue:${repo}:${issue}:${workflow}`
-}

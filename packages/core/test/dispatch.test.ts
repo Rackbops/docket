@@ -5,10 +5,10 @@ import {
   type Executor,
   ExecutorUnavailableError,
   invite,
-  issueKey,
   type JobResult,
   type JobSpec,
   Lanes,
+  manualKey,
   respondToInvite,
   type Schedule,
   type TaskType,
@@ -113,7 +113,7 @@ async function setup(executor?: Executor | null, fetch?: FakeFetch) {
 describe("two lanes", () => {
   it("never lets a queued agent item delay a due reminder", async () => {
     const { store, clock, notifier, lanes, larry } = await setup()
-    // An issue-label research item, claimed and due, with no runtime to run it.
+    // A research run asked for now, with no runtime to run it.
     const { task: agentTask } = await createTask(
       store,
       actor(larry),
@@ -125,7 +125,7 @@ describe("two lanes", () => {
       taskId: agentTask.id,
       lane: "execute",
       dueAt: T0,
-      dedupeKey: issueKey("o/r", 1, "research"),
+      dedupeKey: manualKey(agentTask.id, 1),
       at: T0,
     })
     // A reminder due at 09:00 EST today.

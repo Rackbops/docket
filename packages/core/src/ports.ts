@@ -3,6 +3,8 @@ import type { JobResult, JobSpec } from "./job.js"
 import type { Lane } from "./lanes.js"
 import type {
   ConsentState,
+  Delivery,
+  DeliveryStatus,
   EventType,
   InviteBlock,
   Occurrence,
@@ -10,6 +12,7 @@ import type {
   OccurrenceStatus,
   Reply,
   ReplyKind,
+  RunRecord,
   SeriesPoint,
   Task,
   TaskEvent,
@@ -24,24 +27,26 @@ import type { Schedule } from "./schedule.js"
 
 /**
  * The ports (plan section 5.1): everything the core needs from the outside world, as interfaces a
- * host implements. city-hall supplies SQLite, usr, Discord through discord-ai, recall and the
- * runner; the tests supply in-memory fakes. Nothing in the core imports a platform.
+ * host implements. The host is the Rackbops tracker plugin on rackbops-discord-bot (plan rev17,
+ * items 36 to 40): it supplies the SQLite store with people in it, Discord DMs, the clock, a
+ * fenced fetch, and an Executor that submits model Jobs to city-hall, which only runs them
+ * through the runner (plan 5.12). The tests supply in-memory fakes. Nothing in the core imports a
+ * platform.
  */
 
 export interface Clock {
   now(): Date
 }
 
-/** Who is acting: the tracker's user id and whether usr says they hold `city-hall:admin`. */
+/** Who is acting: the tracker's user id and the tracker's own admin flag (plan 5.8, 5.10). */
 export interface Actor {
   userId: string
   admin: boolean
 }
 
-/** Resolves the people usr knows to the tracker's users (plan 5.8, 5.10). */
+/** Resolves a Discord user to the tracker's user, from the tracker's own store (plan 5.8). */
 export interface Identity {
   actorForDiscord(discordId: string): Promise<Actor | null>
-  actorForSubject(usrSubject: string): Promise<Actor | null>
 }
 
 export interface OutgoingMessage {
@@ -66,9 +71,31 @@ export interface MessageRef {
   occurrenceId: string | null
 }
 
-/** Sends to a user, never to a channel, at tier 0 (plan 5.5). */
+/**
+ * Sends to a user, never to a channel, at tier 0 (plan 5.5). How a send fails says what `deliver`
+ * does next: `DeliveryFailedError` when nothing went out -- failed for good at once when
+ * `unreachable`, else retried with a backoff up to a limit; `ExecutorUnavailableError` to defer
+ * the send (not now, nothing went out, no attempt counted; retried with a backoff up to its own
+ * limit); any other error when the send may have gone out (unconfirmed, never resent). A Notifier
+ * keeps no claim of its own: `deliver` claims each send in the Store before it calls `sendDm`.
+ */
 export interface Notifier {
   sendDm(userId: string, message: OutgoingMessage): Promise<{ messageId: string }>
+}
+
+/**
+ * Thrown by a Notifier when a send failed and nothing went out: the message can be sent again.
+ * `unreachable` says the person cannot be messaged at all (DMs closed, left the server, the bot
+ * blocked) -- what a host's pause-after-three rule counts (plan 5.5, item 49).
+ */
+export class DeliveryFailedError extends Error {
+  override name = "DeliveryFailedError"
+  constructor(
+    message: string,
+    readonly unreachable = false,
+  ) {
+    super(message)
+  }
 }
 
 /** Runs one Job through the runner and returns what came back (plan 5.12). */
@@ -76,21 +103,12 @@ export interface Executor {
   run(spec: JobSpec, occurrenceId: string): Promise<JobResult>
 }
 
-/** Thrown by an Executor whose runtime is not there; the lane skips, it never fails the item. */
+/**
+ * Thrown by an Executor whose runtime is not there; the lane skips, it never fails the item. From
+ * a Notifier it defers one send: nothing went out, and the run finishes its delivery later.
+ */
 export class ExecutorUnavailableError extends Error {
   override name = "ExecutorUnavailableError"
-}
-
-export interface Finding {
-  text: string
-  tags?: string[]
-  source?: string
-}
-
-/** A person's own pool in recall, written with a delegation token by the host (plan 5.9). */
-export interface Memory {
-  remember(ownerId: string, finding: Finding): Promise<{ id: string }>
-  search(ownerId: string, query: string, limit?: number): Promise<Array<Finding & { id: string }>>
 }
 
 export interface FetchResponse {
@@ -108,7 +126,6 @@ export interface Fetch {
 
 export interface NewUser {
   discordId?: string | null
-  usrSubject?: string | null
   displayName?: string | null
   timeZone?: string
   preferredHour?: number
@@ -118,7 +135,6 @@ export interface NewUser {
 
 export interface UserPatch {
   discordId?: string | null
-  usrSubject?: string | null
   displayName?: string | null
   timeZone?: string
   preferredHour?: number
@@ -174,6 +190,7 @@ export interface OccurrencePatch {
   summary?: string | null
   costUsd?: number | null
   error?: string | null
+  record?: RunRecord | null
 }
 
 export interface OccurrenceFilter {
@@ -223,6 +240,8 @@ export interface NewSeriesPoint {
   value: number
   unit?: string | null
   note?: string | null
+  /** A point with a key already stored is not added again (`SeriesPoint.key`). */
+  key?: string | null
 }
 
 export interface SeriesFilter {
@@ -242,6 +261,26 @@ export interface NewUsage {
   at: string
 }
 
+export interface DeliveryFilter {
+  occurrenceId?: string
+  userId?: string
+  status?: DeliveryStatus
+  /** Inclusive: owed rows whose `retryAt` is at or before this instant. */
+  dueBefore?: string
+}
+
+/** What settling a claim writes; every field is written, so an absent detail clears it. */
+export interface DeliverySettle {
+  status: Exclude<DeliveryStatus, "claimed">
+  messageId?: string | null
+  error?: string | null
+  attempts: number
+  deferrals: number
+  /** When to try again; null makes the row final. */
+  retryAt: string | null
+  at: string
+}
+
 export interface UsageFilter {
   userId?: string
   /** Inclusive: charges at or after this instant. */
@@ -258,7 +297,6 @@ export interface UsageFilter {
 export interface Store {
   getUser(id: string): Promise<User | null>
   findUserByDiscordId(discordId: string): Promise<User | null>
-  findUserBySubject(usrSubject: string): Promise<User | null>
   createUser(user: NewUser): Promise<User>
   updateUser(id: string, patch: UserPatch): Promise<User>
   /** In creation order. */
@@ -289,9 +327,25 @@ export interface Store {
   /** Ordered by due instant, then creation. */
   listOccurrences(filter?: OccurrenceFilter): Promise<Occurrence[]>
   updateOccurrence(id: string, patch: OccurrencePatch): Promise<Occurrence>
-  /** A schedule edit cancels and replaces: drop the task's queued occurrences. Returns how many. */
-  deleteQueuedOccurrences(taskId: string): Promise<number>
-  /** Work left running by a crash goes back to the queue on start. Returns the ids. */
+  /**
+   * Deletes the occurrence if it is still `queued`; true when it did. A schedule edit cancels and
+   * replaces through it (`reschedule`), one row at a time, so a snooze's run survives.
+   */
+  deleteOccurrence(id: string): Promise<boolean>
+  /**
+   * Compare-and-set: applies `patch` only while the row's status is `expected`, and returns the
+   * row as patched, or null -- changing nothing -- when it is not. Atomic, so two lanes or two
+   * overlapping ticks never both start one run.
+   */
+  updateOccurrenceIf(
+    id: string,
+    expected: OccurrenceStatus,
+    patch: OccurrencePatch,
+  ): Promise<Occurrence | null>
+  /**
+   * Work left running by a crash goes back to the queue on start, fully unstarted: status
+   * `queued`, `startedAt` null (its `record`, if any, is kept). Returns the ids.
+   */
   requeueRunning(lane?: Lane): Promise<string[]>
 
   addEvent(event: NewEvent): Promise<OccurrenceEvent>
@@ -316,4 +370,23 @@ export interface Store {
    * claimed, false on every later call with the same key, across restarts.
    */
   claimNotice(key: string, at: string): Promise<boolean>
+
+  /**
+   * Plans one recipient's copy of a run when it fires: a `pending` row owed from `at` (`retryAt`
+   * = `at`), no attempts or deferrals. Null -- changing nothing -- when the row exists, so
+   * planning twice is a no-op.
+   */
+  planDelivery(occurrenceId: string, userId: string, at: string): Promise<Delivery | null>
+  /**
+   * Claims an owed row (`retryAt` set) before its send: status `claimed`, `claimedAt` = `at`,
+   * `retryAt` null, the rest kept. Null -- changing nothing -- when there is no row or it is not
+   * owed. Atomic: two callers never both get the claim.
+   */
+  claimDelivery(occurrenceId: string, userId: string, at: string): Promise<Delivery | null>
+  /** Writes a row's outcome (`settledAt` = `settle.at`). Throws when there is no row. */
+  settleDelivery(occurrenceId: string, userId: string, settle: DeliverySettle): Promise<Delivery>
+  /** Oldest row first (by `createdAt`, then insertion). */
+  listDeliveries(filter?: DeliveryFilter): Promise<Delivery[]>
+  /** Forget-me: deletes every delivery row for this person. Returns how many. */
+  deleteDeliveries(userId: string): Promise<number>
 }

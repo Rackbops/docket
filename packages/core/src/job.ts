@@ -9,7 +9,11 @@
 export interface JobSpec {
   /** The whole prompt; the runner sends it on stdin, never argv. */
   prompt: string
-  /** `--model`; the runner's default applies when absent. */
+  /**
+   * `--model`; the runner's default applies when absent. Open (plan item 43, Nazu's to agree):
+   * city-hall#16's RQ-003 has a task name an agent capability tag and city-hall choose the agent,
+   * so this may become a hint, part of a tag, or go. Until then no type sets it.
+   */
   model?: string
   /** `--json-schema`; when present the result must carry `structuredOutput`. */
   jsonSchema?: Record<string, unknown>

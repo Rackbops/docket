@@ -1,9 +1,11 @@
 import type { Lane } from "./lanes.js"
 import type {
   ConsentState,
+  Delivery,
   InviteBlock,
   Occurrence,
   OccurrenceEvent,
+  OccurrenceStatus,
   Reply,
   SeriesPoint,
   Task,
@@ -13,6 +15,8 @@ import type {
   User,
 } from "./model.js"
 import type {
+  DeliveryFilter,
+  DeliverySettle,
   NewBlock,
   NewEvent,
   NewOccurrence,
@@ -49,6 +53,7 @@ export class MemoryStore implements Store {
   private readonly series: SeriesPoint[] = []
   private readonly usage: Usage[] = []
   private readonly notices = new Set<string>()
+  private readonly deliveries = new Map<string, Delivery>()
   private seq = 0
 
   private id(prefix: string): string {
@@ -69,16 +74,10 @@ export class MemoryStore implements Store {
     return MemoryStore.copy(hit ?? null)
   }
 
-  async findUserBySubject(usrSubject: string): Promise<User | null> {
-    const hit = [...this.users.values()].find((u) => u.usrSubject === usrSubject)
-    return MemoryStore.copy(hit ?? null)
-  }
-
   async createUser(input: NewUser): Promise<User> {
     const user: User = {
       id: this.id("u"),
       discordId: input.discordId ?? null,
-      usrSubject: input.usrSubject ?? null,
       displayName: input.displayName ?? null,
       timeZone: input.timeZone ?? "UTC",
       preferredHour: input.preferredHour ?? 9,
@@ -94,7 +93,6 @@ export class MemoryStore implements Store {
     if (!cur) throw new Error(`no user ${id}`)
     const next: User = { ...cur }
     if (patch.discordId !== undefined) next.discordId = patch.discordId
-    if (patch.usrSubject !== undefined) next.usrSubject = patch.usrSubject
     if (patch.displayName !== undefined) next.displayName = patch.displayName
     if (patch.timeZone !== undefined) next.timeZone = patch.timeZone
     if (patch.preferredHour !== undefined) next.preferredHour = patch.preferredHour
@@ -223,6 +221,7 @@ export class MemoryStore implements Store {
       summary: null,
       costUsd: null,
       error: null,
+      record: null,
       createdAt: input.at,
     }
     this.occurrences.set(occurrence.id, occurrence)
@@ -254,26 +253,30 @@ export class MemoryStore implements Store {
     if (patch.summary !== undefined) next.summary = patch.summary
     if (patch.costUsd !== undefined) next.costUsd = patch.costUsd
     if (patch.error !== undefined) next.error = patch.error
+    if (patch.record !== undefined) next.record = MemoryStore.copy(patch.record)
     this.occurrences.set(id, next)
     return MemoryStore.copy(next)
   }
 
-  async deleteQueuedOccurrences(taskId: string): Promise<number> {
-    let removed = 0
-    for (const [id, o] of this.occurrences) {
-      if (o.taskId === taskId && o.status === "queued") {
-        this.occurrences.delete(id)
-        removed += 1
-      }
-    }
-    return removed
+  async updateOccurrenceIf(
+    id: string,
+    expected: OccurrenceStatus,
+    patch: OccurrencePatch,
+  ): Promise<Occurrence | null> {
+    if (this.occurrences.get(id)?.status !== expected) return null
+    return this.updateOccurrence(id, patch)
+  }
+
+  async deleteOccurrence(id: string): Promise<boolean> {
+    if (this.occurrences.get(id)?.status !== "queued") return false
+    return this.occurrences.delete(id)
   }
 
   async requeueRunning(lane?: Lane): Promise<string[]> {
     const ids: string[] = []
     for (const [id, o] of this.occurrences) {
       if (o.status === "running" && (lane === undefined || o.lane === lane)) {
-        this.occurrences.set(id, { ...o, status: "queued" })
+        this.occurrences.set(id, { ...o, status: "queued", startedAt: null })
         ids.push(id)
       }
     }
@@ -315,9 +318,13 @@ export class MemoryStore implements Store {
   }
 
   async addSeriesPoint(input: NewSeriesPoint): Promise<SeriesPoint> {
+    const key = input.key ?? null
+    const known = key === null ? undefined : this.series.find((p) => p.key === key)
+    if (known) return MemoryStore.copy(known)
     const point: SeriesPoint = {
       id: this.id("s"),
       taskId: input.taskId,
+      key,
       at: input.at,
       value: input.value,
       unit: input.unit ?? null,
@@ -355,5 +362,78 @@ export class MemoryStore implements Store {
     if (this.notices.has(key)) return false
     this.notices.add(key)
     return true
+  }
+
+  async planDelivery(occurrenceId: string, userId: string, at: string): Promise<Delivery | null> {
+    const key = `${occurrenceId}:${userId}`
+    if (this.deliveries.has(key)) return null
+    const row: Delivery = {
+      occurrenceId,
+      userId,
+      status: "pending",
+      messageId: null,
+      error: null,
+      attempts: 0,
+      deferrals: 0,
+      retryAt: at,
+      createdAt: at,
+      claimedAt: null,
+      settledAt: null,
+    }
+    this.deliveries.set(key, row)
+    return MemoryStore.copy(row)
+  }
+
+  async claimDelivery(occurrenceId: string, userId: string, at: string): Promise<Delivery | null> {
+    const key = `${occurrenceId}:${userId}`
+    const cur = this.deliveries.get(key)
+    if (!cur || cur.retryAt === null) return null
+    const claim: Delivery = { ...cur, status: "claimed", claimedAt: at, retryAt: null }
+    this.deliveries.set(key, claim)
+    return MemoryStore.copy(claim)
+  }
+
+  async settleDelivery(
+    occurrenceId: string,
+    userId: string,
+    settle: DeliverySettle,
+  ): Promise<Delivery> {
+    const key = `${occurrenceId}:${userId}`
+    const cur = this.deliveries.get(key)
+    if (!cur) throw new Error(`no delivery ${key}`)
+    const next: Delivery = {
+      ...cur,
+      status: settle.status,
+      messageId: settle.messageId ?? null,
+      error: settle.error ?? null,
+      attempts: settle.attempts,
+      deferrals: settle.deferrals,
+      retryAt: settle.retryAt,
+      settledAt: settle.at,
+    }
+    this.deliveries.set(key, next)
+    return MemoryStore.copy(next)
+  }
+
+  async listDeliveries(filter: DeliveryFilter = {}): Promise<Delivery[]> {
+    const due = filter.dueBefore
+    return [...this.deliveries.values()]
+      .filter((d) => filter.occurrenceId === undefined || d.occurrenceId === filter.occurrenceId)
+      .filter((d) => filter.userId === undefined || d.userId === filter.userId)
+      .filter((d) => filter.status === undefined || d.status === filter.status)
+      .filter((d) => due === undefined || (d.retryAt !== null && d.retryAt <= due))
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+      .map((d) => MemoryStore.copy(d))
+  }
+
+  async deleteDeliveries(userId: string): Promise<number> {
+    let removed = 0
+    for (const [key, d] of this.deliveries) {
+      if (d.userId === userId) {
+        this.deliveries.delete(key)
+        removed += 1
+      }
+    }
+    return removed
   }
 }

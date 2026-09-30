@@ -1,10 +1,12 @@
 import type {
+  Delivery,
   Occurrence,
   OccurrenceEvent,
   Reply,
   SeriesPoint,
   Task,
   TaskEvent,
+  TaskEventKind,
   TaskRecipient,
 } from "./model.js"
 import type { Actor, SeriesFilter, Store, TaskFilter } from "./ports.js"
@@ -47,15 +49,30 @@ export async function visibleTasks(
   return out
 }
 
+/** Whether `actor` sees the whole of a task's runs: its owner or an admin, not a recipient. */
+function seesAll(actor: Actor, task: Task): boolean {
+  return actor.admin || task.ownerId === actor.userId
+}
+
+/**
+ * The task's runs. A recipient sees each run without its `record` -- the outcome as stored, the
+ * type's state among it -- which is for the owner and admins (plan 5.10).
+ */
 export async function visibleOccurrences(
   store: Store,
   actor: Actor,
   taskId: string,
 ): Promise<Occurrence[] | null> {
-  if (!(await visibleTask(store, actor, taskId))) return null
-  return store.listOccurrences({ taskId })
+  const task = await visibleTask(store, actor, taskId)
+  if (!task) return null
+  const runs = await store.listOccurrences({ taskId })
+  return seesAll(actor, task) ? runs : runs.map((o) => ({ ...o, record: null }))
 }
 
+/**
+ * A run's events. A recipient does not see a `delivered` line naming anyone else (rows from
+ * before 0.4.0; since then who receives a run is in its deliveries, never in the events).
+ */
 export async function visibleEvents(
   store: Store,
   actor: Actor,
@@ -63,26 +80,71 @@ export async function visibleEvents(
   after?: string,
 ): Promise<OccurrenceEvent[] | null> {
   const occurrence = await store.getOccurrence(occurrenceId)
-  if (!occurrence || !(await visibleTask(store, actor, occurrence.taskId))) return null
-  return store.listEvents(occurrenceId, after)
+  const task = occurrence ? await visibleTask(store, actor, occurrence.taskId) : null
+  if (!task) return null
+  const events = await store.listEvents(occurrenceId, after)
+  if (seesAll(actor, task)) return events
+  return events.filter((e) => e.type !== "delivered" || e.text.split(" ")[0] === actor.userId)
 }
 
+/** A run's deliveries: every row for the owner and admins, a recipient's own row for them. */
+export async function visibleDeliveries(
+  store: Store,
+  actor: Actor,
+  occurrenceId: string,
+): Promise<Delivery[] | null> {
+  const occurrence = await store.getOccurrence(occurrenceId)
+  const task = occurrence ? await visibleTask(store, actor, occurrence.taskId) : null
+  if (!task) return null
+  const rows = await store.listDeliveries({ occurrenceId })
+  return seesAll(actor, task) ? rows : rows.filter((d) => d.userId === actor.userId)
+}
+
+/**
+ * The task's replies: all of them for the owner and admins, a recipient's own for them -- one
+ * recipient never learns from a reply who else receives the task (plan 5.10).
+ */
 export async function visibleReplies(
   store: Store,
   actor: Actor,
   taskId: string,
 ): Promise<Reply[] | null> {
-  if (!(await visibleTask(store, actor, taskId))) return null
-  return store.listReplies(taskId)
+  const task = await visibleTask(store, actor, taskId)
+  if (!task) return null
+  const replies = await store.listReplies(taskId)
+  return seesAll(actor, task) ? replies : replies.filter((r) => r.userId === actor.userId)
 }
 
+/**
+ * History kinds about one recipient. Their `detail` starts with that recipient's id (then a
+ * space, if anything follows), the shape `consent.ts` writes; a host writing one keeps it.
+ */
+const ABOUT_A_RECIPIENT: ReadonlySet<TaskEventKind> = new Set([
+  "recipient_invited",
+  "recipient_accepted",
+  "recipient_declined",
+  "recipient_opted_out",
+  "recipient_removed",
+  "blocked",
+  "block_lifted",
+])
+
+/**
+ * The task's history: all of it for the owner and admins. A recipient sees the task's own
+ * events and, of those about a recipient (invites, answers, opt-outs, blocks), only their own.
+ */
 export async function visibleHistory(
   store: Store,
   actor: Actor,
   taskId: string,
 ): Promise<TaskEvent[] | null> {
-  if (!(await visibleTask(store, actor, taskId))) return null
-  return store.listTaskEvents(taskId)
+  const task = await visibleTask(store, actor, taskId)
+  if (!task) return null
+  const events = await store.listTaskEvents(taskId)
+  if (seesAll(actor, task)) return events
+  return events.filter(
+    (e) => !ABOUT_A_RECIPIENT.has(e.kind) || e.detail.split(" ")[0] === actor.userId,
+  )
 }
 
 /** The task's series -- prices seen, amounts paid -- for those who may see the task. */

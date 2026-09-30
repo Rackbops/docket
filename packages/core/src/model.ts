@@ -1,4 +1,5 @@
 import type { Capability } from "./capabilities.js"
+import type { Outcome } from "./contract.js"
 import type { Lane } from "./lanes.js"
 import type { Schedule } from "./schedule.js"
 
@@ -13,14 +14,15 @@ export interface User {
   id: string
   /** The Discord user id, when known. */
   discordId: string | null
-  /** usr's user UUID (`nz_id.sub`), filled at registration or from `/allow`'s response. */
-  usrSubject: string | null
   displayName: string | null
-  /** IANA zone; usr's zone is the initial default, the tracker owns it afterwards. */
+  /** IANA zone; the host's default until the person sets one at registration (plan 5.8). */
   timeZone: string
   /** Local hour (0-23) at which digests and daily outputs reach this person. */
   preferredHour: number
-  /** Mirrors the usr role `city-hall:admin`. The one admin definition (plan 5.10). */
+  /**
+   * The tracker's admin flag, kept in the tracker's own store: the one admin definition (plan
+   * 5.8, 5.10). People are not usr accounts (plan item 40), so no usr role mirrors it.
+   */
   admin: boolean
   createdAt: string
 }
@@ -52,7 +54,11 @@ export interface Task {
 
 export type OccurrenceStatus = "queued" | "running" | "done" | "failed" | "skipped" | "snoozed"
 
-/** One due instance of a task: the generalization of city-hall's `work` row. */
+/**
+ * One due instance of a task. It has **fired** once its outcome is recorded (`record` is set):
+ * from then on the type never runs for it again, whatever its status, and what it owes anyone is
+ * in its deliveries. A `queued` row with no record has not run.
+ */
 export interface Occurrence {
   id: string
   taskId: string
@@ -63,17 +69,37 @@ export interface Occurrence {
   status: OccurrenceStatus
   /** Set when the run started well after `dueAt` (a missed occurrence fired late). */
   late: boolean
-  /**
-   * Per-source identity: `sched:<task>:<due>`, `manual:<task>:<seq>`, `snooze:<occurrence>`,
-   * `issue:<repo>:<n>:<wf>`.
-   */
+  /** Per-source identity: `sched:<task>:<due>`, `manual:<task>:<seq>`, `snooze:<occurrence>`. */
   dedupeKey: string
   summary: string | null
   costUsd: number | null
   error: string | null
+  /** What the run produced, written by the dispatcher alone; null until the run fired. */
+  record: RunRecord | null
   createdAt: string
 }
 
+/**
+ * A run's outcome, stored on its occurrence before any of it is applied (`dispatch.ts`), so a run
+ * that stopped after it (a crash, a Store error) resumes without running its type again. The
+ * dispatcher is its only writer and validates it on every read (`parseRunRecord`). Readers other
+ * than the owner and admins never see it (`visibleOccurrences`).
+ */
+export interface RunRecord {
+  /** The type's outcome; never `snoozeUntil`, which only a reply produces. */
+  outcome: Omit<Outcome, "snoozeUntil">
+  costUsd: number | null
+  firedAt: string
+  /** When state and series were applied; null until then. */
+  appliedAt: string | null
+  /** Times the steps after the record were retried after an error. */
+  resumes: number
+}
+
+/**
+ * `delivered` is only on rows written before 0.4.0 (the user id, then the message id); who got a
+ * run's message, and how each send went, is in its deliveries now, never in the shared event log.
+ */
 export type EventType = "status" | "text" | "tool" | "handoff" | "verdict" | "error" | "delivered"
 
 /** One line of a run, or of the tracker talking about it. Append-only, keyed by occurrence. */
@@ -160,6 +186,12 @@ export interface Reply {
 export interface SeriesPoint {
   id: string
   taskId: string
+  /**
+   * Identity for a point a run appends (`<occurrence>:<index>`): adding a point whose key is
+   * stored is a no-op, so an outcome applied twice after a crash appends nothing twice. Null for a
+   * point a host adds by hand.
+   */
+  key: string | null
   at: string
   value: number
   /** A currency code or other unit, when the value has one. */
@@ -168,8 +200,11 @@ export interface SeriesPoint {
   note: string | null
 }
 
-/** Where a charge came from: a run on the runner, or recall's extraction for a finding. */
-export type UsageSource = "run" | "recall"
+/**
+ * Where a charge came from: a run on the runner. The only source since plan item 37: the tracker
+ * causes no model call outside `claude -p`, so nothing else is ever charged.
+ */
+export type UsageSource = "run"
 
 /**
  * One charge against a person's daily budget (plan 5.2 `usage`, 5.7). Model calls only:
@@ -187,4 +222,42 @@ export interface Usage {
   calls: number
   costUsd: number
   at: string
+}
+
+/**
+ * How one recipient's copy of a run's message stands (plan 5.5, "Delivery idempotency"). A row
+ * is **owed** while `retryAt` is set -- `pending`, `deferred`, or `failed` with tries left -- and
+ * final once it is null (`sent`, `unconfirmed`, `failed` for good). `claimed` is the moment of the
+ * send: written before it, settled after.
+ *
+ * - `pending`: planned when the run fired; not tried yet.
+ * - `claimed`: a send is out. Found still `claimed` later -- after a crash, or long after -- it
+ *   may have gone out, so it is settled `unconfirmed`, never resent.
+ * - `sent`: the Notifier returned the provider's message id.
+ * - `deferred`: the Notifier said not now (`ExecutorUnavailableError`); nothing went out.
+ * - `failed`: nothing went out (`DeliveryFailedError`). Retried with a backoff unless the person
+ *   cannot be messaged at all or the attempts are spent; then final.
+ * - `unconfirmed`: failed in a way that does not say whether it went out. Never resent; a host
+ *   shows these to an admin.
+ */
+export type DeliveryStatus = "pending" | "claimed" | "sent" | "deferred" | "failed" | "unconfirmed"
+
+/** One recipient's copy of one run: the delivery claim, owned by `delivery.ts`. */
+export interface Delivery {
+  occurrenceId: string
+  userId: string
+  status: DeliveryStatus
+  /** The provider's message id, once `sent`. */
+  messageId: string | null
+  /** Why it failed, was deferred, or is unconfirmed. */
+  error: string | null
+  /** Failed sends with nothing sent; a deferral does not count one. */
+  attempts: number
+  /** Deferrals so far. */
+  deferrals: number
+  /** When it is next tried; null while claimed and once final. */
+  retryAt: string | null
+  createdAt: string
+  claimedAt: string | null
+  settledAt: string | null
 }

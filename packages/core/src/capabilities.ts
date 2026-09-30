@@ -4,6 +4,11 @@
  * has no name here on purpose, so nothing speculative can be declared, granted or built before its
  * own design pass. `defineTaskType` refuses a type that declares anything outside this list, and a
  * test in docket-types asserts it over every shipped type.
+ *
+ * A capability here is a side-effect grant (plan 5.6), not city-hall's "capability tag", which
+ * names the kind of agent a task needs (RQ-003). The naming clash is open with plan item 43
+ * (Nazu's to agree); the plan says "capability tag" only for city-hall's sense. `graph:write` was
+ * for recall and has no consumer since item 37; whether it stays is a follow-up.
  */
 export const CAPABILITIES = ["notify", "graph:write", "discord:post", "github:issue"] as const
 

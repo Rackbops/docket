@@ -5,10 +5,10 @@ import { wallClock, zonedInstant } from "./zoned.js"
 /**
  * Budgets (plan sections 5.7 and 5.12). Every model call the tracker makes is charged to the
  * task's owner: one call and the CLI's cost estimate per run that reached the model (an auth
- * failure or a usage limit did not, and charges nobody), plus recall's extraction calls for a
- * finding, which the host's Memory adapter charges with `charge`. Under the subscription the
- * dollar figures are the CLI's list-price estimate, not a bill, so the call ceilings are the hard
- * count. A day is a day in `BUDGET_ZONE`: at a ceiling a person's execute-lane tasks wait until
+ * failure or a usage limit did not, and charges nobody). Nothing else is charged: since plan item
+ * 37 the tracker causes no model call outside `claude -p` (nothing goes to recall). Under the
+ * subscription the dollar figures are the CLI's list-price estimate, not a bill, so the call
+ * ceilings are the hard count. A day is a day in `BUDGET_ZONE`: at a ceiling a person's execute-lane tasks wait until
  * midnight Eastern, the person gets one DM and the admins are told once.
  *
  * A ceiling is reached when what was spent today is at or above it, checked before each run: a
@@ -151,7 +151,7 @@ export interface Charge {
   at: Date
 }
 
-/** Records a charge against a person's day. A host charges recall's extraction calls here. */
+/** Records a charge against a person's day; the execute lane charges each model run here. */
 export async function charge(store: Store, c: Charge): Promise<Usage> {
   return store.addUsage({
     userId: c.userId,
