@@ -23,9 +23,10 @@ export class ReplyRefusedError extends Error {
  * the owner, on a run of an active task that has fired (running, done or failed), is not
  * snoozed and is not yet answered. A failed or running run still counts: the owner's copy goes
  * out first, so a press can land while the rest are still sending or after another recipient's
- * send failed the run. A queued run cannot be answered: a snoozed row keeps the run's scheduled
- * key, so a snooze that fired before the run's own due time would leave the task nothing to
- * materialize, and a recurring task would stall.
+ * send failed. A queued run that has started counts too: it fired and is waiting to finish its
+ * delivery to someone else. A queued run that has not started cannot be answered: a snoozed row
+ * keeps the run's scheduled key, so a snooze that fired before the run's own due time would leave
+ * the task nothing to materialize, and a recurring task would stall.
  */
 export async function runRefusal(
   store: Store,
@@ -38,7 +39,9 @@ export async function runRefusal(
   const occurrence = await store.getOccurrence(occurrenceId)
   if (!occurrence || occurrence.taskId !== task.id) return "That run no longer exists."
   if (task.status !== "active") return `That task is ${task.status}.`
-  if (occurrence.status === "queued") return "That run has not fired yet."
+  if (occurrence.status === "queued" && occurrence.startedAt === null) {
+    return "That run has not fired yet."
+  }
   if (occurrence.status === "snoozed" || occurrence.status === "skipped") return OVER
   const answered = (await store.listReplies(task.id)).some(
     (r) => r.occurrenceId === occurrence.id && RUN_KINDS.has(r.kind),

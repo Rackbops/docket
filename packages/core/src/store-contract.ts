@@ -71,21 +71,21 @@ export const STORE_CONTRACT: readonly StoreContractCase[] = [
     },
   },
   {
-    name: "a user is created with defaults and found by Discord id and usr subject",
+    name: "a user is created with defaults, found by Discord id, and patched",
     async run(store) {
       const u = await store.createUser({ discordId: "d9", at: AT })
       same(
-        [u.usrSubject, u.displayName, u.timeZone, u.preferredHour, u.admin],
-        [null, null, "UTC", 9, false],
+        [u.displayName, u.timeZone, u.preferredHour, u.admin],
+        [null, "UTC", 9, false],
         "user defaults",
       )
       same((await store.findUserByDiscordId("d9"))?.id, u.id, "found by Discord id")
-      check((await store.findUserBySubject("nobody")) === null, "unknown subject is null")
-      await store.updateUser(u.id, { usrSubject: "uuid-1", timeZone: "America/New_York" })
-      const found = await store.findUserBySubject("uuid-1")
+      check((await store.findUserByDiscordId("nobody")) === null, "unknown Discord id is null")
+      await store.updateUser(u.id, { timeZone: "America/New_York", admin: true })
+      const found = await store.findUserByDiscordId("d9")
       same(
-        [found?.id, found?.timeZone, found?.discordId],
-        [u.id, "America/New_York", "d9"],
+        [found?.id, found?.timeZone, found?.admin, found?.displayName],
+        [u.id, "America/New_York", true, null],
         "patch",
       )
     },
@@ -209,7 +209,7 @@ export const STORE_CONTRACT: readonly StoreContractCase[] = [
     },
   },
   {
-    name: "deleting queued occurrences spares the rest; requeueRunning honours the lane",
+    name: "deleting an occurrence takes only a queued one; requeueRunning honours the lane",
     async run(store) {
       const u = await owner(store)
       const t = await task(store, u.id)
@@ -221,10 +221,14 @@ export const STORE_CONTRACT: readonly StoreContractCase[] = [
       await store.updateOccurrence(c?.id ?? "", { status: "running" })
       await store.updateOccurrence(b?.id ?? "", { status: "done" })
       same(await store.requeueRunning("execute"), [c?.id], "only the execute lane requeued")
-      same(await store.deleteQueuedOccurrences(t.id), 2, "queued rows deleted")
+      same(await store.deleteOccurrence(b?.id ?? ""), false, "a done row is not deleted")
+      same(await store.deleteOccurrence(a?.id ?? ""), false, "a running row is not deleted")
+      same(await store.deleteOccurrence(c?.id ?? ""), true, "a requeued row is deleted")
+      same(await store.deleteOccurrence(c?.id ?? ""), false, "a second delete finds nothing")
+      check((await store.getOccurrence(c?.id ?? "")) === null, "deleted")
       same(
         (await store.listOccurrences({ taskId: t.id })).map((o) => o.status).sort(),
-        ["done", "running"],
+        ["done", "queued", "running"],
         "the rest remain",
       )
     },
@@ -403,6 +407,102 @@ export const STORE_CONTRACT: readonly StoreContractCase[] = [
       same(await store.claimNotice("budget:u1:2026-03-02", AT), true, "first claim")
       same(await store.claimNotice("budget:u1:2026-03-02", LATER), false, "second claim")
       same(await store.claimNotice("budget:u2:2026-03-02", LATER), true, "another key")
+    },
+  },
+  {
+    name: "a delivery is claimed once; a failed one is taken again with its attempts kept",
+    async run(store) {
+      const u = await owner(store)
+      const t = await task(store, u.id)
+      const o = await store.createOccurrence(occurrence(t.id, AT, "k"))
+      const id = o?.id ?? ""
+      const first = await store.claimDelivery(id, u.id, AT)
+      same(
+        [first?.status, first?.attempts, first?.messageId, first?.settledAt, first?.claimedAt],
+        ["claimed", 0, null, null, AT],
+        "first claim",
+      )
+      same(await store.claimDelivery(id, u.id, MID), null, "a held claim is not taken again")
+      await store.settleDelivery(id, u.id, {
+        status: "failed",
+        error: "closed",
+        attempts: 1,
+        at: MID,
+      })
+      const again = await store.claimDelivery(id, u.id, LATER)
+      same(
+        [again?.status, again?.attempts, again?.error, again?.settledAt, again?.claimedAt],
+        ["claimed", 1, null, null, LATER],
+        "a failed claim taken again",
+      )
+      const sent = await store.settleDelivery(id, u.id, {
+        status: "sent",
+        messageId: "m1",
+        attempts: 1,
+        at: LATER,
+      })
+      same(
+        [sent.status, sent.messageId, sent.error, sent.settledAt],
+        ["sent", "m1", null, LATER],
+        "sent",
+      )
+      same(await store.claimDelivery(id, u.id, LATER), null, "a sent claim is never taken again")
+      await store.settleDelivery(id, u.id, {
+        status: "unconfirmed",
+        error: "?",
+        attempts: 1,
+        at: LATER,
+      })
+      same(await store.claimDelivery(id, u.id, LATER), null, "nor an unconfirmed one")
+    },
+  },
+  {
+    name: "two claims at once: exactly one wins",
+    async run(store) {
+      const u = await owner(store)
+      const t = await task(store, u.id)
+      const o = await store.createOccurrence(occurrence(t.id, AT, "k"))
+      const id = o?.id ?? ""
+      const both = await Promise.all([
+        store.claimDelivery(id, u.id, AT),
+        store.claimDelivery(id, u.id, AT),
+      ])
+      same(both.filter((c) => c !== null).length, 1, "one claim")
+    },
+  },
+  {
+    name: "deliveries list by occurrence and status, oldest claim first",
+    async run(store) {
+      const u = await owner(store)
+      const v = await store.createUser({ discordId: "d2", at: AT })
+      const t = await task(store, u.id)
+      const o1 = (await store.createOccurrence(occurrence(t.id, AT, "k1")))?.id ?? ""
+      const o2 = (await store.createOccurrence(occurrence(t.id, AT, "k2")))?.id ?? ""
+      await store.claimDelivery(o1, v.id, MID)
+      await store.claimDelivery(o1, u.id, AT)
+      await store.claimDelivery(o2, u.id, LATER)
+      await store.settleDelivery(o1, u.id, { status: "sent", messageId: "m", attempts: 0, at: MID })
+      same(
+        (await store.listDeliveries({ occurrenceId: o1 })).map((d) => d.userId),
+        [u.id, v.id],
+        "one occurrence, oldest claim first",
+      )
+      same(
+        (await store.listDeliveries({ status: "claimed" })).map((d) => [d.occurrenceId, d.userId]),
+        [
+          [o1, v.id],
+          [o2, u.id],
+        ],
+        "by status",
+      )
+      same((await store.listDeliveries()).length, 3, "every claim")
+      let threw = false
+      try {
+        await store.settleDelivery(o2, v.id, { status: "sent", attempts: 0, at: LATER })
+      } catch {
+        threw = true
+      }
+      check(threw, "settling a claim that does not exist throws")
     },
   },
 ]

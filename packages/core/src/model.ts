@@ -13,14 +13,15 @@ export interface User {
   id: string
   /** The Discord user id, when known. */
   discordId: string | null
-  /** usr's user UUID (`nz_id.sub`), filled at registration or from `/allow`'s response. */
-  usrSubject: string | null
   displayName: string | null
-  /** IANA zone; usr's zone is the initial default, the tracker owns it afterwards. */
+  /** IANA zone; the host's default until the person sets one at registration (plan 5.8). */
   timeZone: string
   /** Local hour (0-23) at which digests and daily outputs reach this person. */
   preferredHour: number
-  /** Mirrors the usr role `city-hall:admin`. The one admin definition (plan 5.10). */
+  /**
+   * The tracker's admin flag, kept in the tracker's own store: the one admin definition (plan
+   * 5.8, 5.10). People are not usr accounts (plan item 40), so no usr role mirrors it.
+   */
   admin: boolean
   createdAt: string
 }
@@ -52,7 +53,10 @@ export interface Task {
 
 export type OccurrenceStatus = "queued" | "running" | "done" | "failed" | "skipped" | "snoozed"
 
-/** One due instance of a task: the generalization of city-hall's `work` row. */
+/**
+ * One due instance of a task. A `queued` row with a `startedAt` has fired and is waiting to finish
+ * its delivery (`dispatch.ts`); one with none has not run.
+ */
 export interface Occurrence {
   id: string
   taskId: string
@@ -63,10 +67,7 @@ export interface Occurrence {
   status: OccurrenceStatus
   /** Set when the run started well after `dueAt` (a missed occurrence fired late). */
   late: boolean
-  /**
-   * Per-source identity: `sched:<task>:<due>`, `manual:<task>:<seq>`, `snooze:<occurrence>`,
-   * `issue:<repo>:<n>:<wf>`.
-   */
+  /** Per-source identity: `sched:<task>:<due>`, `manual:<task>:<seq>`, `snooze:<occurrence>`. */
   dedupeKey: string
   summary: string | null
   costUsd: number | null
@@ -74,7 +75,21 @@ export interface Occurrence {
   createdAt: string
 }
 
-export type EventType = "status" | "text" | "tool" | "handoff" | "verdict" | "error" | "delivered"
+/**
+ * `outcome` is a run's Outcome as JSON, stored before it is applied, so a run whose delivery has
+ * to finish later never runs its type again (`dispatch.ts`). `delivered` and `undelivered` are one
+ * recipient each: the user id, then the provider's message id or the reason.
+ */
+export type EventType =
+  | "status"
+  | "text"
+  | "tool"
+  | "handoff"
+  | "verdict"
+  | "error"
+  | "outcome"
+  | "delivered"
+  | "undelivered"
 
 /** One line of a run, or of the tracker talking about it. Append-only, keyed by occurrence. */
 export interface OccurrenceEvent {
@@ -168,8 +183,11 @@ export interface SeriesPoint {
   note: string | null
 }
 
-/** Where a charge came from: a run on the runner, or recall's extraction for a finding. */
-export type UsageSource = "run" | "recall"
+/**
+ * Where a charge came from: a run on the runner. The only source since plan item 37: the tracker
+ * causes no model call outside `claude -p`, so nothing else is ever charged.
+ */
+export type UsageSource = "run"
 
 /**
  * One charge against a person's daily budget (plan 5.2 `usage`, 5.7). Model calls only:
@@ -187,4 +205,32 @@ export interface Usage {
   calls: number
   costUsd: number
   at: string
+}
+
+/**
+ * How one recipient's copy of a run's message stands (plan 5.5, "Delivery idempotency"):
+ *
+ * - `claimed`: written before the send. Found still `claimed` later, the send never reported
+ *   back (a crash, an abandoned tick) and may have gone out.
+ * - `sent`: the Notifier returned the provider's message id.
+ * - `failed`: nothing went out -- the Notifier said so (`DeliveryFailedError`) or deferred the
+ *   send (`ExecutorUnavailableError`). A later delivery of the run may claim it again.
+ * - `unconfirmed`: the send failed in a way that does not say whether it went out, or a stale
+ *   claim was found. Never resent automatically; a host shows these to an admin.
+ */
+export type DeliveryStatus = "claimed" | "sent" | "failed" | "unconfirmed"
+
+/** The delivery claim: one row per occurrence and recipient, owned by `deliver`. */
+export interface Delivery {
+  occurrenceId: string
+  userId: string
+  status: DeliveryStatus
+  /** The provider's message id, once `sent`. */
+  messageId: string | null
+  /** Why it failed or is unconfirmed. */
+  error: string | null
+  /** Sends that failed with nothing sent; a deferral does not count one. */
+  attempts: number
+  claimedAt: string
+  settledAt: string | null
 }

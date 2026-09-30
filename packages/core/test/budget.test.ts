@@ -53,7 +53,7 @@ describe("ceilings", () => {
     expect(DEFAULT_BUDGET.global).toEqual({ usd: 10, calls: 100 })
   })
 
-  it("count only today's charges, recall's with the runs, and honour a raised ceiling", async () => {
+  it("count only today's charges, a host's own with the runs, and honour a raised ceiling", async () => {
     const store = new MemoryStore()
     const { larry, moe } = await people(store)
     const now = new Date(T0)
@@ -74,7 +74,7 @@ describe("ceilings", () => {
       at: now,
     })
     expect(await budgetHold(store, DEFAULT_BUDGET, larry, now)).toBeNull()
-    await charge(store, { userId: larry.id, taskId: null, source: "recall", calls: 1, at: now })
+    await charge(store, { userId: larry.id, taskId: null, source: "run", calls: 1, at: now })
     expect(await budgetHold(store, DEFAULT_BUDGET, larry, now)).toMatchObject({
       scope: "person",
       limit: "calls",

@@ -1,6 +1,7 @@
 import type { Lane } from "./lanes.js"
 import type {
   ConsentState,
+  Delivery,
   InviteBlock,
   Occurrence,
   OccurrenceEvent,
@@ -13,6 +14,8 @@ import type {
   User,
 } from "./model.js"
 import type {
+  DeliveryFilter,
+  DeliverySettle,
   NewBlock,
   NewEvent,
   NewOccurrence,
@@ -49,6 +52,7 @@ export class MemoryStore implements Store {
   private readonly series: SeriesPoint[] = []
   private readonly usage: Usage[] = []
   private readonly notices = new Set<string>()
+  private readonly deliveries = new Map<string, Delivery>()
   private seq = 0
 
   private id(prefix: string): string {
@@ -69,16 +73,10 @@ export class MemoryStore implements Store {
     return MemoryStore.copy(hit ?? null)
   }
 
-  async findUserBySubject(usrSubject: string): Promise<User | null> {
-    const hit = [...this.users.values()].find((u) => u.usrSubject === usrSubject)
-    return MemoryStore.copy(hit ?? null)
-  }
-
   async createUser(input: NewUser): Promise<User> {
     const user: User = {
       id: this.id("u"),
       discordId: input.discordId ?? null,
-      usrSubject: input.usrSubject ?? null,
       displayName: input.displayName ?? null,
       timeZone: input.timeZone ?? "UTC",
       preferredHour: input.preferredHour ?? 9,
@@ -94,7 +92,6 @@ export class MemoryStore implements Store {
     if (!cur) throw new Error(`no user ${id}`)
     const next: User = { ...cur }
     if (patch.discordId !== undefined) next.discordId = patch.discordId
-    if (patch.usrSubject !== undefined) next.usrSubject = patch.usrSubject
     if (patch.displayName !== undefined) next.displayName = patch.displayName
     if (patch.timeZone !== undefined) next.timeZone = patch.timeZone
     if (patch.preferredHour !== undefined) next.preferredHour = patch.preferredHour
@@ -258,15 +255,9 @@ export class MemoryStore implements Store {
     return MemoryStore.copy(next)
   }
 
-  async deleteQueuedOccurrences(taskId: string): Promise<number> {
-    let removed = 0
-    for (const [id, o] of this.occurrences) {
-      if (o.taskId === taskId && o.status === "queued") {
-        this.occurrences.delete(id)
-        removed += 1
-      }
-    }
-    return removed
+  async deleteOccurrence(id: string): Promise<boolean> {
+    if (this.occurrences.get(id)?.status !== "queued") return false
+    return this.occurrences.delete(id)
   }
 
   async requeueRunning(lane?: Lane): Promise<string[]> {
@@ -355,5 +346,51 @@ export class MemoryStore implements Store {
     if (this.notices.has(key)) return false
     this.notices.add(key)
     return true
+  }
+
+  async claimDelivery(occurrenceId: string, userId: string, at: string): Promise<Delivery | null> {
+    const key = `${occurrenceId}:${userId}`
+    const cur = this.deliveries.get(key)
+    if (cur && cur.status !== "failed") return null
+    const claim: Delivery = {
+      occurrenceId,
+      userId,
+      status: "claimed",
+      messageId: null,
+      error: null,
+      attempts: cur?.attempts ?? 0,
+      claimedAt: at,
+      settledAt: null,
+    }
+    this.deliveries.set(key, claim)
+    return MemoryStore.copy(claim)
+  }
+
+  async settleDelivery(
+    occurrenceId: string,
+    userId: string,
+    settle: DeliverySettle,
+  ): Promise<Delivery> {
+    const key = `${occurrenceId}:${userId}`
+    const cur = this.deliveries.get(key)
+    if (!cur) throw new Error(`no delivery ${key}`)
+    const next: Delivery = {
+      ...cur,
+      status: settle.status,
+      messageId: settle.messageId ?? null,
+      error: settle.error ?? null,
+      attempts: settle.attempts,
+      settledAt: settle.at,
+    }
+    this.deliveries.set(key, next)
+    return MemoryStore.copy(next)
+  }
+
+  async listDeliveries(filter: DeliveryFilter = {}): Promise<Delivery[]> {
+    return [...this.deliveries.values()]
+      .filter((d) => filter.occurrenceId === undefined || d.occurrenceId === filter.occurrenceId)
+      .filter((d) => filter.status === undefined || d.status === filter.status)
+      .sort((a, b) => a.claimedAt.localeCompare(b.claimedAt))
+      .map((d) => MemoryStore.copy(d))
   }
 }

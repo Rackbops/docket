@@ -6,7 +6,7 @@ import { nextDue, type Schedule, scheduleProblems } from "./schedule.js"
 /**
  * Materialization (plan section 5.3): a task keeps exactly one upcoming occurrence, created
  * through its dedupe key so a repeated call is a no-op. A schedule edit cancels the queued
- * occurrence and replaces it. Catch-up is per kind: a missed `once` fires late and is marked late;
+ * occurrence and replaces it, keeping a snooze's run and a run still finishing its delivery. Catch-up is per kind: a missed `once` fires late and is marked late;
  * a missed calendar or period occurrence fires once late, then the next is computed from now; a
  * poll's first occurrence is its `start` (so a tracker observes at once), every later one the
  * next grid instant after now.
@@ -69,7 +69,25 @@ export interface RescheduleResult {
   next: Occurrence | null
 }
 
-/** Replaces the schedule: cancels queued occurrences, records the edit, materializes the next. */
+/**
+ * Cancels the task's queued scheduled runs that have not started: what a schedule computed, at a
+ * time the edit makes stale (plan 5.3). A snooze's run stays -- it is an instant the owner asked
+ * for, not one the schedule computed -- and so does a run that fired and is still finishing its
+ * delivery (`dispatch.ts`). Returns how many were cancelled.
+ */
+export async function cancelScheduledRuns(store: Store, taskId: string): Promise<number> {
+  let removed = 0
+  for (const o of await store.listOccurrences({ taskId, status: "queued" })) {
+    if (o.dedupeKey.startsWith(SNOOZE_PREFIX) || o.startedAt !== null) continue
+    if (await store.deleteOccurrence(o.id)) removed += 1
+  }
+  return removed
+}
+
+/**
+ * Replaces the schedule: cancels the queued scheduled runs (`cancelScheduledRuns`, snoozes kept),
+ * records the edit, materializes the next.
+ */
 export async function reschedule(
   store: Store,
   task: Task,
@@ -83,7 +101,7 @@ export async function reschedule(
     if (problems.length > 0) throw new ScheduleError(problems.join("; "))
   }
   const at = now.toISOString()
-  const removed = await store.deleteQueuedOccurrences(task.id)
+  const removed = await cancelScheduledRuns(store, task.id)
   const updated = await store.updateTask(task.id, { schedule, at })
   await store.addTaskEvent({
     taskId: task.id,

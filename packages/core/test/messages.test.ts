@@ -63,10 +63,19 @@ describe("the consent DM", () => {
     expect(inviteMessage(task, larry, moe).text).toMatch(/runs once, Tue Jan 5, 9:00/)
   })
 
-  it("puts the disclosure in the registration reply too", () => {
-    const text = registrationText("https://usr.example/r/abc")
-    expect(text).toContain("https://usr.example/r/abc")
-    expect(text).toContain(ADMIN_DISCLOSURE)
+  it("puts the disclosure in the registration reply, with no usr link, and the host's notes", async () => {
+    const { larry } = await setup()
+    const first = registrationText(larry, { first: true, notes: ["Keep DMs open."] })
+    expect(first.split("\n")).toEqual([
+      "You are registered.",
+      "Reminders reach you by DM. One without a time of day arrives at 09:00, America/New_York time.",
+      `Your tasks are private to you and anyone you choose to share them with. ${ADMIN_DISCLOSURE}`,
+      "Keep DMs open.",
+    ])
+    expect(first).not.toMatch(/https?:|link/)
+    expect(registrationText(larry, { first: false }).split("\n")[0]).toBe(
+      "Your settings are updated.",
+    )
   })
 })
 

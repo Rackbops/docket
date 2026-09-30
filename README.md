@@ -5,16 +5,18 @@ one version, one tag:
 
 | Package | What it holds |
 |---|---|
-| [`@rackbops/docket-core`](packages/core) | the domain, the scheduler, the two lanes, the task-type contract and the **ports** a host implements: Store, Clock, Identity, Notifier, Executor, Memory, Fetch |
+| [`@rackbops/docket-core`](packages/core) | the domain, the scheduler, the two lanes, the task-type contract and the **ports** a host implements: Store, Clock, Identity, Notifier, Executor, Fetch |
 | [`@rackbops/docket-types`](packages/types) | the six task types: reminder, renewal, price, research, scout, wantlist |
 
 docket is a **library**, never a service: it imports no Hono, discord.js, sqlite or fetch, and it
-never calls a model. A host supplies the adapters and the surfaces. The first host is
-[Lepid-Labs/city-hall](https://github.com/Lepid-Labs/city-hall), whose bot is Rackbops Clerk, built
-on discord-ai; the model runs happen in [Rackbops/docket-runner](https://github.com/Rackbops/docket-runner),
-through the Claude Code CLI on roshne's subscription, never an API key. The plan of record is
+never calls a model. A host supplies the adapters and the surfaces. The host is the tracker plugin in
+[Rackbops/rackbops-bot-plugins](https://github.com/Rackbops/rackbops-bot-plugins) (`plugins/tracker`),
+on a rackbops-discord-bot instance logged in as Rackbops Clerk, with people in its own store;
+[Lepid-Labs/city-hall](https://github.com/Lepid-Labs/city-hall) only queues and runs the model Jobs,
+which [Rackbops/docket-runner](https://github.com/Rackbops/docket-runner) executes through the
+Claude Code CLI on roshne's subscription, never an API key (plan rev17). The plan of record is
 Rackbops/Tooling, `research/city-hall-task-tracker.md` (section 0 is the goal in one page); the
-epic is Lepid-Labs/city-hall#4.
+epic is Rackbops/Tooling#816.
 
 ## Status
 
@@ -43,7 +45,15 @@ epic is Lepid-Labs/city-hall#4.
   charges nobody and waits for the reset. Per-task ceilings are not enforced yet (each Job's
   `maxBudgetUsd` caps one run), but every charge carries its task. city-hall's half (the SQLite `usage` and notice
   tables, recall's extraction charged through `charge`, raised ceilings) lives there.
-- Next: findings into recall (E7), the execute lane against the runner (E8).
+- **0.4.0 -- plan rev17** ([#18](https://github.com/Rackbops/docket/issues/18)): the tracker
+  plugin hosts docket and people live in its store (no `usrSubject`, no usr link in
+  `registrationText`); nothing goes to recall (no Memory port, no recall charges, no `issueKey`).
+  Delivery claims each send in the Store before it is made, so a host keeps no claim table;
+  one recipient's failure never stops the others and is retried up to three sends; a run records
+  its outcome before applying it, so a failed or deferred send is retried without running the
+  type again or losing the alert. `tickNotify` takes an AbortSignal; a paused task's runs wait;
+  a schedule edit keeps a queued snooze.
+- Next: the execute lane against city-hall and the runner (E8), findings in the tracker's store.
 
 ## Use
 

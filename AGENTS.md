@@ -2,10 +2,12 @@
 
 The core of the task tracker for roshne and friends on Discord: `@rackbops/docket-core` (domain,
 scheduler, lanes, task-type contract, ports) and `@rackbops/docket-types` (the six task types).
-Lepid-Labs/city-hall is the host, Rackbops/docket-runner runs the model calls, and the bot is
-Rackbops Clerk, built on discord-ai. The plan of record is Rackbops/Tooling
-`research/city-hall-task-tracker.md` (section 0 is the goal in one page, section 5 the
-architecture); the epic is Lepid-Labs/city-hall#4; this repo's own scaffold is #1.
+The host is the tracker plugin in Rackbops/rackbops-bot-plugins (`plugins/tracker`), running on
+a rackbops-discord-bot instance logged in as Rackbops Clerk; people live in the tracker's own
+store, and nothing goes to recall. Lepid-Labs/city-hall only queues and runs the tracker's model
+Jobs, which Rackbops/docket-runner executes (plan rev17, items 36 to 40). The plan of record is
+Rackbops/Tooling `research/city-hall-task-tracker.md` (section 0 is the goal in one page, section
+5 the architecture); the epic is Rackbops/Tooling#816; this repo's own scaffold is #1.
 
 My personal global instructions govern *how I work* -- the review gate, escalation, git and
 shipping, tool routing, shell choice. Claude Code loads them from `~/.claude/CLAUDE.md`; Codex
@@ -24,7 +26,7 @@ style, test). Merges land as squash commits titled `<subject> (#N)`.
   starts a process, opens a port, or holds a credential. A host does that behind the ports.
 - **No platform code.** `docket-core` imports no Hono, discord.js, sqlite, fetch or Discord
   types. Anything that talks to the outside world is a port (`Store`, `Clock`, `Identity`,
-  `Notifier`, `Executor`, `Memory`, `Fetch`) with an in-memory fake in the tests; the adapter
+  `Notifier`, `Executor`, `Fetch`) with an in-memory fake in the tests; the adapter
   lives in the host. A type reaches a port only through `RunContext.ports` (today `fetch`),
   never by importing a platform module; string work on what a port returns (price extraction)
   is fine, a DOM or HTTP library is not.

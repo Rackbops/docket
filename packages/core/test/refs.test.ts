@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest"
 
 import {
   createTask,
+  DeliveryFailedError,
   decodeReplyRef,
   encodeReplyRef,
   invite,
@@ -220,11 +221,14 @@ describe("a press, end to end", () => {
     await respondToInvite(store, task, moe.id, "accept", clock.now())
     const send = notifier.sendDm.bind(notifier)
     notifier.sendDm = async (userId, message) => {
-      if (userId === moe.id) throw new Error("DMs closed")
+      if (userId === moe.id) throw new DeliveryFailedError("DMs closed", true)
       return send(userId, message)
     }
     clock.set("2026-03-02T14:00:30.000Z")
-    expect(await lanes.tickNotify()).toMatchObject({ failed: 1 })
+    expect(await lanes.tickNotify()).toMatchObject({ ran: 1, failed: 0 })
+    // Waiting to retry Moe: queued again, yet it has fired, so the owner may answer it.
+    const [run] = await store.listOccurrences({ taskId: task.id })
+    expect([run?.status, run?.startedAt !== null]).toEqual(["queued", true])
     const done = replyButtons(notifier.sent[0]?.message ?? { text: "" })[0]?.ref ?? ""
     expect((await replyForRef(store, done, larry.id)).ok).toBe(true)
   })

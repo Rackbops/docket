@@ -2,7 +2,7 @@ import { type Capability, unknownCapabilities } from "./capabilities.js"
 import type { JobResult, JobSpec } from "./job.js"
 import { isLane, type Lane } from "./lanes.js"
 import type { Occurrence, OccurrenceEvent, Reply, SeriesPoint, Task, User } from "./model.js"
-import type { Fetch, Finding, OutgoingMessage } from "./ports.js"
+import type { Fetch, OutgoingMessage } from "./ports.js"
 import { isScheduleKind, type ScheduleKind } from "./schedule.js"
 
 /**
@@ -55,6 +55,16 @@ export interface SeriesObservation {
   at?: string
 }
 
+/**
+ * Something a run found, for the tracker's own `findings` table (plan 5.2, E8): never recall,
+ * which is withdrawn (plan item 37, 5.9). The dispatcher does not store findings yet.
+ */
+export interface Finding {
+  text: string
+  tags?: string[]
+  source?: string
+}
+
 export interface Outcome {
   /** Sent to the owner and every accepted recipient, idempotently per person. */
   notify?: OutgoingMessage
@@ -68,7 +78,7 @@ export interface Outcome {
   complete?: boolean
   /** From `onReply`: a snooze creates a new occurrence at this instant. */
   snoozeUntil?: Date
-  /** Findings for the owner's memory (E7). */
+  /** Findings for the tracker's `findings` table (E8); not stored by the dispatcher yet. */
   findings?: Finding[]
 }
 

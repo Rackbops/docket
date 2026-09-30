@@ -13,11 +13,25 @@ import type { Actor, OutgoingMessage, Store } from "./ports.js"
 export const ADMIN_DISCLOSURE =
   "An admin of this tracker can see every task and its history, including yours."
 
-/** The `/register` reply, around usr's single-use link. */
-export function registrationText(url: string): string {
+export interface RegistrationTextOptions {
+  /** The first registration, rather than a later edit of the same settings. */
+  first: boolean
+  /** The host's own lines, after the disclosure: how its delivery pauses, say. */
+  notes?: readonly string[]
+}
+
+/**
+ * The reply to `/register` (plan 5.8): people live in the tracker's own store (item 40), so there
+ * is no link to follow -- registering is the person's first contact, setting their preferred hour
+ * and zone. It says when things arrive, and the disclosure (plan 1.1, 5.5).
+ */
+export function registrationText(user: User, options: RegistrationTextOptions): string {
+  const hour = String(user.preferredHour).padStart(2, "0")
   return [
-    `Finish registering here (the link works once, for 15 minutes): ${url}`,
+    options.first ? "You are registered." : "Your settings are updated.",
+    `Reminders reach you by DM. One without a time of day arrives at ${hour}:00, ${user.timeZone} time.`,
     `Your tasks are private to you and anyone you choose to share them with. ${ADMIN_DISCLOSURE}`,
+    ...(options.notes ?? []),
   ].join("\n")
 }
 
