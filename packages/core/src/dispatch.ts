@@ -54,6 +54,7 @@ import {
 } from "./ports.js"
 import { hasFired, isFinishing, parseRunRecord } from "./record.js"
 import { isLate, materialize } from "./scheduler.js"
+import { clean } from "./text.js"
 
 /**
  * The two lanes (plan section 5.3). `tickNotify` runs every due notify-lane occurrence and never
@@ -626,7 +627,12 @@ export class Lanes {
 
   /** Back to the queue unstarted: nothing of this attempt was stored, so it runs afresh. */
   private async requeue(occurrence: Occurrence, why: string): Promise<void> {
-    await this.event(occurrence, "status", `waiting: ${why}`)
+    // Once per wait, like SUBMITTED_EVENT: a Job out that stays unreachable is asked every tick,
+    // and its history should say so once, not hundreds of times.
+    const text = `waiting: ${why}`
+    const events = await this.d.store.listEvents(occurrence.id)
+    const last = events.filter((e) => e.agent === ME && e.type === "status").at(-1)
+    if (last?.text !== text) await this.event(occurrence, "status", text)
     await this.d.store.updateOccurrence(occurrence.id, { status: "queued", startedAt: null })
   }
 
@@ -688,7 +694,11 @@ export class Lanes {
       if (outcome.followUp && !outcome.complete) {
         await this.followUp(task, occurrence, outcome.followUp, record)
       }
-      if (outcome.complete && (await store.getTask(task.id))?.status === "paused") {
+      const fresh = await store.getTask(task.id)
+      // Ended by its owner (or archived) before this run could complete it: "done" means the
+      // same as a late collection's (`runOne`) -- what was applied stays, the message is dropped.
+      const ended = outcome.complete && (fresh?.status === "done" || fresh?.status === "archived")
+      if (outcome.complete && fresh?.status === "paused") {
         // Completing now would make the task done and send its message at once, through the
         // pause. Applied, it waits instead: `unfinished` skips it while the task is paused, and
         // the first notify tick after the resume completes the task and sends.
@@ -699,7 +709,7 @@ export class Lanes {
         if (back) await this.event(occurrence, "status", PAUSED_COMPLETION)
         return "held"
       }
-      if (outcome.notify && people) {
+      if (outcome.notify && people && !ended) {
         const at = clock.now().toISOString()
         // A snooze's run re-asks the owner; recipients had their copy of the run it re-asks.
         const snoozeRun = occurrence.dedupeKey.startsWith(SNOOZE_PREFIX)
@@ -710,11 +720,20 @@ export class Lanes {
       const done = await store.updateOccurrenceIf(occurrence.id, "running", {
         status: "done",
         finishedAt: clock.now().toISOString(),
-        summary: outcome.summary ?? null,
+        summary: ended
+          ? `the task was ${fresh?.status} before this run completed it; message dropped`
+          : (outcome.summary ?? null),
         costUsd: record.costUsd,
         error: people ? null : `no owner ${task.ownerId}`,
       })
       if (!done) return "held"
+      if (ended) {
+        // A resume after the sends were planned: drop them too.
+        const rows = await store.listDeliveries({ occurrenceId: occurrence.id })
+        const owed = rows.filter((d) => d.retryAt !== null)
+        await dropOwed(store, owed, "the task was ended before this run completed it", clock.now())
+        return "ran"
+      }
       current = await store.getTask(task.id)
       if (
         outcome.complete &&
@@ -766,9 +785,11 @@ export class Lanes {
       const current = await store.getTask(task.id)
       if (current && current.status !== "done") await this.complete(current, null, clock.now())
       const owner = await store.getUser(task.ownerId)
+      // The title is the owner's own text: cleaned, so it cannot ping anyone.
+      const title = clean(task.title, 200, true)
       const text =
-        `"${task.title}" stopped: it asked for more than ${MAX_FOLLOW_UPS} runs in a row, so ` +
-        "it was ended. Set it up again if you still want it."
+        `"${title}" stopped: it asked for more than ${MAX_FOLLOW_UPS} runs in a row, so it was ` +
+        "ended. Set it up again if you still want it."
       await noticeOnce(
         store,
         this.d.notifier,

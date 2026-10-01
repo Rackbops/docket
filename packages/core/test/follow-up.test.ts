@@ -17,6 +17,7 @@ import {
   type Store,
   type TaskType,
   visibleFindings,
+  ZWSP,
 } from "../src/index.js"
 import { actor, FakeClock, FakeNotifier, MemoryStore, people, T0 } from "./helpers.js"
 
@@ -230,7 +231,12 @@ describe("a follow-up run", () => {
       store,
       actor(larry),
       larry,
-      { type: forever, title: "f", config: {}, schedule: { kind: "once", at: T0 } },
+      {
+        type: forever,
+        title: "f @everyone <@123>",
+        config: {},
+        schedule: { kind: "once", at: T0 },
+      },
       clock.now(),
     )
     for (let i = 0; i < MAX_FOLLOW_UPS + 3; i++) await lanes.tickNotify()
@@ -245,6 +251,11 @@ describe("a follow-up run", () => {
     expect(notifier.sent.filter((m) => m.userId === larry.id).map((m) => m.message.text)).toEqual([
       expect.stringContaining("it asked for more than 5 runs in a row"),
     ])
+    // The title is the owner's text: cleaned, so it cannot ping anyone.
+    const said = notifier.sent.map((m) => m.message.text).join("\n")
+    expect(said).toContain(`"f @${ZWSP}everyone @${ZWSP}123"`)
+    expect(said).not.toContain("@everyone")
+    expect(said).not.toContain("<@123>")
   })
 
   it("from a record carrying a malformed follow-up is no record at all", () => {

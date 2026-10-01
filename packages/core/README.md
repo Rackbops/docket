@@ -16,6 +16,7 @@ Rackbops/Tooling, `research/city-hall-task-tracker.md`, section 5 (plan rev17).
 | `dispatch`, `delivery` | the notify and execute lanes (an active task's runs only; `tickNotify` takes an AbortSignal), DM delivery claimed in the Store before each send, per-recipient outcomes and retries, crash recovery, replies and snooze; a type's outcome recorded, then applied (state stored, series and findings appended, `complete` ends the task, `followUp` queues one more run), then delivered, so a failed send is retried without running the type again; a Job the runner has not finished is asked about again each tick, charged once |
 | `authz`, `consent` | every read takes an identity, the series and findings included; invitations, accept, the decline rule, opt-out, admin lifts |
 | `when`, `describe`, `messages`, `refs` | what the bot says and hears: a person's "when" (`parseWhen`), cadences and instants in words, the consent DM, the registration disclosure, the `/tasks` list, and buttons whose reply references route a press back as a reply (`replyButtons`, `replyForRef`): a run's done, snooze and decision are the owner's, once per fired run while the task is active (when the host handles a task's replies one at a time), enforced in `Lanes.reply` on every path; a recipient's copy carries the opt-out and no run actions |
+| `text` | `clean`: a person's or a model's text made safe for a DM (no mention pings, no masked link, no control characters, capped); the types package re-exports it |
 | `job-state` | where an execute-lane run's Job stands, from its events: its key, whether it is out, `PENDING_LIMIT_MS` |
 | `budget` | daily ceilings for model runs (plan 5.7, 5.12): `DEFAULT_BUDGET` (2 USD and 20 calls a person, 10 USD and 100 calls in all), days from midnight Eastern, `charge`, `budgetHold`, and the one-time notices; the execute lane charges each run to its owner, holds a person at a ceiling until midnight, stops at the global one, and backs off after a usage limit without charging anyone |
 | `contract`, `capabilities`, `job` | `TaskType`, `defineTaskType`, the grantable capability enum (tier 0 and tier 1 only; tier 2 has no name here), the `JobSpec` and `JobResult` a runner speaks |
@@ -97,6 +98,12 @@ three new cases cover the changes.
   - Any other error on a Job already out (an HTTP 500, say) is treated like pending: same key, no
     new Job, up to the same limit. The first Job may still run, so it is never resubmitted under a
     new key.
+  - An adapter asked with `spec = null` that has no record for `jobKey` (its store lost the
+    city-hall job id, say) should throw: the run is then held like a pending one for up to
+    `PENDING_LIMIT_MS`, given up and charged one call. So persist the city-hall job id before
+    returning from the first ask.
+  - While a Job out keeps failing, the run writes one `waiting: ...` event per distinct reason,
+    not one per tick.
 - The wait is bounded, and **the lane is held for every owner meanwhile**.
   - A Job pending past `SLOW_JOB_MS` (1 hour, inferred) is reported to the admins once, with one
     `error` event on the run.
@@ -133,6 +140,9 @@ three new cases cover the changes.
   that would make the task done and send at once, through the pause. The run waits, applied.
   The first notify tick after the resume completes the task and sends the message. A task
   archived meanwhile is never turned to done.
+- "Done" means the same on both paths. A task set **done** or **archived** while that completion
+  waits drops its message, as a Job collected after the task ended does: no DM, its sends are
+  dropped, and the findings and the charge already stored stay.
 
 - An execute-lane type's `finish` always runs once its run starts. A `prepare` that throws, or an
   Executor that throws (other than pending, unavailable or a usage limit), becomes an uncharged

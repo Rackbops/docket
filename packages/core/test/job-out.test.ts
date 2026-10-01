@@ -434,6 +434,38 @@ describe("a Job that is out, asked about again", () => {
     expect(run?.summary).toBe("success")
   })
 
+  it("writes one waiting event per wait, not one per tick", async () => {
+    const { executor, state } = cityHall()
+    const { store, clock, lanes, ask } = await setup(executor, { once: true })
+    const task = await ask()
+    await lanes.tickExecute()
+    const waits = async () => {
+      const [run] = await store.listOccurrences({ taskId: task.id })
+      const events = await store.listEvents(run?.id ?? "")
+      return events.filter((e) => e.text.startsWith("waiting:")).map((e) => e.text)
+    }
+    state.throws = new ExecutorUnavailableError("city-hall unreachable")
+    for (let i = 0; i < 30; i++) {
+      clock.advance(60_000)
+      await lanes.tickExecute()
+    }
+    expect(await waits()).toEqual(["waiting: city-hall unreachable"])
+    state.throws = new Error("HTTP 500")
+    for (let i = 0; i < 30; i++) {
+      clock.advance(60_000)
+      await lanes.tickExecute()
+    }
+    expect(await waits()).toEqual([
+      "waiting: city-hall unreachable",
+      expect.stringMatching(/^waiting: .*HTTP 500$/),
+    ])
+    state.throws = null
+    state.busy = false
+    await lanes.tickExecute()
+    const [run] = await store.listOccurrences({ taskId: task.id })
+    expect(run?.summary).toBe("success")
+  })
+
   it(`tells the admins once when it has been out ${SLOW_JOB_MS / 3_600_000} h`, async () => {
     const { executor } = cityHall()
     const { store, clock, notifier, lanes, ask, admin } = await setup(executor, { once: true })
@@ -499,6 +531,48 @@ describe("a Job that is out, asked about again", () => {
     await lanes.tickNotify()
     expect((await store.getTask(task.id))?.status).toBe("done")
     expect(notifier.sent.map((m) => m.message.text)).toEqual(["answer"])
+  })
+
+  it("of a paused task, ended by its owner while the completion waits: no message, what it stored stays", async () => {
+    const completing: TaskType<unknown> = {
+      ...asker,
+      finish: async () => ({
+        notify: { text: "answer" },
+        findings: [{ text: "found it" }],
+        complete: true,
+      }),
+    }
+    for (const end of ["done", "archived"] as const) {
+      const { executor, state } = cityHall()
+      const store = new MemoryStore()
+      const clock = new FakeClock(new Date(T0))
+      const notifier = new FakeNotifier()
+      const { larry } = await people(store)
+      const lanes = new Lanes({ store, clock, types: { asker: completing }, notifier, executor })
+      const { task } = await createTask(
+        store,
+        actor(larry),
+        larry,
+        { type: completing, title: "q", config: {}, schedule: { kind: "once", at: T0 } },
+        clock.now(),
+      )
+      await lanes.tickExecute()
+      await store.updateTask(task.id, { status: "paused", at: T0 })
+      state.busy = false
+      await lanes.tickExecute()
+      await lanes.tickNotify()
+      await store.updateTask(task.id, { status: end, at: T0 })
+      await lanes.tickNotify()
+      await lanes.tickNotify()
+      expect(notifier.sent).toEqual([])
+      expect((await store.getTask(task.id))?.status).toBe(end)
+      const [run] = await store.listOccurrences({ taskId: task.id })
+      expect(run?.status).toBe("done")
+      expect(run?.summary).toContain("message dropped")
+      expect(await store.listDeliveries({ occurrenceId: run?.id ?? "" })).toEqual([])
+      expect(await store.listFindings({ taskId: task.id })).toHaveLength(1)
+      expect(await store.listUsage()).toHaveLength(1)
+    }
   })
 
   it("of a once task blocks a schedule edit; a recurring task's edit says the Job is out", async () => {
