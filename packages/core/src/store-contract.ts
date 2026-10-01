@@ -607,4 +607,115 @@ export const STORE_CONTRACT: readonly StoreContractCase[] = [
       )
     },
   },
+  {
+    name: "findings list oldest first by task, owner and since; a stored key is not added again",
+    async run(store) {
+      const u = await owner(store)
+      const v = await store.createUser({ discordId: "d2", at: AT })
+      const t = await task(store, u.id, "mine")
+      const w = await task(store, v.id, "theirs")
+      const first = await store.addFinding({
+        taskId: t.id,
+        ownerId: u.id,
+        occurrenceId: "o1",
+        key: "o1:0",
+        type: "research",
+        text: "claim one",
+        tags: ["research", "approve"],
+        source: "https://example.org/a",
+        at: LATER,
+      })
+      same(
+        [first.key, first.type, first.tags, first.source, first.occurrenceId],
+        ["o1:0", "research", ["research", "approve"], "https://example.org/a", "o1"],
+        "fields",
+      )
+      const again = await store.addFinding({
+        taskId: t.id,
+        ownerId: u.id,
+        occurrenceId: "o1",
+        key: "o1:0",
+        type: "research",
+        text: "claim one, applied again",
+        at: LATER,
+      })
+      same([again.id, again.text], [first.id, "claim one"], "the stored finding returned")
+      const bare = await store.addFinding({
+        taskId: t.id,
+        ownerId: u.id,
+        occurrenceId: null,
+        type: "research",
+        text: "earlier",
+        at: AT,
+      })
+      same([bare.key, bare.tags, bare.source], [null, [], null], "defaults")
+      await store.addFinding({
+        taskId: w.id,
+        ownerId: v.id,
+        occurrenceId: null,
+        type: "research",
+        text: "other owner",
+        at: MID,
+      })
+      same(
+        (await store.listFindings({ taskId: t.id })).map((f) => f.text),
+        ["earlier", "claim one"],
+        "one task, oldest first",
+      )
+      same(
+        (await store.listFindings()).map((f) => f.text),
+        ["earlier", "other owner", "claim one"],
+        "every finding",
+      )
+      same(
+        (await store.listFindings({ ownerId: v.id })).map((f) => f.text),
+        ["other owner"],
+        "one owner",
+      )
+      same(
+        (await store.listFindings({ since: MID })).map((f) => f.text),
+        ["other owner", "claim one"],
+        "since is inclusive",
+      )
+    },
+  },
+  {
+    name: "findings at the same instant list in insertion order; forget-me deletes an owner's",
+    async run(store) {
+      const u = await owner(store)
+      const v = await store.createUser({ discordId: "d2", at: AT })
+      const t = await task(store, u.id)
+      const w = await task(store, v.id)
+      for (const text of ["b", "a", "c"]) {
+        await store.addFinding({
+          taskId: t.id,
+          ownerId: u.id,
+          occurrenceId: null,
+          type: "research",
+          text,
+          at: AT,
+        })
+      }
+      await store.addFinding({
+        taskId: w.id,
+        ownerId: v.id,
+        occurrenceId: null,
+        type: "research",
+        text: "kept",
+        at: AT,
+      })
+      same(
+        (await store.listFindings({ taskId: t.id })).map((f) => f.text),
+        ["b", "a", "c"],
+        "ties keep insertion order, not text order",
+      )
+      same(await store.deleteFindings(u.id), 3, "forget-me deletes that owner's findings")
+      same(await store.deleteFindings(u.id), 0, "a second delete finds nothing")
+      same(
+        (await store.listFindings()).map((f) => f.text),
+        ["kept"],
+        "the rest remain",
+      )
+    },
+  },
 ]

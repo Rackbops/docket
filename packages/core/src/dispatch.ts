@@ -11,7 +11,7 @@ import {
 } from "./budget.js"
 import { optOut, respondToInvite } from "./consent.js"
 import type { Outcome, RunContext, TaskType } from "./contract.js"
-import { SNOOZE_PREFIX, snoozeKey } from "./dedupe.js"
+import { FOLLOW_UP_PREFIX, followUpKey, SNOOZE_PREFIX, snoozeKey } from "./dedupe.js"
 import {
   DEFAULT_DELIVERY_POLICY,
   type DeliveryPolicy,
@@ -37,6 +37,7 @@ import {
   type Executor,
   ExecutorUnavailableError,
   type Fetch,
+  JobPendingError,
   type Notifier,
   type Store,
 } from "./ports.js"
@@ -68,9 +69,9 @@ import { isLate, materialize } from "./scheduler.js"
  * 3. **the run fires**: its outcome is recorded on the occurrence (`Occurrence.record`). From here
  *    the type never runs for it again;
  * 4. the schedule's next run is materialized at once, so nothing owed by this one holds up the
- *    schedule;
- * 5. the outcome is applied (state, then series points keyed by the run, so applying twice adds
- *    nothing) and the record marked applied;
+ *    schedule, and a follow-up the outcome asked for is queued (`followup:<run>`, so once);
+ * 5. the outcome is applied (state, then series points and findings keyed by the run, so applying
+ *    twice adds nothing) and the record marked applied;
  * 6. one delivery row is planned per person it goes to -- the owner and accepted recipients; for
  *    a snooze's run the owner alone, since a snooze re-asks the owner -- and the run is marked
  *    done;
@@ -98,7 +99,12 @@ import { isLate, materialize } from "./scheduler.js"
  * everyone together, has reached a daily ceiling (plan 5.7, `budget.ts`); the item stays queued
  * and runs after midnight Eastern. A run that hits the subscription's usage limit is the third
  * outcome (5.12): it is requeued, charged to nobody, the admins are told once per window, and
- * the lane waits until the reset the CLI named, or an hour.
+ * the lane waits until the reset the CLI named, or an hour; its next try is a fresh Job under a
+ * new key. A Job the Executor submitted and has not finished (`JobPendingError`) leaves the run
+ * queued, uncharged and past the budget check, and the lane asks again next tick under the same
+ * key, so one run is one charge however long the runner takes. A follow-up run (a research
+ * request's reviewer) is an execute-lane run like any other: it waits for the run that asked for
+ * it to finish, then is held, charged and limited the same way.
  */
 
 const ME = "docket"
@@ -110,6 +116,10 @@ export const USAGE_LIMIT_BACKOFF_MS = 3_600_000
 export const MAX_USAGE_LIMIT_WAIT_MS = 86_400_000
 /** The subscription's rolling window (plan 5.12), for keying a notice with no reset time. */
 const USAGE_WINDOW_MS = 5 * 3_600_000
+/** The event a run's Job leaves when the Executor says it is out and not finished. */
+export const SUBMITTED_EVENT = "submitted: waiting for the runner"
+/** How the event a usage limit leaves begins (`requeue` writes `waiting: <why>`). */
+const USAGE_LIMIT_EVENT = "waiting: usage limit"
 
 export interface LaneDeps {
   store: Store
@@ -157,6 +167,13 @@ type Verdict = "ran" | "failed" | "held" | "stop"
 
 /** Times a fired run's remaining steps are retried after a Store error before it is given up. */
 export const MAX_RESUMES = 3
+
+/**
+ * The longest chain of follow-ups one run may start (`Outcome.followUp`): a run that is itself
+ * the fifth follow-up in a row queues no more, and says so in its events. A guard against a type
+ * that asks forever; research needs at most three (a retry, the review, a retry of the review).
+ */
+export const MAX_FOLLOW_UPS = 5
 
 /** A fired run still `running` this long after it (re)started is taken to have lost its tick. */
 export const STALE_RUN_MS = 10 * 60_000
@@ -406,8 +423,9 @@ export class Lanes {
   }
 
   /**
-   * Stores what the outcome carries for the task: new state, series points. A run's points are
-   * keyed `<occurrence>:<index>`, so applying one outcome twice appends nothing twice.
+   * Stores what the outcome carries for the task: new state, series points, findings. A run's
+   * points and findings are keyed `<occurrence>:<index>`, so applying one outcome twice appends
+   * nothing twice.
    */
   private async apply(
     task: Task,
@@ -427,6 +445,19 @@ export class Lanes {
         unit: point.unit ?? null,
         note: point.note ?? null,
         key: occurrenceId === null ? null : `${occurrenceId}:${i}`,
+      })
+    }
+    for (const [i, finding] of (outcome.findings ?? []).entries()) {
+      await store.addFinding({
+        taskId: task.id,
+        ownerId: task.ownerId,
+        occurrenceId,
+        key: occurrenceId === null ? null : `${occurrenceId}:${i}`,
+        type: task.type,
+        text: finding.text,
+        tags: finding.tags ?? [],
+        source: finding.source ?? null,
+        at: now.toISOString(),
       })
     }
   }
@@ -462,12 +493,14 @@ export class Lanes {
     if (await this.finishing(task.id, occurrence.id)) return "held"
     const loaded = await this.load(task)
     if ("error" in loaded) return this.fail(occurrence, loaded.error)
-    if (loaded.type.lane === "execute") {
+    const job = loaded.type.lane === "execute" ? await this.jobOf(occurrence) : null
+    // A Job already out is collected whatever the ceilings say: its call is made.
+    if (job && !job.submitted) {
       const held = await this.budgetCheck(loaded.owner)
       if (held) return held
     }
     const now = clock.now()
-    const late = isLate(occurrence, now)
+    const late = job?.submitted ? occurrence.late : isLate(occurrence, now)
     // Started only if it is still queued: another tick, a reply or a reschedule may have moved it.
     const started = await store.updateOccurrenceIf(occurrence.id, "queued", {
       status: "running",
@@ -478,9 +511,9 @@ export class Lanes {
     if (!started || hasFired(started)) return "held"
     let record: RunRecord
     try {
-      await this.event(occurrence, "status", late ? "started late" : "started")
+      if (!job?.submitted) await this.event(occurrence, "status", late ? "started late" : "started")
       const ctx = await this.context(loaded, started, now)
-      const { outcome, costUsd } = await this.execute(loaded.type, ctx, started)
+      const { outcome, costUsd } = await this.execute(loaded.type, ctx, started, job?.key ?? "")
       if (signal?.aborted) {
         await this.requeue(started, "the tick was aborted before the outcome was stored")
         return "stop"
@@ -495,6 +528,12 @@ export class Lanes {
       }
       await store.updateOccurrence(started.id, { record })
     } catch (err) {
+      if (err instanceof JobPendingError) {
+        // Asked again next tick under the same key; one event for the whole wait.
+        if (!job?.submitted) await this.event(started, "status", SUBMITTED_EVENT)
+        await store.updateOccurrence(started.id, { status: "queued", startedAt: null })
+        return "stop"
+      }
       if (err instanceof ExecutorUnavailableError || err instanceof UsageLimitReached) {
         await this.requeue(started, err.message)
         if (err instanceof UsageLimitReached) await this.usageLimit(err)
@@ -505,6 +544,23 @@ export class Lanes {
       return "failed"
     }
     return this.finishFired({ ...started, record }, task, record, signal)
+  }
+
+  /**
+   * An execute-lane run's Job: its key (a fresh one per usage limit the run met, `Executor`) and
+   * whether that Job is already out, from the run's own events, so both survive a restart.
+   */
+  private async jobOf(occurrence: Occurrence): Promise<{ key: string; submitted: boolean }> {
+    let limits = 0
+    let submitted = false
+    for (const e of await this.d.store.listEvents(occurrence.id)) {
+      if (e.agent !== ME || e.type !== "status") continue
+      if (e.text.startsWith(USAGE_LIMIT_EVENT)) {
+        limits++
+        submitted = false
+      } else if (e.text === SUBMITTED_EVENT) submitted = true
+    }
+    return { key: limits === 0 ? occurrence.id : `${occurrence.id}:${limits}`, submitted }
   }
 
   /** Back to the queue unstarted: nothing of this attempt was stored, so it runs afresh. */
@@ -560,6 +616,9 @@ export class Lanes {
     try {
       people = await this.audience(task)
       if (people && !outcome.complete) await this.next(task, people.owner)
+      if (outcome.followUp && !outcome.complete) {
+        await this.followUp(task, occurrence, outcome.followUp, record)
+      }
       if (record.appliedAt === null) {
         await this.apply(task, outcome, new Date(record.firedAt), occurrence.id)
         const applied = { ...record, appliedAt: clock.now().toISOString() }
@@ -600,6 +659,39 @@ export class Lanes {
       }
     }
     return "ran"
+  }
+
+  /**
+   * Queues the run a fired run asked for, due at `followUp.at` or when this one fired. Through its
+   * dedupe key, so a resume queues nothing twice; refused past `MAX_FOLLOW_UPS` in a row.
+   */
+  private async followUp(
+    task: Task,
+    occurrence: Occurrence,
+    followUp: NonNullable<Outcome["followUp"]>,
+    record: RunRecord,
+  ): Promise<void> {
+    const { store, clock } = this.d
+    let depth = 0
+    let current: Occurrence | null = occurrence
+    // Bounded, so a store that ever handed back a cycle cannot hang a run.
+    for (let hops = 0; current && hops <= MAX_FOLLOW_UPS; hops++) {
+      if (!current.dedupeKey.startsWith(FOLLOW_UP_PREFIX)) break
+      depth++
+      current = await store.getOccurrence(current.dedupeKey.slice(FOLLOW_UP_PREFIX.length))
+    }
+    if (depth >= MAX_FOLLOW_UPS) {
+      await this.event(occurrence, "error", `no follow-up: ${MAX_FOLLOW_UPS} in a row already`)
+      return
+    }
+    const at = followUp.at ? new Date(followUp.at) : new Date(record.firedAt)
+    await store.createOccurrence({
+      taskId: task.id,
+      lane: task.lane,
+      dueAt: at.toISOString(),
+      dedupeKey: followUpKey(occurrence.id),
+      at: clock.now().toISOString(),
+    })
   }
 
   /** After a Store error past the record: back to the queue to resume, a bounded number of times. */
@@ -779,6 +871,7 @@ export class Lanes {
     type: TaskType<unknown>,
     ctx: RunContext<unknown>,
     occurrence: Occurrence,
+    jobKey: string,
   ): Promise<{ outcome: Outcome; costUsd: number | null }> {
     if (type.lane === "notify") {
       if (!type.run) throw new Error(`${type.id} has no run`)
@@ -787,7 +880,7 @@ export class Lanes {
     if (!type.prepare || !type.finish) throw new Error(`${type.id} has no prepare/finish`)
     if (!this.d.executor) throw new ExecutorUnavailableError("no executor configured")
     const spec = await type.prepare(ctx)
-    const result = await this.d.executor.run(spec, occurrence.id)
+    const result = await this.d.executor.run(spec, occurrence.id, jobKey)
     await this.chargeRun(occurrence, ctx.task, result)
     const outcome = await type.finish(ctx, result)
     return { outcome, costUsd: result.totalCostUsd ?? null }

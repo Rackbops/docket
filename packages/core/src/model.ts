@@ -69,7 +69,10 @@ export interface Occurrence {
   status: OccurrenceStatus
   /** Set when the run started well after `dueAt` (a missed occurrence fired late). */
   late: boolean
-  /** Per-source identity: `sched:<task>:<due>`, `manual:<task>:<seq>`, `snooze:<occurrence>`. */
+  /**
+   * Per-source identity: `sched:<task>:<due>`, `manual:<task>:<seq>`, `snooze:<occurrence>`,
+   * `followup:<occurrence>`.
+   */
   dedupeKey: string
   summary: string | null
   costUsd: number | null
@@ -198,6 +201,34 @@ export interface SeriesPoint {
   unit: string | null
   /** Why it was recorded: `observed`, `kept`, `renewed`, ... */
   note: string | null
+}
+
+/**
+ * One finding a run produced (plan 5.2 `findings`, E8): the tracker's own store, never recall
+ * (item 37). Written by the dispatcher from a type's `Outcome.findings`; a research request's
+ * reviewed claims, each with the source it rests on. It names its task's owner, so forget-me
+ * erases it (`Store.deleteFindings`).
+ */
+export interface StoredFinding {
+  id: string
+  taskId: string
+  /** The task's owner when it was stored. */
+  ownerId: string
+  /** The run that produced it, or null for one an `onReply` outcome carried. */
+  occurrenceId: string | null
+  /**
+   * Identity for a finding a run produced (`<occurrence>:<index>`): adding one whose key is
+   * stored is a no-op, so an outcome applied twice after a crash stores nothing twice. Null for a
+   * finding with no run.
+   */
+  key: string | null
+  /** The task type that produced it, e.g. `research`. */
+  type: string
+  text: string
+  tags: string[]
+  /** A URL, for a model run's finding; null when it named none. */
+  source: string | null
+  at: string
 }
 
 /**

@@ -8,13 +8,13 @@ Rackbops/Tooling, `research/city-hall-task-tracker.md`, section 5 (plan rev17).
 
 | Module | What it holds |
 |---|---|
-| `model` | the records: users, tasks (config and type state), occurrences, events, task history, recipients, blocks, replies, series, usage |
-| `ports` | `Store`, `Clock`, `Identity`, `Notifier`, `Executor`, `Fetch`, the Store's input shapes, and the errors a Notifier or Executor throws (`DeliveryFailedError`, `ExecutorUnavailableError`) |
+| `model` | the records: users, tasks (config and type state), occurrences, events, task history, recipients, blocks, replies, series, findings, usage |
+| `ports` | `Store`, `Clock`, `Identity`, `Notifier`, `Executor`, `Fetch`, the Store's input shapes, and the errors a Notifier or Executor throws (`DeliveryFailedError`, `ExecutorUnavailableError`, `JobPendingError`) |
 | `memory-store`, `store-contract` | the Store in memory: the reference semantics and the test fake; `STORE_CONTRACT`, those semantics as cases a host runs against its own Store |
 | `schedule`, `zoned` | `once`, `calendar`, `poll` and `period` schedules, `nextDue`, `periodDate`, zone-aware wall-clock arithmetic on Intl alone |
-| `scheduler`, `dedupe`, `tasks` | one upcoming occurrence per task through its dedupe key; cancel-and-replace on edit, keeping a snooze's run; `createTask` |
-| `dispatch`, `delivery` | the notify and execute lanes (an active task's runs only; `tickNotify` takes an AbortSignal), DM delivery claimed in the Store before each send, per-recipient outcomes and retries, crash recovery, replies and snooze; a type's outcome recorded, then applied (state stored, series appended, `complete` ends the task), then delivered, so a failed send is retried without running the type again |
-| `authz`, `consent` | every read takes an identity, the series included; invitations, accept, the decline rule, opt-out, admin lifts |
+| `scheduler`, `dedupe`, `tasks` | one upcoming occurrence per task through its dedupe key; cancel-and-replace on edit, keeping a snooze's run and a follow-up; `createTask` |
+| `dispatch`, `delivery` | the notify and execute lanes (an active task's runs only; `tickNotify` takes an AbortSignal), DM delivery claimed in the Store before each send, per-recipient outcomes and retries, crash recovery, replies and snooze; a type's outcome recorded, then applied (state stored, series and findings appended, `complete` ends the task, `followUp` queues one more run), then delivered, so a failed send is retried without running the type again; a Job the runner has not finished is asked about again each tick, charged once |
+| `authz`, `consent` | every read takes an identity, the series and findings included; invitations, accept, the decline rule, opt-out, admin lifts |
 | `when`, `describe`, `messages`, `refs` | what the bot says and hears: a person's "when" (`parseWhen`), cadences and instants in words, the consent DM, the registration disclosure, the `/tasks` list, and buttons whose reply references route a press back as a reply (`replyButtons`, `replyForRef`): a run's done, snooze and decision are the owner's, once per fired run while the task is active (when the host handles a task's replies one at a time), enforced in `Lanes.reply` on every path; a recipient's copy carries the opt-out and no run actions |
 | `budget` | daily ceilings for model runs (plan 5.7, 5.12): `DEFAULT_BUDGET` (2 USD and 20 calls a person, 10 USD and 100 calls in all), days from midnight Eastern, `charge`, `budgetHold`, and the one-time notices; the execute lane charges each run to its owner, holds a person at a ceiling until midnight, stops at the global one, and backs off after a usage limit without charging anyone |
 | `contract`, `capabilities`, `job` | `TaskType`, `defineTaskType`, the grantable capability enum (tier 0 and tier 1 only; tier 2 has no name here), the `JobSpec` and `JobResult` a runner speaks |
@@ -35,6 +35,65 @@ for the plain-code types (the price tracker reads pages through it, via `RunCont
 `Executor` that hands Jobs to the runner. The core never calls a model and holds no credential:
 every model call runs in the runner, through the Claude Code CLI on roshne's subscription, never an
 API key.
+
+## Adopting 0.5.0
+
+0.5.0 adds what the `research` type (docket-types, plan 1.2 row 5) needs: a follow-up run, stored
+findings, and a Job the runner has not finished yet. All of it is additive for a 0.4.0 host
+except the three Store methods, which a host's Store must now implement. Run `STORE_CONTRACT`
+against it: two new cases cover them.
+
+**Store**
+
+- A `findings` table: `id`, `taskId`, `ownerId`, `occurrenceId` (nullable), `key` (nullable,
+  unique when set), `type`, `text`, `tags` (a JSON array of strings), `source` (nullable), `at`.
+  - `addFinding(finding)` inserts one; with a `key` already stored it adds nothing and returns the
+    stored row (`INSERT ... ON CONFLICT(key) DO NOTHING`, then select), exactly like
+    `addSeriesPoint`. The dispatcher keys a run's findings `<occurrence>:<index>`.
+  - `listFindings({ taskId?, ownerId?, since? })`, oldest first by `at`, ties in insertion order
+    (`ORDER BY at, rowid`). `since` is inclusive.
+  - `deleteFindings(ownerId)` deletes every finding of the tasks that person owns and returns how
+    many: forget-me calls it beside `deleteDeliveries` and the `usage` delete. A host erasing inside
+    a synchronous transaction runs `DELETE FROM findings WHERE owner_id = ?` there instead.
+- No new occurrence column: a follow-up is an ordinary occurrence whose `dedupeKey` is
+  `followup:<occurrence>`, so the existing unique key makes it idempotent.
+
+**Executor**
+
+- `run(spec, occurrenceId, jobKey)` takes a third argument. Submit under `jobKey`, not the
+  occurrence id: it is the occurrence id for a run's first Job and `<occurrence id>:<n>` after the
+  n-th usage limit, because city-hall answers a known key with that Job's result, and a usage
+  limit's result would otherwise come back for good. A 0.4.0 adapter that ignores the argument
+  still compiles; it must stop ignoring it before it submits by key.
+- `run` need not wait for the runner. Submit (`POST /api/execute/jobs` with `key = jobKey`), and
+  when the Job is not `done` or `failed` yet throw `JobPendingError`. The run goes back to the
+  queue unstarted and uncharged, the execute lane stops for that tick (Jobs go one at a time,
+  plan 5.3), and the next tick calls `run` again with the same `jobKey` -- resubmitting the same
+  key returns the same Job, so poll that way or with `GET /api/execute/jobs/:id`. The run passes
+  the budget check while its Job is out (its call is made; holding it would only delay
+  collecting it), writes one `submitted` event for the whole wait, and is charged once, when the
+  result comes back. The `prepare` behind a resubmission is called again and must give the same
+  spec; city-hall ignores it for a known key anyway.
+- `ExecutorUnavailableError` still means nothing could be asked (city-hall unreachable, no
+  runner). The run is requeued the same way; a Job already out is still asked about under its
+  key next time.
+- A crash between the result coming back and the outcome being recorded re-asks the same key
+  and gets the same result, with no second model call; the charge, written before the record,
+  can still be counted twice (as in 0.4.0).
+
+**Types and lanes**
+
+- `Outcome.followUp: { at? }` asks for one more run of the same task, due at `at` or when the
+  asking run fired, off the schedule (`isOffSchedule`): materialization never counts it as the
+  next scheduled run, and `reschedule` never cancels it. It waits until the asking run has
+  finished (`isFinishing`), and on the execute lane it is budget-checked, charged and limited
+  like any model run. It is ignored with `complete`, from `onReply`, and past `MAX_FOLLOW_UPS` (5)
+  in a row. A run's record now carries it; `parseRunRecord` checks it.
+- `Outcome.findings` are stored when the outcome is applied, each with the task's owner and type.
+  `visibleFindings(store, actor, taskId, { since? })` serves them: the owner, an accepted
+  recipient (they were sent the same answer) and admins; null for anyone else, as for the series.
+- A host routing "the latest run" to a reply sees a research task's research run and its
+  follow-up as two runs; neither offers run actions.
 
 ## Adopting 0.4.0
 

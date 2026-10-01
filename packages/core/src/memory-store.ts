@@ -8,6 +8,7 @@ import type {
   OccurrenceStatus,
   Reply,
   SeriesPoint,
+  StoredFinding,
   Task,
   TaskEvent,
   TaskRecipient,
@@ -17,8 +18,10 @@ import type {
 import type {
   DeliveryFilter,
   DeliverySettle,
+  FindingFilter,
   NewBlock,
   NewEvent,
+  NewFinding,
   NewOccurrence,
   NewReply,
   NewSeriesPoint,
@@ -51,6 +54,7 @@ export class MemoryStore implements Store {
   private readonly taskEvents: TaskEvent[] = []
   private readonly replies: Reply[] = []
   private readonly series: SeriesPoint[] = []
+  private readonly findings: StoredFinding[] = []
   private readonly usage: Usage[] = []
   private readonly notices = new Set<string>()
   private readonly deliveries = new Map<string, Delivery>()
@@ -341,6 +345,43 @@ export class MemoryStore implements Store {
       .sort((a, b) => a.at.localeCompare(b.at) || a.id.localeCompare(b.id))
     const kept = filter.limit === undefined ? points : points.slice(-filter.limit)
     return kept.map((p) => MemoryStore.copy(p))
+  }
+
+  async addFinding(input: NewFinding): Promise<StoredFinding> {
+    const key = input.key ?? null
+    const known = key === null ? undefined : this.findings.find((f) => f.key === key)
+    if (known) return MemoryStore.copy(known)
+    const finding: StoredFinding = {
+      id: this.id("f"),
+      taskId: input.taskId,
+      ownerId: input.ownerId,
+      occurrenceId: input.occurrenceId,
+      key,
+      type: input.type,
+      text: input.text,
+      tags: [...(input.tags ?? [])],
+      source: input.source ?? null,
+      at: input.at,
+    }
+    this.findings.push(finding)
+    return MemoryStore.copy(finding)
+  }
+
+  async listFindings(filter: FindingFilter = {}): Promise<StoredFinding[]> {
+    return this.findings
+      .filter((f) => filter.taskId === undefined || f.taskId === filter.taskId)
+      .filter((f) => filter.ownerId === undefined || f.ownerId === filter.ownerId)
+      .filter((f) => filter.since === undefined || f.at >= filter.since)
+      .map((f, i) => ({ f, i }))
+      .sort((a, b) => a.f.at.localeCompare(b.f.at) || a.i - b.i)
+      .map(({ f }) => MemoryStore.copy(f))
+  }
+
+  async deleteFindings(ownerId: string): Promise<number> {
+    const before = this.findings.length
+    const kept = this.findings.filter((f) => f.ownerId !== ownerId)
+    this.findings.splice(0, this.findings.length, ...kept)
+    return before - kept.length
   }
 
   async addUsage(input: NewUsage): Promise<Usage> {

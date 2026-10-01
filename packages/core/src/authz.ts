@@ -4,12 +4,13 @@ import type {
   OccurrenceEvent,
   Reply,
   SeriesPoint,
+  StoredFinding,
   Task,
   TaskEvent,
   TaskEventKind,
   TaskRecipient,
 } from "./model.js"
-import type { Actor, SeriesFilter, Store, TaskFilter } from "./ports.js"
+import type { Actor, FindingFilter, SeriesFilter, Store, TaskFilter } from "./ports.js"
 
 /**
  * Authorization as a core rule (plan section 5.10): every read of a task, its occurrences,
@@ -156,4 +157,20 @@ export async function visibleSeries(
 ): Promise<SeriesPoint[] | null> {
   if (!(await visibleTask(store, actor, taskId))) return null
   return store.listSeries(taskId, filter)
+}
+
+/**
+ * The task's findings -- a research request's reviewed claims and their sources -- for those who
+ * may see the task: the owner, an accepted recipient (they were sent the same answer) and
+ * admins. A finding names no person but the owner, so no recipient learns who else receives the
+ * task from one, as with the series.
+ */
+export async function visibleFindings(
+  store: Store,
+  actor: Actor,
+  taskId: string,
+  filter: Pick<FindingFilter, "since"> = {},
+): Promise<StoredFinding[] | null> {
+  if (!(await visibleTask(store, actor, taskId))) return null
+  return store.listFindings({ ...filter, taskId })
 }

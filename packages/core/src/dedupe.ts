@@ -24,3 +24,19 @@ export function snoozeKey(occurrenceId: string): string {
 }
 
 export const SNOOZE_PREFIX = "snooze:"
+
+/**
+ * The run a finished run asked for (`Outcome.followUp`): one per asking run, so an outcome
+ * applied twice after a crash still queues one. Like a snooze's run it is off the schedule: the
+ * schedule never stands it in for its next run, and an edit never cancels it.
+ */
+export function followUpKey(occurrenceId: string): string {
+  return `${FOLLOW_UP_PREFIX}${occurrenceId}`
+}
+
+export const FOLLOW_UP_PREFIX = "followup:"
+
+/** True for a run a person or a type asked for (a snooze's, a follow-up), not a scheduled one. */
+export function isOffSchedule(dedupeKey: string): boolean {
+  return dedupeKey.startsWith(SNOOZE_PREFIX) || dedupeKey.startsWith(FOLLOW_UP_PREFIX)
+}

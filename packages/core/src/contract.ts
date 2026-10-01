@@ -57,12 +57,25 @@ export interface SeriesObservation {
 
 /**
  * Something a run found, for the tracker's own `findings` table (plan 5.2, E8): never recall,
- * which is withdrawn (plan item 37, 5.9). The dispatcher does not store findings yet.
+ * which is withdrawn (plan item 37, 5.9). The dispatcher stores each one when it applies the
+ * outcome (`Store.addFinding`), keyed by the run, so applying an outcome twice stores it once.
+ * It is data the type built from model output (plan 5.6): the type caps and cleans it first.
  */
 export interface Finding {
   text: string
   tags?: string[]
+  /** Where it came from: a URL the run opened, for a model run. */
   source?: string
+}
+
+/**
+ * Asks for one more run of the same task once this one has finished (`Outcome.followUp`): a
+ * research request's reviewer run (plan 1.2 row 5, item 62), or a retry. The type's state says
+ * what that run does; the dispatcher only queues it.
+ */
+export interface FollowUp {
+  /** ISO-8601 instant it is due; the instant this run fired when absent. */
+  at?: string
 }
 
 export interface Outcome {
@@ -78,8 +91,15 @@ export interface Outcome {
   complete?: boolean
   /** From `onReply`: a snooze creates a new occurrence at this instant. */
   snoozeUntil?: Date
-  /** Findings for the tracker's `findings` table (E8); not stored by the dispatcher yet. */
+  /** Findings for the tracker's `findings` table (E8), stored when the outcome is applied. */
   findings?: Finding[]
+  /**
+   * One more run of this task, queued once this run has fired, off the schedule (its dedupe key
+   * is `followup:<this run>`). It waits until this run has finished, and on the execute lane it is
+   * budget-checked and charged like any model run. Ignored with `complete`, from `onReply`, and
+   * past `MAX_FOLLOW_UPS` in a row.
+   */
+  followUp?: FollowUp
 }
 
 export interface IntakeOption {
