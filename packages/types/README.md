@@ -11,18 +11,32 @@ The tracker's task types, built on `@rackbops/docket-core`'s contract. Shipped s
   or the owner's pattern; `extractPrice`), appends it to the series and alerts once per crossing
   of the drop line, measured from the first, last (default) or peak price seen; done stops it.
 
-- `research` (category 5, E8): execute lane, `once`. Two `claude -p` Jobs through the runner: a
-  research run (the web-search spike's prompt and answer schema, `{summary, findings[{claim,
-  sources[]}], uncertain[]}`; about 15 turns and 1 USD, item 61) and a reviewer run (item 62),
-  queued as a follow-up, that checks the draft against its sources and approves, revises or
-  rejects it (8 turns and 0.5 USD, inferred). An approved or revised answer goes out by DM to the
-  owner and accepted recipients and each claim is saved as a finding with its first source; a
-  rejected one is reported and nothing is saved. Model output is parsed, capped and cleaned
-  before it reaches a message or a finding: no mention can ping, no masked link can hide its
-  target, only http(s) URLs count as sources, and the DM stays under Discord's limit. A schema
-  miss, a malformed answer, a timeout or an error is retried once; an auth failure once, an hour
-  later; a turn or budget cap is reported, not retried. An answer the reviewer did not pass is
-  never sent.
+- `research` (category 5, E8): execute lane, `once`, an optional deadline. Two `claude -p` Jobs
+  go through the runner:
+  - a research run: the web-search spike's prompt and answer schema, `{summary,
+    findings[{claim, sources[]}], uncertain[]}`, about 15 turns and 1 USD (item 61, proposed and
+    not yet decided);
+  - a reviewer run (item 62), queued as a follow-up, which checks the draft against its sources
+    and approves, revises or rejects it (8 turns and 0.5 USD, inferred).
+
+  On **approve** the stored draft goes out by DM to the owner and accepted recipients; on
+  **revise**, the reviewer's corrected answer. Each claim is saved as a finding with its first
+  source. A **rejected** answer is reported and nothing is saved. An answer the reviewer did not
+  pass is never sent; the draft stays in the task's state, which only the owner and admins see.
+
+  Model output is parsed, capped and cleaned before it reaches a message or a finding. No mention
+  can ping, no masked link can hide its target, only http(s) URLs that spell no mention count as
+  sources, and every DM stays under Discord's limit.
+
+  Failures:
+  - a schema miss, a malformed answer, a timeout or an error (including an Executor or `prepare`
+    that threw, or a Job not back in six hours): retried once;
+  - an auth failure: retried once, an hour later;
+  - a turn or budget cap: reported, not retried;
+  - a research run that would start past its deadline: makes no call and tells the owner.
+
+  A request costs up to 1.5 USD when every run succeeds, and up to about 3 USD with one retry per
+  phase. The CLI can end a run over its cap.
 
 The first three call no model. Scout and wantlist land with their epic (#13).
 

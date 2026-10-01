@@ -49,6 +49,8 @@ export {
 
 export {
   AUTH_RETRY_MS,
+  deadlineOf,
+  draftJson,
   MAX_CONTEXT_CHARS,
   MAX_QUESTION_CHARS,
   MAX_TRIES,
@@ -69,6 +71,7 @@ export {
 export {
   ANSWER_SCHEMA,
   clean,
+  fitMessage,
   MAX_MESSAGE_CHARS,
   parseAnswer,
   parseReview,

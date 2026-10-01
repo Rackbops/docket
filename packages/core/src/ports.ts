@@ -117,9 +117,14 @@ export interface Executor {
 
 /**
  * Thrown by an Executor whose Job is submitted but not finished: nothing to record yet. The run
- * goes back to the queue unstarted and uncharged, the lane stops for this tick (Jobs run one at
- * a time, plan 5.3), and the next tick asks again under the same key -- past the budget check,
- * since the Job is already out, and with no new events.
+ * goes back to the queue unstarted and uncharged, and the execute lane starts nothing new while
+ * it is out (one Job at a time, plan 5.3): every tick asks about it first, under the same key,
+ * past the budget check, with no new events -- for at most `PENDING_LIMIT_MS`, after which the
+ * type's `finish` gets an `error` result and the lane moves on.
+ *
+ * Any other error from `run` is an `error` result for `finish`, uncharged. Throw
+ * `ExecutorUnavailableError` instead for a transport failure that may pass (city-hall
+ * unreachable): the run is requeued and asked again under the same key.
  */
 export class JobPendingError extends Error {
   override name = "JobPendingError"
@@ -278,6 +283,8 @@ export interface NewUsage {
   taskId: string | null
   occurrenceId: string | null
   source: UsageSource
+  /** A charge with a key already stored is not added again (`Usage.key`). */
+  key?: string | null
   calls: number
   costUsd: number
   at: string
@@ -413,6 +420,7 @@ export interface Store {
   /** Forget-me: deletes every finding of the tasks this person owns. Returns how many. */
   deleteFindings(ownerId: string): Promise<number>
 
+  /** With a key already stored it adds nothing and returns the stored charge. */
   addUsage(usage: NewUsage): Promise<Usage>
   /** Oldest first. */
   listUsage(filter?: UsageFilter): Promise<Usage[]>

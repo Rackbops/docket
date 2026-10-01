@@ -66,6 +66,12 @@ export interface Finding {
   tags?: string[]
   /** Where it came from: a URL the run opened, for a model run. */
   source?: string
+  /**
+   * A deterministic identity within the task (plan 5.2: a digest of the source URL, for dedupe
+   * and do-not-resurface). The dispatcher stores it as `<task>:<key>`, and a finding whose key is
+   * stored is not added again. Absent: `<occurrence>:<index>`, unique to the run.
+   */
+  key?: string
 }
 
 /**
@@ -97,7 +103,8 @@ export interface Outcome {
    * One more run of this task, queued once this run has fired, off the schedule (its dedupe key
    * is `followup:<this run>`). It waits until this run has finished, and on the execute lane it is
    * budget-checked and charged like any model run. Ignored with `complete`, from `onReply`, and
-   * past `MAX_FOLLOW_UPS` in a row.
+   * past `MAX_FOLLOW_UPS` in a row (the task then completes). It is queued once the outcome is
+   * applied, so it runs on the state this outcome wrote.
    */
   followUp?: FollowUp
 }
@@ -114,6 +121,14 @@ export interface IntakeSpec {
   options: IntakeOption[]
 }
 
+/**
+ * What `prepare` returns when the run needs no model call after all (a research request whose
+ * deadline has passed): this is the run's outcome, and nothing is submitted or charged.
+ */
+export interface NoJob {
+  outcome: Outcome
+}
+
 export interface TaskType<Config = unknown> {
   id: string
   lane: Lane
@@ -123,9 +138,16 @@ export interface TaskType<Config = unknown> {
   schedule: readonly ScheduleKind[]
   /** Notify lane: do the work and say what goes out. */
   run?(ctx: RunContext<Config>): Promise<Outcome>
-  /** Execute lane: the model call as data. */
-  prepare?(ctx: RunContext<Config>): Promise<JobSpec>
-  /** Execute lane: what the model's answer means. */
+  /**
+   * Execute lane: the model call as data, or `{ outcome }` when no call is needed. If it throws,
+   * `finish` still runs, with an uncharged `error` result naming the failure.
+   */
+  prepare?(ctx: RunContext<Config>): Promise<JobSpec | NoJob>
+  /**
+   * Execute lane: what the model's answer means. It always runs once the run starts -- with an
+   * `error` result when `prepare` or the Executor threw, or when the Job did not finish within
+   * `PENDING_LIMIT_MS` -- so a type can always tell its owner what happened.
+   */
   finish?(ctx: RunContext<Config>, result: JobResult): Promise<Outcome>
   /** A reply: done, snooze or decision from the owner (`runRefusal`), text from anyone. */
   onReply?(ctx: ReplyContext<Config>): Promise<Outcome>

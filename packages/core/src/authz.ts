@@ -24,7 +24,19 @@ export function canSee(actor: Actor, task: Task, recipients: readonly TaskRecipi
   return recipients.some((r) => r.userId === actor.userId && r.state === "accepted")
 }
 
-/** The task, or null when it does not exist or the actor may not see it (indistinguishable). */
+/**
+ * The task as `actor` may see it: whole for its owner and admins; for a recipient without its
+ * `config` and `state`, which are the owner's (a research request's unreviewed or rejected draft
+ * lives in its state, plan 5.10).
+ */
+function asSeenBy(actor: Actor, task: Task): Task {
+  return seesAll(actor, task) ? task : { ...task, config: null, state: null }
+}
+
+/**
+ * The task, or null when it does not exist or the actor may not see it (indistinguishable). A
+ * recipient gets it without `config` and `state`.
+ */
 export async function visibleTask(
   store: Store,
   actor: Actor,
@@ -32,10 +44,13 @@ export async function visibleTask(
 ): Promise<Task | null> {
   const task = await store.getTask(taskId)
   if (!task) return null
-  return canSee(actor, task, await store.listRecipients(taskId)) ? task : null
+  return canSee(actor, task, await store.listRecipients(taskId)) ? asSeenBy(actor, task) : null
 }
 
-/** Tasks the actor may see; an admin sees every task the filter matches. */
+/**
+ * Tasks the actor may see; an admin sees every task the filter matches. A recipient gets each
+ * without `config` and `state`.
+ */
 export async function visibleTasks(
   store: Store,
   actor: Actor,
@@ -45,7 +60,7 @@ export async function visibleTasks(
   if (actor.admin) return tasks
   const out: Task[] = []
   for (const task of tasks) {
-    if (canSee(actor, task, await store.listRecipients(task.id))) out.push(task)
+    if (canSee(actor, task, await store.listRecipients(task.id))) out.push(asSeenBy(actor, task))
   }
   return out
 }
@@ -161,9 +176,10 @@ export async function visibleSeries(
 
 /**
  * The task's findings -- a research request's reviewed claims and their sources -- for those who
- * may see the task: the owner, an accepted recipient (they were sent the same answer) and
- * admins. A finding names no person but the owner, so no recipient learns who else receives the
- * task from one, as with the series.
+ * may see the task: the owner, an accepted recipient and admins, the same rule as the series. A
+ * finding names no person but the owner, so no recipient learns who else receives the task from
+ * one. (A recipient who accepted after the answer went out sees findings they were never sent;
+ * that is the series' rule too.)
  */
 export async function visibleFindings(
   store: Store,

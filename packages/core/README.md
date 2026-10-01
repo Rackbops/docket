@@ -16,6 +16,7 @@ Rackbops/Tooling, `research/city-hall-task-tracker.md`, section 5 (plan rev17).
 | `dispatch`, `delivery` | the notify and execute lanes (an active task's runs only; `tickNotify` takes an AbortSignal), DM delivery claimed in the Store before each send, per-recipient outcomes and retries, crash recovery, replies and snooze; a type's outcome recorded, then applied (state stored, series and findings appended, `complete` ends the task, `followUp` queues one more run), then delivered, so a failed send is retried without running the type again; a Job the runner has not finished is asked about again each tick, charged once |
 | `authz`, `consent` | every read takes an identity, the series and findings included; invitations, accept, the decline rule, opt-out, admin lifts |
 | `when`, `describe`, `messages`, `refs` | what the bot says and hears: a person's "when" (`parseWhen`), cadences and instants in words, the consent DM, the registration disclosure, the `/tasks` list, and buttons whose reply references route a press back as a reply (`replyButtons`, `replyForRef`): a run's done, snooze and decision are the owner's, once per fired run while the task is active (when the host handles a task's replies one at a time), enforced in `Lanes.reply` on every path; a recipient's copy carries the opt-out and no run actions |
+| `job-state` | where an execute-lane run's Job stands, from its events: its key, whether it is out, `PENDING_LIMIT_MS` |
 | `budget` | daily ceilings for model runs (plan 5.7, 5.12): `DEFAULT_BUDGET` (2 USD and 20 calls a person, 10 USD and 100 calls in all), days from midnight Eastern, `charge`, `budgetHold`, and the one-time notices; the execute lane charges each run to its owner, holds a person at a ceiling until midnight, stops at the global one, and backs off after a usage limit without charging anyone |
 | `contract`, `capabilities`, `job` | `TaskType`, `defineTaskType`, the grantable capability enum (tier 0 and tier 1 only; tier 2 has no name here), the `JobSpec` and `JobResult` a runner speaks |
 
@@ -39,61 +40,110 @@ API key.
 ## Adopting 0.5.0
 
 0.5.0 adds what the `research` type (docket-types, plan 1.2 row 5) needs: a follow-up run, stored
-findings, and a Job the runner has not finished yet. All of it is additive for a 0.4.0 host
-except the three Store methods, which a host's Store must now implement. Run `STORE_CONTRACT`
-against it: two new cases cover them.
+findings, and a Job the runner has not finished yet. A host's Store gains three methods and a
+usage column, and its Executor takes a third argument. Run `STORE_CONTRACT` against the Store:
+three new cases cover the changes.
 
 **Store**
 
-- A `findings` table: `id`, `taskId`, `ownerId`, `occurrenceId` (nullable), `key` (nullable,
+- A `findings` table: `id`, `task_id`, `owner_id`, `occurrence_id` (nullable), `key` (nullable,
   unique when set), `type`, `text`, `tags` (a JSON array of strings), `source` (nullable), `at`.
-  - `addFinding(finding)` inserts one; with a `key` already stored it adds nothing and returns the
-    stored row (`INSERT ... ON CONFLICT(key) DO NOTHING`, then select), exactly like
-    `addSeriesPoint`. The dispatcher keys a run's findings `<occurrence>:<index>`.
-  - `listFindings({ taskId?, ownerId?, since? })`, oldest first by `at`, ties in insertion order
-    (`ORDER BY at, rowid`). `since` is inclusive.
+  Index `findings(task_id)` and `findings(owner_id)`: one serves the task view, the other
+  forget-me.
+  - `addFinding(finding)` inserts one row. With a `key` already stored it adds nothing and
+    returns the stored row (`INSERT ... ON CONFLICT(key) DO NOTHING`, then select), exactly like
+    `addSeriesPoint`. The dispatcher keys a finding in one of three ways:
+    - `<task>:<key>` when the type gave a key (a deterministic id, for dedupe and
+      do-not-resurface, plan 5.2);
+    - `<occurrence>:<index>` for a run's other findings;
+    - `reply:<reply id>:<index>` for findings from `onReply`.
+  - `listFindings({ taskId?, ownerId?, since? })` returns rows oldest first by `at`, ties in
+    insertion order (`ORDER BY at, rowid`). `since` is inclusive.
   - `deleteFindings(ownerId)` deletes every finding of the tasks that person owns and returns how
-    many: forget-me calls it beside `deleteDeliveries` and the `usage` delete. A host erasing inside
-    a synchronous transaction runs `DELETE FROM findings WHERE owner_id = ?` there instead.
-- No new occurrence column: a follow-up is an ordinary occurrence whose `dedupeKey` is
-  `followup:<occurrence>`, so the existing unique key makes it idempotent.
+    many. Forget-me calls it beside `deleteDeliveries` and the `usage` delete. A host that erases
+    inside a synchronous transaction runs `DELETE FROM findings WHERE owner_id = ?` there instead.
+- `usage` gains a nullable `key` column, unique when set. With a key already stored, `addUsage`
+  adds nothing and returns the stored row. The execute lane keys each charge by its Job key, so
+  a crash between a charge and its run's record never charges one call twice.
+- No new occurrence column. A follow-up is an ordinary occurrence whose `dedupeKey` is
+  `followup:<occurrence>`. A run's Job state (its key, whether it is out) is read from its own
+  `status` events (`job-state.ts`), which the host stores already.
 
 **Executor**
 
 - `run(spec, occurrenceId, jobKey)` takes a third argument. Submit under `jobKey`, not the
-  occurrence id: it is the occurrence id for a run's first Job and `<occurrence id>:<n>` after the
+  occurrence id. It is the occurrence id for a run's first Job and `<occurrence id>:<n>` after the
   n-th usage limit, because city-hall answers a known key with that Job's result, and a usage
-  limit's result would otherwise come back for good. A 0.4.0 adapter that ignores the argument
-  still compiles; it must stop ignoring it before it submits by key.
-- `run` need not wait for the runner. Submit (`POST /api/execute/jobs` with `key = jobKey`), and
-  when the Job is not `done` or `failed` yet throw `JobPendingError`. The run goes back to the
-  queue unstarted and uncharged, the execute lane stops for that tick (Jobs go one at a time,
-  plan 5.3), and the next tick calls `run` again with the same `jobKey` -- resubmitting the same
-  key returns the same Job, so poll that way or with `GET /api/execute/jobs/:id`. The run passes
-  the budget check while its Job is out (its call is made; holding it would only delay
-  collecting it), writes one `submitted` event for the whole wait, and is charged once, when the
-  result comes back. The `prepare` behind a resubmission is called again and must give the same
-  spec; city-hall ignores it for a known key anyway.
+  limit's result would otherwise come back for good.
+- `run` need not wait for the runner. Submit with `POST /api/execute/jobs` and `key = jobKey`.
+  While the Job is not `done` or `failed`, throw `JobPendingError`. Then:
+  - The run goes back to the queue, unstarted and uncharged.
+  - **Nothing new is submitted while a Job is out.** Each execute tick first asks about every run
+    whose Job is out, under the same key: resubmit the same key, or `GET /api/execute/jobs/:id`.
+    So Jobs really go one at a time (plan 5.3), and the budget check never misses a call in
+    flight.
+  - The run skips the budget check while its Job is out: its call is already made, and holding it
+    would only delay collecting it.
+  - It writes one `submitted` event for the whole wait, and is charged once, when the result
+    comes back.
+  - `prepare` is called again on each ask. city-hall ignores the spec for a known key.
+- The wait is bounded. A Job not back within `PENDING_LIMIT_MS` (6 hours; inferred, no plan item
+  sets it) is given up: the run writes one `error` event, and the type's `finish` gets
+  `{ kind: "error", detail: "the job did not finish in time" }`. That result is charged as one
+  call, since the Job may have run. The lane then moves on.
+- A run whose Job is out is never deleted. `reschedule` and a task completing keep it. It is
+  collected and charged even if its task was paused, completed or archived meanwhile.
+  - For a **paused** task, the outcome is applied and its sends wait for the resume, as for any
+    fired run.
+  - For a **done** or **archived** task, the outcome is dropped (no DM, no findings, no follow-up)
+    and the charge stays.
 - `ExecutorUnavailableError` still means nothing could be asked (city-hall unreachable, no
-  runner). The run is requeued the same way; a Job already out is still asked about under its
-  key next time.
-- A crash between the result coming back and the outcome being recorded re-asks the same key
-  and gets the same result, with no second model call; the charge, written before the record,
-  can still be counted twice (as in 0.4.0).
+  runner). The run is requeued; a Job already out is asked about under its key next time. **Any
+  other error from `run` is not retried by the core.** It becomes an uncharged
+  `{ kind: "error" }` result for the type's `finish`. So throw `ExecutorUnavailableError` for a
+  transport failure that may pass.
+- A Store error while a pending run goes back to the queue leaves it `running`. The next sweep
+  puts it back after `STALE_RUN_MS`, because its Job is on record. A crash between the result and
+  the record re-asks the same key, which gives the same result with no second model call, and
+  the keyed charge is not counted twice.
 
 **Types and lanes**
 
-- `Outcome.followUp: { at? }` asks for one more run of the same task, due at `at` or when the
-  asking run fired, off the schedule (`isOffSchedule`): materialization never counts it as the
-  next scheduled run, and `reschedule` never cancels it. It waits until the asking run has
-  finished (`isFinishing`), and on the execute lane it is budget-checked, charged and limited
-  like any model run. It is ignored with `complete`, from `onReply`, and past `MAX_FOLLOW_UPS` (5)
-  in a row. A run's record now carries it; `parseRunRecord` checks it.
+- An execute-lane type's `finish` always runs once its run starts. A `prepare` that throws, or an
+  Executor that throws (other than pending, unavailable or a usage limit), becomes an uncharged
+  `error` result. So a type can always retry or tell its owner, and a `once` task is never
+  stranded silently.
+- `prepare` may return `{ outcome }` instead of a JobSpec when no call is needed (a research
+  request past its deadline). That is the run's outcome: nothing is submitted or charged.
+- `Outcome.followUp: { at? }` asks for one more run of the same task:
+  - It is due at `at`, or when the asking run fired.
+  - It is queued only after the outcome is applied, so it runs on the state that outcome wrote.
+  - It is off the schedule (`isOffSchedule`): materialization never counts it as the next
+    scheduled run, and `reschedule` never cancels it.
+  - It waits until the asking run has finished (`isFinishing`), and on the execute lane it is
+    budget-checked, charged and limited like any model run.
+  - It is ignored together with `complete` and from `onReply`.
+  - Past `MAX_FOLLOW_UPS` (5) in a row the run writes an error event and the task completes. A
+    snooze's run in a chain starts a new count.
 - `Outcome.findings` are stored when the outcome is applied, each with the task's owner and type.
-  `visibleFindings(store, actor, taskId, { since? })` serves them: the owner, an accepted
-  recipient (they were sent the same answer) and admins; null for anyone else, as for the series.
-- A host routing "the latest run" to a reply sees a research task's research run and its
-  follow-up as two runs; neither offers run actions.
+  `Finding.key` is optional. `visibleFindings(store, actor, taskId, { since? })` serves them to
+  the owner, accepted recipients and admins (the series' rule), and returns null for anyone else.
+- `visibleTask` and `visibleTasks` now give a recipient the task **without `config` and `state`**.
+  Those are the owner's: a research request's draft, including a rejected or unreviewed one,
+  lives in `state` (`ResearchState.draft`). Only the owner and admins read it. A host view that
+  showed a recipient a task's config reads it from what the recipient was sent instead.
+
+**The research type, in the plugin**
+
+- Add `research` to the types the plugin loads (`TASK_TYPES` has it) and allow it with `notify`.
+  `notify` is its only capability, tier 0, so no admin grant is needed; `createTask` gives it.
+- The intake's optional `at` becomes the schedule `{ kind: "once", at: at ?? now }`. Its
+  optional `deadline` goes into `config.deadline` as an ISO instant.
+- Send its DMs with **no allowed mentions** (`allowed_mentions: { parse: [] }`). The type already
+  breaks every mention, masked link and mention-spelling URL in model text, but the Notifier is
+  the last line.
+- The rejection DM quotes the reviewer's problems, model-written text cleaned and capped like the
+  rest. Every research DM stays at or under 1900 characters.
 
 ## Adopting 0.4.0
 

@@ -250,6 +250,12 @@ export interface Usage {
   /** The run it paid for, or null for a charge a host records outside a run. */
   occurrenceId: string | null
   source: UsageSource
+  /**
+   * Identity for a run's charge: the Job key it paid for. Adding a charge whose key is stored is a
+   * no-op, so a crash between the charge and the run's record never charges one call twice. Null
+   * for a charge a host records by hand.
+   */
+  key: string | null
   calls: number
   costUsd: number
   at: string

@@ -239,6 +239,8 @@ describe("a follow-up run", () => {
     const last = runs[runs.length - 1]
     const events = await store.listEvents(last?.id ?? "")
     expect(events.some((e) => e.type === "error" && e.text.includes("no follow-up"))).toBe(true)
+    // Ended, not stranded active with nothing queued.
+    expect((await store.getTask(task.id))?.status).toBe("done")
   })
 
   it("from a record carrying a malformed follow-up is no record at all", () => {
@@ -330,12 +332,103 @@ describe("findings", () => {
     ).toEqual([])
   })
 
-  it("are erased by forget-me with the owner's other rows", async () => {
+  it("are all deleted for their owner by deleteFindings, the Store's forget-me call", async () => {
     const { executor } = scripted()
     const { store, lanes, larry } = await setup(executor)
     await lanes.tickExecute()
     await lanes.tickExecute()
     expect(await store.deleteFindings(larry.id)).toBe(2)
     expect(await store.listFindings({ ownerId: larry.id })).toEqual([])
+  })
+
+  it("with a key of their own are stored once per task, whichever run finds them (do-not-resurface)", async () => {
+    const keyed: TaskType<unknown> = {
+      ...forever,
+      id: "keyed",
+      schedule: ["poll"],
+      run: async () => ({
+        findings: [{ text: "same item", source: "https://x.example/1", key: "sha-of-url" }],
+      }),
+    }
+    const store = new MemoryStore()
+    const clock = new FakeClock(new Date(T0))
+    const { larry } = await people(store)
+    const lanes = new Lanes({ store, clock, types: { keyed }, notifier: new FakeNotifier() })
+    const { task } = await createTask(
+      store,
+      actor(larry),
+      larry,
+      {
+        type: keyed,
+        title: "k",
+        config: {},
+        schedule: { kind: "poll", every: 15, unit: "minute", start: T0 },
+      },
+      clock.now(),
+    )
+    await lanes.tickNotify()
+    clock.advance(15 * 60_000)
+    await lanes.tickNotify()
+    expect((await store.listOccurrences({ taskId: task.id, status: "done" })).length).toBe(2)
+    expect((await store.listFindings({ taskId: task.id })).map((f) => f.key)).toEqual([
+      `${task.id}:sha-of-url`,
+    ])
+  })
+
+  it("from a reply are keyed by the reply", async () => {
+    const answering: TaskType<unknown> = {
+      ...forever,
+      id: "answering",
+      run: async () => ({ notify: { text: "?", actions: ["done"] } }),
+      onReply: async () => ({ findings: [{ text: "from the reply" }] }),
+    }
+    const store = new MemoryStore()
+    const clock = new FakeClock(new Date(T0))
+    const { larry } = await people(store)
+    const lanes = new Lanes({ store, clock, types: { answering }, notifier: new FakeNotifier() })
+    const { task } = await createTask(
+      store,
+      actor(larry),
+      larry,
+      { type: answering, title: "a", config: {}, schedule: { kind: "once", at: T0 } },
+      clock.now(),
+    )
+    await lanes.tickNotify()
+    const [run] = await store.listOccurrences({ taskId: task.id })
+    await lanes.reply({
+      taskId: task.id,
+      occurrenceId: run?.id ?? null,
+      userId: larry.id,
+      kind: "text",
+      payload: "hi",
+    })
+    const [reply] = await store.listReplies(task.id)
+    expect((await store.listFindings({ taskId: task.id })).map((f) => f.key)).toEqual([
+      `reply:${reply?.id}:0`,
+    ])
+  })
+})
+
+describe("a follow-up asked for by a run that never finished applying", () => {
+  it("is never queued, so no run starts on state the outcome did not write", async () => {
+    const inner = new MemoryStore()
+    // Every state write fails: the run fires, cannot apply, and is given up after MAX_RESUMES.
+    const store: Store = Object.assign(Object.create(inner), {
+      updateTask: async (id: string, patch: Parameters<Store["updateTask"]>[1]) => {
+        if (patch.state !== undefined) throw new Error("disk full")
+        return inner.updateTask(id, patch)
+      },
+    })
+    const { executor, prompts } = scripted()
+    const { lanes, task } = await setup(executor, DEFAULT_BUDGET, store)
+    await lanes.tickExecute()
+    for (let i = 0; i < 5; i++) await lanes.tickNotify()
+    const runs = await inner.listOccurrences({ taskId: task.id })
+    expect(runs.map((o) => [o.status, o.error?.startsWith("could not finish")])).toEqual([
+      ["done", true],
+    ])
+    expect(runs.some((o) => o.dedupeKey.startsWith(FOLLOW_UP_PREFIX))).toBe(false)
+    await lanes.tickExecute()
+    expect(prompts).toEqual(["draft"])
   })
 })

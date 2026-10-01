@@ -10,7 +10,7 @@ import {
   usageLimitAdminMessage,
 } from "./budget.js"
 import { optOut, respondToInvite } from "./consent.js"
-import type { Outcome, RunContext, TaskType } from "./contract.js"
+import type { NoJob, Outcome, RunContext, TaskType } from "./contract.js"
 import { FOLLOW_UP_PREFIX, followUpKey, SNOOZE_PREFIX, snoozeKey } from "./dedupe.js"
 import {
   DEFAULT_DELIVERY_POLICY,
@@ -20,7 +20,17 @@ import {
   freshRoundForPause,
   settleStaleClaims,
 } from "./delivery.js"
-import type { JobResult } from "./job.js"
+import type { JobResult, JobSpec } from "./job.js"
+import {
+  DISPATCHER,
+  GAVE_UP_EVENT,
+  hasJobOut,
+  type JobState,
+  jobState,
+  PENDING_LIMIT_MS,
+  SUBMITTED_EVENT,
+  USAGE_LIMIT_EVENT,
+} from "./job-state.js"
 import type { Lane } from "./lanes.js"
 import type {
   Delivery,
@@ -90,10 +100,12 @@ import { isLate, materialize } from "./scheduler.js"
  * fired run is still applied, but its sends stay owed (`deliverOwed` holds or drops them).
  *
  * Two losses remain, both on a crash or Store error in a narrow window. Between the Executor's
- * answer and step 3, a crash re-runs the Job on restart: that is a second model call, and it is
- * charged as one. A Store error writing the record itself (step 3) fails the run: the outcome is
- * lost, and on the execute lane so is the model call it cost, which stays charged; the schedule's
- * next run follows as after any failure.
+ * answer and step 3, a crash asks the Executor again on restart under the same Job key: an
+ * Executor that is idempotent per key (city-hall's is) answers the same Job with no second model
+ * call, and the charge is keyed by the Job, so it is not counted twice; one that is not makes a
+ * second call, still charged once. A Store error writing the record itself (step 3) fails the
+ * run: the outcome is lost, and on the execute lane so is the model call it cost, which stays
+ * charged; the schedule's next run follows as after any failure.
  *
  * The execute lane charges every model run to the task's owner and holds a run whose owner, or
  * everyone together, has reached a daily ceiling (plan 5.7, `budget.ts`); the item stays queued
@@ -101,13 +113,17 @@ import { isLate, materialize } from "./scheduler.js"
  * outcome (5.12): it is requeued, charged to nobody, the admins are told once per window, and
  * the lane waits until the reset the CLI named, or an hour; its next try is a fresh Job under a
  * new key. A Job the Executor submitted and has not finished (`JobPendingError`) leaves the run
- * queued, uncharged and past the budget check, and the lane asks again next tick under the same
- * key, so one run is one charge however long the runner takes. A follow-up run (a research
+ * queued and uncharged, and the lane starts nothing new while it is out: each tick asks about it
+ * first, under the same key and past the budget check, so one run is one charge however long the
+ * runner takes -- for at most `PENDING_LIMIT_MS`, then `finish` gets an `error` result. A Job
+ * that is out is collected even if its task was paused, completed or archived meanwhile (a
+ * paused task's outcome is applied and its sends wait, as for any fired run; a done or archived
+ * task's is dropped, the charge kept), and no cancel deletes its run. A follow-up run (a research
  * request's reviewer) is an execute-lane run like any other: it waits for the run that asked for
  * it to finish, then is held, charged and limited the same way.
  */
 
-const ME = "docket"
+const ME = DISPATCHER
 /** How many of the task's most recent series points a run sees. */
 export const SERIES_IN_CONTEXT = 100
 /** How long the execute lane waits after a usage limit whose reset it could not read. */
@@ -116,10 +132,6 @@ export const USAGE_LIMIT_BACKOFF_MS = 3_600_000
 export const MAX_USAGE_LIMIT_WAIT_MS = 86_400_000
 /** The subscription's rolling window (plan 5.12), for keying a notice with no reset time. */
 const USAGE_WINDOW_MS = 5 * 3_600_000
-/** The event a run's Job leaves when the Executor says it is out and not finished. */
-export const SUBMITTED_EVENT = "submitted: waiting for the runner"
-/** How the event a usage limit leaves begins (`requeue` writes `waiting: <why>`). */
-const USAGE_LIMIT_EVENT = "waiting: usage limit"
 
 export interface LaneDeps {
   store: Store
@@ -186,7 +198,7 @@ class UsageLimitReached extends Error {
     /** Names the usage window, so its notice goes once however often the lane retries. */
     readonly window: string,
   ) {
-    super(`usage limit until ${until.toISOString()}`)
+    super(`${USAGE_LIMIT_EVENT.slice("waiting: ".length)} until ${until.toISOString()}`)
   }
 }
 
@@ -261,7 +273,10 @@ export class Lanes {
     const { store, clock } = this.d
     const cutoff = new Date(clock.now().getTime() - STALE_RUN_MS).toISOString()
     for (const o of await store.listOccurrences({ status: "running" })) {
-      if (!hasFired(o) || (o.startedAt ?? "") > cutoff) continue
+      if ((o.startedAt ?? "") > cutoff) continue
+      // An unfired run is put back only when its Job is out: its tick died on a Store error
+      // while it waited (`JobPendingError`). Any other unfired run may still be in its Executor.
+      if (!hasFired(o) && !(await hasJobOut(store, o))) continue
       await store.updateOccurrenceIf(o.id, "running", { status: "queued", startedAt: null })
     }
   }
@@ -269,7 +284,8 @@ export class Lanes {
   /** The execute tick: due model runs only. What a fired run still owes goes out on the notify tick. */
   async tickExecute(): Promise<TickResult> {
     // No signal here: an execute-lane outcome cost a model call, so it is recorded, never dropped.
-    const due = await this.due("execute")
+    await this.guarded(() => this.sweepStaleRuns())
+    const { runs: due, out } = await this.dueExecute()
     if (!this.d.executor) return { ran: 0, failed: 0, skipped: due.length }
     if (this.executeAfter && this.d.clock.now() < this.executeAfter) {
       return { ran: 0, failed: 0, skipped: due.length }
@@ -277,7 +293,8 @@ export class Lanes {
     const result: TickResult = { ran: 0, failed: 0, skipped: 0 }
     for (const [i, occurrence] of due.entries()) {
       const verdict = await this.guarded(() => this.runOne(occurrence))
-      if (verdict === "stop") {
+      // A run whose Job is out and was not collected keeps the lane: nothing new is submitted.
+      if (verdict === "stop" || (verdict === "held" && out.has(occurrence.id))) {
         result.skipped += due.length - i
         break
       }
@@ -322,7 +339,9 @@ export class Lanes {
     if (!occurrence) return null
     const ctx = await this.context(loaded, occurrence, now)
     const outcome = await loaded.type.onReply({ ...ctx, reply })
-    await this.apply(task, outcome, now, null)
+    // A reply's findings are keyed by the reply, so one answered twice is stored once. A reply
+    // queues no follow-up (`Outcome.followUp` is for runs).
+    await this.apply(task, outcome, now, null, `reply:${reply.id}`)
     if (outcome.complete) await this.complete(task, input.userId, now)
     else if (outcome.snoozeUntil) {
       await this.snooze(task, occurrence, outcome.snoozeUntil, reply, now)
@@ -352,6 +371,27 @@ export class Lanes {
       if (s === null || s === "active") kept.push(o)
     }
     return kept
+  }
+
+  /**
+   * The execute lane's due runs, those whose Job is out first, whatever their task's status now:
+   * a call already made is always collected (and charged). `out` names them.
+   */
+  private async dueExecute(): Promise<{ runs: Occurrence[]; out: Set<string> }> {
+    const { store, clock } = this.d
+    const queued = await store.listOccurrences({
+      lane: "execute",
+      status: "queued",
+      dueBefore: clock.now().toISOString(),
+    })
+    const active = new Set((await this.due("execute")).map((o) => o.id))
+    const out = new Set<string>()
+    for (const o of queued) {
+      if (!hasFired(o) && (await hasJobOut(store, o))) out.add(o.id)
+    }
+    const runs = queued.filter((o) => out.has(o.id) || active.has(o.id))
+    runs.sort((a, b) => Number(out.has(b.id)) - Number(out.has(a.id)))
+    return { runs, out }
   }
 
   /** Fired runs of either lane put back in the queue part way (a Store error, a crash). */
@@ -432,6 +472,8 @@ export class Lanes {
     outcome: Omit<Outcome, "snoozeUntil">,
     now: Date,
     occurrenceId: string | null,
+    /** What a finding with no key of its own is keyed by: the run, or `reply:<id>`. */
+    keyBase: string | null = occurrenceId,
   ): Promise<void> {
     const { store } = this.d
     if (outcome.state !== undefined) {
@@ -448,11 +490,12 @@ export class Lanes {
       })
     }
     for (const [i, finding] of (outcome.findings ?? []).entries()) {
+      const own = finding.key ? `${task.id}:${finding.key}` : null
       await store.addFinding({
         taskId: task.id,
         ownerId: task.ownerId,
         occurrenceId,
-        key: occurrenceId === null ? null : `${occurrenceId}:${i}`,
+        key: own ?? (keyBase === null ? null : `${keyBase}:${i}`),
         type: task.type,
         text: finding.text,
         tags: finding.tags ?? [],
@@ -471,7 +514,8 @@ export class Lanes {
     const { store } = this.d
     const at = now.toISOString()
     for (const o of await store.listOccurrences({ taskId: task.id, status: "queued" })) {
-      if (!hasFired(o)) await store.deleteOccurrence(o.id)
+      // A run whose Job is out stays, to be collected and charged (its outcome is then dropped).
+      if (!hasFired(o) && !(await hasJobOut(store, o))) await store.deleteOccurrence(o.id)
     }
     await store.updateTask(task.id, { status: "done", at })
     await store.addTaskEvent({ taskId: task.id, actorId, kind: "completed", detail: "", at })
@@ -487,20 +531,25 @@ export class Lanes {
     const { store, clock } = this.d
     const task = await store.getTask(occurrence.taskId)
     if (!task) return this.fail(occurrence, `no task ${occurrence.taskId}`)
-    // Re-checked: the task may have been paused since the lane listed its due runs.
-    if (task.status !== "active") return "held"
+    const job = occurrence.lane === "execute" ? await jobState(store, occurrence) : null
+    // Re-checked: the task may have been paused since the lane listed its due runs. A Job that is
+    // out is collected whatever the task's status: its call is made.
+    if (task.status !== "active" && !job?.submitted) return "held"
     // A run of this task still finishing has not written its state yet: this one waits.
     if (await this.finishing(task.id, occurrence.id)) return "held"
     const loaded = await this.load(task)
     if ("error" in loaded) return this.fail(occurrence, loaded.error)
-    const job = loaded.type.lane === "execute" ? await this.jobOf(occurrence) : null
-    // A Job already out is collected whatever the ceilings say: its call is made.
+    // A Job already out is collected whatever the ceilings say, too.
     if (job && !job.submitted) {
       const held = await this.budgetCheck(loaded.owner)
       if (held) return held
     }
     const now = clock.now()
     const late = job?.submitted ? occurrence.late : isLate(occurrence, now)
+    const expired =
+      job?.submittedAt && now.getTime() - Date.parse(job.submittedAt) >= PENDING_LIMIT_MS
+        ? job.submittedAt
+        : null
     // Started only if it is still queued: another tick, a reply or a reschedule may have moved it.
     const started = await store.updateOccurrenceIf(occurrence.id, "queued", {
       status: "running",
@@ -513,7 +562,29 @@ export class Lanes {
     try {
       if (!job?.submitted) await this.event(occurrence, "status", late ? "started late" : "started")
       const ctx = await this.context(loaded, started, now)
-      const { outcome, costUsd } = await this.execute(loaded.type, ctx, started, job?.key ?? "")
+      let given: JobResult | undefined
+      if (expired) {
+        await this.event(
+          started,
+          "error",
+          `${GAVE_UP_EVENT} after ${PENDING_LIMIT_MS / 3_600_000} h`,
+        )
+        given = {
+          kind: "error",
+          detail: "the job did not finish in time",
+          durationMs: now.getTime() - Date.parse(expired),
+        }
+      }
+      const ran = await this.execute(loaded.type, ctx, started, job, given)
+      const { costUsd } = ran
+      let { outcome } = ran
+      if (job?.submitted) {
+        // Collected late: a task completed or archived meanwhile keeps the charge, not the outcome.
+        const status = (await store.getTask(task.id))?.status
+        if (status === "done" || status === "archived") {
+          outcome = { summary: `collected after the task was ${status}; outcome dropped` }
+        }
+      }
       if (signal?.aborted) {
         await this.requeue(started, "the tick was aborted before the outcome was stored")
         return "stop"
@@ -529,9 +600,17 @@ export class Lanes {
       await store.updateOccurrence(started.id, { record })
     } catch (err) {
       if (err instanceof JobPendingError) {
-        // Asked again next tick under the same key; one event for the whole wait.
-        if (!job?.submitted) await this.event(started, "status", SUBMITTED_EVENT)
-        await store.updateOccurrence(started.id, { status: "queued", startedAt: null })
+        // Asked again next tick under the same key; one event for the whole wait. A Store error
+        // here leaves the run `running`; the sweep puts it back once its Job is on record.
+        try {
+          if (!job?.submitted) await this.event(started, "status", SUBMITTED_EVENT)
+          await store.updateOccurrenceIf(started.id, "running", {
+            status: "queued",
+            startedAt: null,
+          })
+        } catch {
+          // Left for `sweepStaleRuns`.
+        }
         return "stop"
       }
       if (err instanceof ExecutorUnavailableError || err instanceof UsageLimitReached) {
@@ -544,23 +623,6 @@ export class Lanes {
       return "failed"
     }
     return this.finishFired({ ...started, record }, task, record, signal)
-  }
-
-  /**
-   * An execute-lane run's Job: its key (a fresh one per usage limit the run met, `Executor`) and
-   * whether that Job is already out, from the run's own events, so both survive a restart.
-   */
-  private async jobOf(occurrence: Occurrence): Promise<{ key: string; submitted: boolean }> {
-    let limits = 0
-    let submitted = false
-    for (const e of await this.d.store.listEvents(occurrence.id)) {
-      if (e.agent !== ME || e.type !== "status") continue
-      if (e.text.startsWith(USAGE_LIMIT_EVENT)) {
-        limits++
-        submitted = false
-      } else if (e.text === SUBMITTED_EVENT) submitted = true
-    }
-    return { key: limits === 0 ? occurrence.id : `${occurrence.id}:${limits}`, submitted }
   }
 
   /** Back to the queue unstarted: nothing of this attempt was stored, so it runs afresh. */
@@ -616,14 +678,16 @@ export class Lanes {
     try {
       people = await this.audience(task)
       if (people && !outcome.complete) await this.next(task, people.owner)
-      if (outcome.followUp && !outcome.complete) {
-        await this.followUp(task, occurrence, outcome.followUp, record)
-      }
       if (record.appliedAt === null) {
         await this.apply(task, outcome, new Date(record.firedAt), occurrence.id)
         const applied = { ...record, appliedAt: clock.now().toISOString() }
         await store.updateOccurrence(occurrence.id, { record: applied })
         record = applied
+      }
+      // Only once the outcome is applied, so the follow-up runs on the state it wrote; a run given
+      // up before that (`putBack`) queues none.
+      if (outcome.followUp && !outcome.complete) {
+        await this.followUp(task, occurrence, outcome.followUp, record)
       }
       if (outcome.notify && people) {
         const at = clock.now().toISOString()
@@ -681,7 +745,11 @@ export class Lanes {
       current = await store.getOccurrence(current.dedupeKey.slice(FOLLOW_UP_PREFIX.length))
     }
     if (depth >= MAX_FOLLOW_UPS) {
+      // Ends the task rather than strand it active with nothing queued. (A snooze's run in the
+      // chain starts a new count: a snooze is the owner's ask, not the type's.)
       await this.event(occurrence, "error", `no follow-up: ${MAX_FOLLOW_UPS} in a row already`)
+      const current = await store.getTask(task.id)
+      if (current && current.status !== "done") await this.complete(current, null, clock.now())
       return
     }
     const at = followUp.at ? new Date(followUp.at) : new Date(record.firedAt)
@@ -831,7 +899,7 @@ export class Lanes {
    * type's `finish` (the runner's auth probe is what catches a dead token, plan 5.12). When the
    * runner's fetch Jobs arrive (E9) they make no model call and must not be charged here.
    */
-  private async chargeRun(occurrence: Occurrence, task: Task, result: JobResult) {
+  private async chargeRun(occurrence: Occurrence, task: Task, result: JobResult, key: string) {
     if (result.kind === "usage_limit") {
       const now = this.d.clock.now()
       const reset = result.resetsAt ? new Date(result.resetsAt) : null
@@ -855,6 +923,8 @@ export class Lanes {
       taskId: task.id,
       occurrenceId: occurrence.id,
       source: "run",
+      // Keyed by the Job, so collecting one Job twice (a crash before the record) charges once.
+      key,
       calls: 1,
       costUsd: result.totalCostUsd ?? null,
       at: this.d.clock.now(),
@@ -867,21 +937,51 @@ export class Lanes {
     if (current) await materialize(this.d.store, current, owner, this.d.clock.now())
   }
 
+  /**
+   * The type's work. On the execute lane `finish` always runs once a Job could be asked for: a
+   * `prepare` or Executor that throws (other than pending, unavailable or a usage limit) becomes
+   * an uncharged `error` result, so the type can retry or tell its owner; `given` is a result the
+   * dispatcher decided on (a Job waited for too long), charged as a call since it may have run.
+   */
   private async execute(
     type: TaskType<unknown>,
     ctx: RunContext<unknown>,
     occurrence: Occurrence,
-    jobKey: string,
+    job: JobState | null,
+    given?: JobResult,
   ): Promise<{ outcome: Outcome; costUsd: number | null }> {
     if (type.lane === "notify") {
       if (!type.run) throw new Error(`${type.id} has no run`)
       return { outcome: await type.run(ctx), costUsd: null }
     }
     if (!type.prepare || !type.finish) throw new Error(`${type.id} has no prepare/finish`)
-    if (!this.d.executor) throw new ExecutorUnavailableError("no executor configured")
-    const spec = await type.prepare(ctx)
-    const result = await this.d.executor.run(spec, occurrence.id, jobKey)
-    await this.chargeRun(occurrence, ctx.task, result)
+    const executor = this.d.executor
+    if (!executor) throw new ExecutorUnavailableError("no executor configured")
+    const key = job?.key ?? occurrence.id
+    let result: JobResult = failure("no result")
+    let charged = true
+    if (given) result = given
+    else {
+      let prepared: JobSpec | NoJob | null = null
+      try {
+        prepared = await type.prepare(ctx)
+      } catch (err) {
+        result = failure(`prepare failed: ${message(err)}`)
+        charged = false
+      }
+      if (prepared && "outcome" in prepared) return { outcome: prepared.outcome, costUsd: null }
+      if (prepared) {
+        try {
+          result = await executor.run(prepared, occurrence.id, key)
+        } catch (err) {
+          if (err instanceof JobPendingError || err instanceof ExecutorUnavailableError) throw err
+          await this.event(occurrence, "error", `the executor failed: ${message(err)}`)
+          result = failure(`the executor failed: ${message(err)}`)
+          charged = false
+        }
+      }
+    }
+    if (charged) await this.chargeRun(occurrence, ctx.task, result, key)
     const outcome = await type.finish(ctx, result)
     return { outcome, costUsd: result.totalCostUsd ?? null }
   }
@@ -937,4 +1037,13 @@ export class Lanes {
       at: this.d.clock.now().toISOString(),
     })
   }
+}
+
+function message(err: unknown): string {
+  return err instanceof Error ? err.message : String(err)
+}
+
+/** An `error` result the dispatcher hands `finish` when no Job answered. */
+function failure(detail: string): JobResult {
+  return { kind: "error", detail, durationMs: 0 }
 }

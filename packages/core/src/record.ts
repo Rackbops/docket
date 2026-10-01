@@ -64,7 +64,8 @@ function isFindings(v: unknown): boolean {
         isObj(f) &&
         isString(f.text) &&
         optional(f, "tags", isStringArray) &&
-        optional(f, "source", isString),
+        optional(f, "source", isString) &&
+        optional(f, "key", isString),
     )
   )
 }

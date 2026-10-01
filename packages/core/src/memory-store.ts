@@ -385,7 +385,10 @@ export class MemoryStore implements Store {
   }
 
   async addUsage(input: NewUsage): Promise<Usage> {
-    const usage: Usage = { id: this.id("c"), ...input }
+    const key = input.key ?? null
+    const known = key === null ? undefined : this.usage.find((c) => c.key === key)
+    if (known) return MemoryStore.copy(known)
+    const usage: Usage = { id: this.id("c"), ...input, key }
     this.usage.push(usage)
     return MemoryStore.copy(usage)
   }

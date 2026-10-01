@@ -1,4 +1,5 @@
 import { isOffSchedule, scheduledKey } from "./dedupe.js"
+import { hasJobOut } from "./job-state.js"
 import type { Occurrence, Task, User } from "./model.js"
 import type { Store } from "./ports.js"
 import { hasFired } from "./record.js"
@@ -77,13 +78,14 @@ export interface RescheduleResult {
  * Cancels the task's queued scheduled runs that have not fired: what a schedule computed, at a
  * time the edit makes stale (plan 5.3). A snooze's run stays -- it is an instant the owner asked
  * for, not one the schedule computed -- as does a follow-up a run asked for (a research request's
- * reviewer run), and a run that fired and was put back to finish (`dispatch.ts`). Returns how
- * many were cancelled.
+ * reviewer run), a run that fired and was put back to finish (`dispatch.ts`), and a run whose
+ * Job is out at the runner (`job-state.ts`): cancelling it would submit the call again under a
+ * new key, uncharged. Returns how many were cancelled.
  */
 export async function cancelScheduledRuns(store: Store, taskId: string): Promise<number> {
   let removed = 0
   for (const o of await store.listOccurrences({ taskId, status: "queued" })) {
-    if (isOffSchedule(o.dedupeKey) || hasFired(o)) continue
+    if (isOffSchedule(o.dedupeKey) || hasFired(o) || (await hasJobOut(store, o))) continue
     if (await store.deleteOccurrence(o.id)) removed += 1
   }
   return removed

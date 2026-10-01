@@ -37,6 +37,35 @@ describe("authorized reads", () => {
     expect((await visibleTask(store, actor(admin), task.id))?.id).toBe(task.id)
   })
 
+  it("gives a recipient the task without its config and state; owner and admins see them", async () => {
+    const store = new MemoryStore()
+    const clock = new FakeClock(new Date(T0))
+    const { larry, moe, admin } = await people(store)
+    const { task } = await createTask(
+      store,
+      actor(larry),
+      larry,
+      { type, title: "q", config: { question: "private" }, schedule: null },
+      clock.now(),
+    )
+    // A research request's rejected draft lives in its state.
+    await store.updateTask(task.id, { state: { draft: "rejected draft" }, at: T0 })
+    await invite(store, actor(larry), task, moe.id, clock.now())
+    await respondToInvite(store, task, moe.id, "accept", clock.now())
+    const seen = await visibleTask(store, actor(moe), task.id)
+    expect([seen?.id, seen?.title, seen?.config, seen?.state]).toEqual([task.id, "q", null, null])
+    expect((await visibleTasks(store, actor(moe))).map((t) => [t.config, t.state])).toEqual([
+      [null, null],
+    ])
+    for (const who of [larry, admin]) {
+      const whole = await visibleTask(store, actor(who), task.id)
+      expect([whole?.config, whole?.state]).toEqual([
+        { question: "private" },
+        { draft: "rejected draft" },
+      ])
+    }
+  })
+
   it("keeps a task's series -- prices seen, amounts paid -- behind the same rule", async () => {
     const store = new MemoryStore()
     const clock = new FakeClock(new Date(T0))

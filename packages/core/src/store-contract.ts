@@ -402,6 +402,31 @@ export const STORE_CONTRACT: readonly StoreContractCase[] = [
     },
   },
   {
+    name: "a charge with a stored key is not added again; one without a key always is",
+    async run(store) {
+      const u = await owner(store)
+      const base = { userId: u.id, taskId: null, occurrenceId: "o1", source: "run" as const }
+      const first = await store.addUsage({ ...base, key: "o1", calls: 1, costUsd: 0.6, at: AT })
+      const again = await store.addUsage({ ...base, key: "o1", calls: 1, costUsd: 0.9, at: LATER })
+      same(
+        [again.id, again.costUsd, again.key],
+        [first.id, 0.6, "o1"],
+        "the stored charge returned",
+      )
+      await store.addUsage({ ...base, calls: 1, costUsd: 0.1, at: AT })
+      await store.addUsage({ ...base, key: null, calls: 1, costUsd: 0.1, at: AT })
+      same(
+        (await store.listUsage()).map((c) => [c.key, c.costUsd]),
+        [
+          ["o1", 0.6],
+          [null, 0.1],
+          [null, 0.1],
+        ],
+        "keyless charges are always added; key defaults to null",
+      )
+    },
+  },
+  {
     name: "a notice key is claimed once",
     async run(store) {
       same(await store.claimNotice("budget:u1:2026-03-02", AT), true, "first claim")

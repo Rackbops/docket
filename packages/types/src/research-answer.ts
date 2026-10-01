@@ -104,7 +104,18 @@ export function safeUrl(value: unknown): string | null {
   }
   if (url.protocol !== "https:" && url.protocol !== "http:") return null
   if (url.username || url.password) return null
-  return url.toString()
+  const text = url.toString()
+  // A URL is shown as is, so one that spells a mention could ping; it is no source.
+  if (/@(everyone|here)|<[@#]/i.test(decodeURIComponentSafe(text))) return null
+  return text
+}
+
+function decodeURIComponentSafe(text: string): string {
+  try {
+    return decodeURIComponent(text)
+  } catch {
+    return text
+  }
 }
 
 function isObj(v: unknown): v is Record<string, unknown> {
@@ -210,7 +221,7 @@ function fit(lines: string[], max: number): string {
   const out: string[] = []
   let length = 0
   for (const [i, line] of lines.entries()) {
-    const more = `(${lines.length - i} more lines not shown; the findings are saved in the tracker)`
+    const more = `(${lines.length - i} more lines not shown)`
     // Room for this line, and for the marker unless it is the last.
     const reserve = i < lines.length - 1 ? more.length + 1 : 0
     if (length + line.length + 1 + reserve > max) {
@@ -222,6 +233,11 @@ function fit(lines: string[], max: number): string {
   }
   const text = out.join("\n")
   return text.length > max ? `${text.slice(0, max - 3)}...` : text
+}
+
+/** Lines as one DM of at most `MAX_MESSAGE_CHARS`, whole lines dropped from the end. */
+export function fitMessage(lines: string[]): string {
+  return fit(lines, MAX_MESSAGE_CHARS)
 }
 
 /**
