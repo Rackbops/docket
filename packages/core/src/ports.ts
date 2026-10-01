@@ -112,7 +112,13 @@ export class DeliveryFailedError extends Error {
  * before the outcome was recorded) asks again under the same key and gets the same Job back.
  */
 export interface Executor {
-  run(spec: JobSpec, occurrenceId: string, jobKey: string): Promise<JobResult>
+  /**
+   * `spec` is null when the Job is already out under `jobKey`: answer that Job and submit
+   * nothing. The core never re-runs `prepare` for a Job that is out (its config or deadline may
+   * have changed since), so an adapter keeps what it needs to look the Job up by key -- city-hall's
+   * job id from the first submission, say -- in its own store.
+   */
+  run(spec: JobSpec | null, occurrenceId: string, jobKey: string): Promise<JobResult>
 }
 
 /**
@@ -122,9 +128,10 @@ export interface Executor {
  * past the budget check, with no new events -- for at most `PENDING_LIMIT_MS`, after which the
  * type's `finish` gets an `error` result and the lane moves on.
  *
- * Any other error from `run` is an `error` result for `finish`, uncharged. Throw
- * `ExecutorUnavailableError` instead for a transport failure that may pass (city-hall
- * unreachable): the run is requeued and asked again under the same key.
+ * Any other error from `run` on a first submission is an `error` result for `finish`, uncharged.
+ * On a Job already out it is treated like pending (the Job may still run), up to the same limit.
+ * Throw `ExecutorUnavailableError` for a transport failure that may pass (city-hall
+ * unreachable): the run is requeued and asked again under the same key, and never given up.
  */
 export class JobPendingError extends Error {
   override name = "JobPendingError"

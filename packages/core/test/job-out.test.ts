@@ -4,12 +4,15 @@ import {
   createTask,
   DEFAULT_BUDGET,
   type Executor,
+  ExecutorUnavailableError,
   GAVE_UP_EVENT,
   JobPendingError,
   type JobResult,
   Lanes,
   PENDING_LIMIT_MS,
   reschedule,
+  ScheduleError,
+  SLOW_JOB_MS,
   STALE_RUN_MS,
   type Store,
   type TaskType,
@@ -191,7 +194,7 @@ describe("a run whose Job is out", () => {
 
   it(`is given up after ${PENDING_LIMIT_MS / 3_600_000} hours: finish hears why, one charge, the lane moves on`, async () => {
     const { executor, keys } = cityHall()
-    const { store, clock, notifier, lanes, ask, moe } = await setup(executor, { once: true })
+    const { store, clock, notifier, lanes, ask, larry, moe } = await setup(executor, { once: true })
     const task = await ask()
     await lanes.tickExecute()
     const other = await ask(moe)
@@ -200,16 +203,20 @@ describe("a run whose Job is out", () => {
     expect(keys).toHaveLength(2)
     clock.advance(60_000)
     const result = await lanes.tickExecute()
-    // Larry's run ended without asking again; Moe's Job then went out.
+    // Larry's Job was asked about once more, answered pending, and given up; Moe's then went out.
     expect(result).toEqual({ ran: 1, failed: 0, skipped: 1 })
-    expect(keys).toHaveLength(3)
+    expect(keys).toHaveLength(4)
     const [run] = await store.listOccurrences({ taskId: task.id })
-    expect(keys[2]).not.toBe(run?.id)
-    expect(notifier.sent.map((s) => s.message.text)).toEqual([
+    expect(keys.slice(0, 3)).toEqual([run?.id, run?.id, run?.id])
+    expect(keys[3]).not.toBe(run?.id)
+    expect(notifier.sent.filter((s) => s.userId === larry.id).map((s) => s.message.text)).toEqual([
       "failed: the job did not finish in time",
     ])
     const errors = (await store.listEvents(run?.id ?? "")).filter((e) => e.type === "error")
-    expect(errors.map((e) => e.text)).toEqual([`${GAVE_UP_EVENT} after 6 h`])
+    expect(errors.map((e) => e.text)).toEqual([
+      expect.stringContaining("out at the runner for over 1 h"),
+      `${GAVE_UP_EVENT} after 6 h`,
+    ])
     expect((await store.listUsage()).map((u) => u.key)).toEqual([run?.id])
     expect((await store.listOccurrences({ taskId: other.id }))[0]?.status).toBe("queued")
   })
@@ -335,5 +342,193 @@ describe("an execute-lane type always gets to finish", () => {
     expect(notifier.sent.map((s) => s.message.text)).toEqual(["nothing to do"])
     expect(await store.listUsage()).toEqual([])
     expect((await store.getTask(task.id))?.status).toBe("done")
+  })
+})
+
+describe("a Job that is out, asked about again", () => {
+  it("is collected without running prepare again, even if prepare would now skip or throw", async () => {
+    for (const later of ["skip", "throw"] as const) {
+      let prepares = 0
+      const fickle: TaskType<unknown> = {
+        ...asker,
+        prepare: async () => {
+          prepares++
+          if (prepares === 1) return { prompt: "look" }
+          if (later === "skip") return { outcome: { summary: "deadline missed", complete: true } }
+          throw new Error("config edited")
+        },
+      }
+      const { executor, keys, state } = cityHall()
+      const store = new MemoryStore()
+      const clock = new FakeClock(new Date(T0))
+      const notifier = new FakeNotifier()
+      const { larry } = await people(store)
+      const lanes = new Lanes({ store, clock, types: { asker: fickle }, notifier, executor })
+      const { task } = await createTask(
+        store,
+        actor(larry),
+        larry,
+        { type: fickle, title: "q", config: {}, schedule: { kind: "once", at: T0 } },
+        clock.now(),
+      )
+      await lanes.tickExecute()
+      state.busy = false
+      await lanes.tickExecute()
+      expect(prepares).toBe(1)
+      const [run] = await store.listOccurrences({ taskId: task.id })
+      expect(keys).toEqual([run?.id, run?.id])
+      expect(run?.summary).toBe("success")
+      expect(await store.listUsage()).toHaveLength(1)
+      expect(notifier.sent.map((m) => m.message.text)).toEqual(["found"])
+    }
+  })
+
+  it("is asked with no spec: the Executor answers the Job it has", async () => {
+    const specs: unknown[] = []
+    let n = 0
+    const executor: Executor = {
+      run: async (spec) => {
+        specs.push(spec)
+        if (++n === 1) throw new JobPendingError("running")
+        return ok
+      },
+    }
+    const { lanes, ask } = await setup(executor, { once: true })
+    await ask()
+    await lanes.tickExecute()
+    await lanes.tickExecute()
+    expect(specs).toEqual([{ prompt: "look" }, null])
+  })
+
+  it("waits out any other error under the same key, and is collected once", async () => {
+    const { executor, keys, state } = cityHall()
+    const { store, lanes, ask } = await setup(executor, { once: true })
+    const task = await ask()
+    await lanes.tickExecute()
+    state.throws = new Error("HTTP 500")
+    expect(await lanes.tickExecute()).toEqual({ ran: 0, failed: 0, skipped: 1 })
+    const [run] = await store.listOccurrences({ taskId: task.id })
+    expect(run?.status).toBe("queued")
+    state.throws = null
+    state.busy = false
+    await lanes.tickExecute()
+    expect(new Set(keys)).toEqual(new Set([run?.id]))
+    expect((await store.listOccurrences({ taskId: task.id }))[0]?.summary).toBe("success")
+    expect(await store.listUsage()).toHaveLength(1)
+  })
+
+  it("is never given up while city-hall is unreachable: it is collected when it is back", async () => {
+    const { executor, state } = cityHall()
+    const { store, clock, lanes, ask } = await setup(executor, { once: true })
+    const task = await ask()
+    await lanes.tickExecute()
+    state.throws = new ExecutorUnavailableError("city-hall unreachable")
+    for (let h = 0; h < 7; h++) {
+      clock.advance(3_600_000)
+      await lanes.tickExecute()
+    }
+    state.throws = null
+    state.busy = false
+    await lanes.tickExecute()
+    const [run] = await store.listOccurrences({ taskId: task.id })
+    expect(run?.summary).toBe("success")
+  })
+
+  it(`tells the admins once when it has been out ${SLOW_JOB_MS / 3_600_000} h`, async () => {
+    const { executor } = cityHall()
+    const { store, clock, notifier, lanes, ask, admin } = await setup(executor, { once: true })
+    const task = await ask()
+    await lanes.tickExecute()
+    clock.advance(SLOW_JOB_MS - 60_000)
+    await lanes.tickExecute()
+    expect(notifier.sent).toEqual([])
+    for (let i = 0; i < 3; i++) {
+      clock.advance(60_000)
+      await lanes.tickExecute()
+    }
+    const told = notifier.sent.filter((m) => m.userId === admin.id)
+    expect(told).toHaveLength(1)
+    expect(told[0]?.message.text).toContain("runs nothing else until it is back")
+    const [run] = await store.listOccurrences({ taskId: task.id })
+    const errors = (await store.listEvents(run?.id ?? "")).filter((e) => e.type === "error")
+    expect(errors).toHaveLength(1)
+  })
+
+  it("keeps its key when an unavailable message merely mentions a usage limit", async () => {
+    const { executor, keys, state } = cityHall()
+    const { store, lanes, ask } = await setup(executor, { once: true })
+    const task = await ask()
+    await lanes.tickExecute()
+    state.throws = new ExecutorUnavailableError("usage limit of the proxy reached")
+    await lanes.tickExecute()
+    state.throws = null
+    state.busy = false
+    await lanes.tickExecute()
+    const [run] = await store.listOccurrences({ taskId: task.id })
+    expect(new Set(keys)).toEqual(new Set([run?.id]))
+  })
+
+  it("of a paused task, with an outcome that completes it, waits for the resume to complete and send", async () => {
+    const completing: TaskType<unknown> = {
+      ...asker,
+      finish: async () => ({ notify: { text: "answer" }, complete: true }),
+    }
+    const { executor, state } = cityHall()
+    const store = new MemoryStore()
+    const clock = new FakeClock(new Date(T0))
+    const notifier = new FakeNotifier()
+    const { larry } = await people(store)
+    const lanes = new Lanes({ store, clock, types: { asker: completing }, notifier, executor })
+    const { task } = await createTask(
+      store,
+      actor(larry),
+      larry,
+      { type: completing, title: "q", config: {}, schedule: { kind: "once", at: T0 } },
+      clock.now(),
+    )
+    await lanes.tickExecute()
+    await store.updateTask(task.id, { status: "paused", at: T0 })
+    state.busy = false
+    await lanes.tickExecute()
+    await lanes.tickNotify()
+    await lanes.tickNotify()
+    expect((await store.getTask(task.id))?.status).toBe("paused")
+    expect(notifier.sent).toEqual([])
+    expect(await store.listUsage()).toHaveLength(1)
+    await store.updateTask(task.id, { status: "active", at: T0 })
+    await lanes.tickNotify()
+    expect((await store.getTask(task.id))?.status).toBe("done")
+    expect(notifier.sent.map((m) => m.message.text)).toEqual(["answer"])
+  })
+
+  it("of a once task blocks a schedule edit; a recurring task's edit says the Job is out", async () => {
+    const { executor } = cityHall()
+    const once = await setup(executor, { once: true })
+    const t1 = await once.ask()
+    await once.lanes.tickExecute()
+    await expect(
+      reschedule(
+        once.store,
+        t1,
+        once.larry,
+        { kind: "once", at: "2026-03-05T12:00:00.000Z" },
+        once.larry.id,
+        once.clock.now(),
+      ),
+    ).rejects.toThrow(ScheduleError)
+    expect(await once.store.listOccurrences({ taskId: t1.id })).toHaveLength(1)
+
+    const polled = await setup(cityHall().executor)
+    const t2 = await polled.ask()
+    await polled.lanes.tickExecute()
+    const result = await reschedule(
+      polled.store,
+      t2,
+      polled.larry,
+      { kind: "poll", every: 2, unit: "hour", start: T0 },
+      polled.larry.id,
+      polled.clock.now(),
+    )
+    expect([result.jobOut, result.removed, result.next]).toEqual([true, 0, null])
   })
 })

@@ -28,6 +28,7 @@ import {
   type JobState,
   jobState,
   PENDING_LIMIT_MS,
+  SLOW_JOB_MS,
   SUBMITTED_EVENT,
   USAGE_LIMIT_EVENT,
 } from "./job-state.js"
@@ -177,6 +178,9 @@ interface Loaded {
  */
 type Verdict = "ran" | "failed" | "held" | "stop"
 
+/** The event a fired run writes when it waits out its task's pause before completing it. */
+export const PAUSED_COMPLETION = "waiting: the task is paused; it completes on resume"
+
 /** Times a fired run's remaining steps are retried after a Store error before it is given up. */
 export const MAX_RESUMES = 3
 
@@ -198,7 +202,7 @@ class UsageLimitReached extends Error {
     /** Names the usage window, so its notice goes once however often the lane retries. */
     readonly window: string,
   ) {
-    super(`${USAGE_LIMIT_EVENT.slice("waiting: ".length)} until ${until.toISOString()}`)
+    super(`usage limit until ${until.toISOString()}`)
   }
 }
 
@@ -396,11 +400,19 @@ export class Lanes {
 
   /** Fired runs of either lane put back in the queue part way (a Store error, a crash). */
   private async unfinished(): Promise<Occurrence[]> {
-    const queued = await this.d.store.listOccurrences({
+    const { store, clock } = this.d
+    const queued = await store.listOccurrences({
       status: "queued",
-      dueBefore: this.d.clock.now().toISOString(),
+      dueBefore: clock.now().toISOString(),
     })
-    return queued.filter(isFinishing)
+    const kept: Occurrence[] = []
+    for (const o of queued.filter(isFinishing)) {
+      // A run that completes its task waits out a pause (`finishFired`), untouched until resume.
+      const completes = parseRunRecord(o.record)?.outcome.complete === true
+      if (completes && (await store.getTask(o.taskId))?.status === "paused") continue
+      kept.push(o)
+    }
+    return kept
   }
 
   /** The owner and accepted recipients: who a run of `task` goes to. */
@@ -546,10 +558,6 @@ export class Lanes {
     }
     const now = clock.now()
     const late = job?.submitted ? occurrence.late : isLate(occurrence, now)
-    const expired =
-      job?.submittedAt && now.getTime() - Date.parse(job.submittedAt) >= PENDING_LIMIT_MS
-        ? job.submittedAt
-        : null
     // Started only if it is still queued: another tick, a reply or a reschedule may have moved it.
     const started = await store.updateOccurrenceIf(occurrence.id, "queued", {
       status: "running",
@@ -562,20 +570,7 @@ export class Lanes {
     try {
       if (!job?.submitted) await this.event(occurrence, "status", late ? "started late" : "started")
       const ctx = await this.context(loaded, started, now)
-      let given: JobResult | undefined
-      if (expired) {
-        await this.event(
-          started,
-          "error",
-          `${GAVE_UP_EVENT} after ${PENDING_LIMIT_MS / 3_600_000} h`,
-        )
-        given = {
-          kind: "error",
-          detail: "the job did not finish in time",
-          durationMs: now.getTime() - Date.parse(expired),
-        }
-      }
-      const ran = await this.execute(loaded.type, ctx, started, job, given)
+      const ran = await this.execute(loaded.type, ctx, started, job)
       const { costUsd } = ran
       let { outcome } = ran
       if (job?.submitted) {
@@ -615,7 +610,11 @@ export class Lanes {
       }
       if (err instanceof ExecutorUnavailableError || err instanceof UsageLimitReached) {
         await this.requeue(started, err.message)
-        if (err instanceof UsageLimitReached) await this.usageLimit(err)
+        if (err instanceof UsageLimitReached) {
+          // The marker only this path writes: the run's next try is a fresh Job key.
+          await this.event(started, "status", USAGE_LIMIT_EVENT)
+          await this.usageLimit(err)
+        }
         return "stop"
       }
       await this.fail(started, err instanceof Error ? err.message : String(err))
@@ -689,6 +688,17 @@ export class Lanes {
       if (outcome.followUp && !outcome.complete) {
         await this.followUp(task, occurrence, outcome.followUp, record)
       }
+      if (outcome.complete && (await store.getTask(task.id))?.status === "paused") {
+        // Completing now would make the task done and send its message at once, through the
+        // pause. Applied, it waits instead: `unfinished` skips it while the task is paused, and
+        // the first notify tick after the resume completes the task and sends.
+        const back = await store.updateOccurrenceIf(occurrence.id, "running", {
+          status: "queued",
+          startedAt: null,
+        })
+        if (back) await this.event(occurrence, "status", PAUSED_COMPLETION)
+        return "held"
+      }
       if (outcome.notify && people) {
         const at = clock.now().toISOString()
         // A snooze's run re-asks the owner; recipients had their copy of the run it re-asks.
@@ -706,7 +716,12 @@ export class Lanes {
       })
       if (!done) return "held"
       current = await store.getTask(task.id)
-      if (outcome.complete && current && current.status !== "done") {
+      if (
+        outcome.complete &&
+        current &&
+        current.status !== "done" &&
+        current.status !== "archived"
+      ) {
         await this.complete(current, null, clock.now())
         current = await store.getTask(task.id)
       }
@@ -750,6 +765,18 @@ export class Lanes {
       await this.event(occurrence, "error", `no follow-up: ${MAX_FOLLOW_UPS} in a row already`)
       const current = await store.getTask(task.id)
       if (current && current.status !== "done") await this.complete(current, null, clock.now())
+      const owner = await store.getUser(task.ownerId)
+      const text =
+        `"${task.title}" stopped: it asked for more than ${MAX_FOLLOW_UPS} runs in a row, so ` +
+        "it was ended. Set it up again if you still want it."
+      await noticeOnce(
+        store,
+        this.d.notifier,
+        `follow-ups:${task.id}`,
+        clock.now(),
+        { text: `Task ${task.id} (${task.type}) ended at ${MAX_FOLLOW_UPS} follow-ups in a row.` },
+        owner ? { user: owner, message: { text } } : undefined,
+      )
       return
     }
     const at = followUp.at ? new Date(followUp.at) : new Date(record.firedAt)
@@ -940,15 +967,14 @@ export class Lanes {
   /**
    * The type's work. On the execute lane `finish` always runs once a Job could be asked for: a
    * `prepare` or Executor that throws (other than pending, unavailable or a usage limit) becomes
-   * an uncharged `error` result, so the type can retry or tell its owner; `given` is a result the
-   * dispatcher decided on (a Job waited for too long), charged as a call since it may have run.
+   * an uncharged `error` result, so the type can retry or tell its owner. A Job already out is
+   * asked about without `prepare` (`collect`).
    */
   private async execute(
     type: TaskType<unknown>,
     ctx: RunContext<unknown>,
     occurrence: Occurrence,
     job: JobState | null,
-    given?: JobResult,
   ): Promise<{ outcome: Outcome; costUsd: number | null }> {
     if (type.lane === "notify") {
       if (!type.run) throw new Error(`${type.id} has no run`)
@@ -960,7 +986,7 @@ export class Lanes {
     const key = job?.key ?? occurrence.id
     let result: JobResult = failure("no result")
     let charged = true
-    if (given) result = given
+    if (job?.submitted) result = await this.collect(executor, occurrence, job)
     else {
       let prepared: JobSpec | NoJob | null = null
       try {
@@ -984,6 +1010,52 @@ export class Lanes {
     if (charged) await this.chargeRun(occurrence, ctx.task, result, key)
     const outcome = await type.finish(ctx, result)
     return { outcome, costUsd: result.totalCostUsd ?? null }
+  }
+
+  /**
+   * Asks about a Job that is out, with no spec and no `prepare`: the Job is already defined, and
+   * a `prepare` run now (on edited config, past a deadline) must not decide its fate. Unavailable
+   * passes through (requeued, never given up: city-hall may hold a finished Job). Pending, or any
+   * other error -- the Job may still be running, so it is not resubmitted under a new key -- waits
+   * like pending, until `PENDING_LIMIT_MS` from the submission; then the run ends with an `error`
+   * result, charged as one call since it may have run. Pending past `SLOW_JOB_MS` tells the admins
+   * once.
+   */
+  private async collect(
+    executor: Executor,
+    occurrence: Occurrence,
+    job: JobState,
+  ): Promise<JobResult> {
+    try {
+      return await executor.run(null, occurrence.id, job.key)
+    } catch (err) {
+      if (err instanceof ExecutorUnavailableError) throw err
+      const now = this.d.clock.now()
+      const waited = now.getTime() - Date.parse(job.submittedAt ?? now.toISOString())
+      if (waited >= PENDING_LIMIT_MS) {
+        await this.event(
+          occurrence,
+          "error",
+          `${GAVE_UP_EVENT} after ${PENDING_LIMIT_MS / 3_600_000} h`,
+        )
+        return { kind: "error", detail: "the job did not finish in time", durationMs: waited }
+      }
+      if (waited >= SLOW_JOB_MS) await this.slowJob(occurrence, job, now)
+      if (err instanceof JobPendingError) throw err
+      throw new ExecutorUnavailableError(`asking about job ${job.key} failed: ${message(err)}`)
+    }
+  }
+
+  /** One notice to the admins, and one error event, for a Job out past `SLOW_JOB_MS`. */
+  private async slowJob(occurrence: Occurrence, job: JobState, now: Date): Promise<void> {
+    const text =
+      `A model Job (${job.key}) has been out at the runner for over ` +
+      `${SLOW_JOB_MS / 3_600_000} h; the execute lane runs nothing else until it is back or ` +
+      `given up at ${PENDING_LIMIT_MS / 3_600_000} h.`
+    const told = await noticeOnce(this.d.store, this.d.notifier, `job-slow:${job.key}`, now, {
+      text,
+    })
+    if (told) await this.event(occurrence, "error", text)
   }
 
   private async snooze(

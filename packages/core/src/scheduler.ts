@@ -72,6 +72,11 @@ export interface RescheduleResult {
   /** Queued occurrences cancelled by the edit. */
   removed: number
   next: Occurrence | null
+  /**
+   * A run of the task has a Job out at the runner: it was kept, will be collected, and the new
+   * schedule's next run follows it. A host tells the owner so.
+   */
+  jobOut: boolean
 }
 
 /**
@@ -91,9 +96,17 @@ export async function cancelScheduledRuns(store: Store, taskId: string): Promise
   return removed
 }
 
+async function anyJobOut(store: Store, taskId: string): Promise<boolean> {
+  for (const o of await store.listOccurrences({ taskId, status: "queued" })) {
+    if (!hasFired(o) && (await hasJobOut(store, o))) return true
+  }
+  return false
+}
+
 /**
  * Replaces the schedule: cancels the queued scheduled runs (`cancelScheduledRuns`, snoozes kept),
- * records the edit, materializes the next.
+ * records the edit, materializes the next. Refused (`ScheduleError`) for a `once` schedule, old or
+ * new, while the task's run has a Job out: that run is the task, and the edit would run it twice.
  *
  * The host serializes this with the lanes per task: a run firing between the cancel and the
  * schedule write materializes its next run from the old schedule, and that run survives beside
@@ -112,6 +125,13 @@ export async function reschedule(
     const problems = scheduleProblems(schedule)
     if (problems.length > 0) throw new ScheduleError(problems.join("; "))
   }
+  const jobOut = await anyJobOut(store, task.id)
+  // A `once` task's run is the task: with its Job out, a new instant would run it twice.
+  if (jobOut && (schedule?.kind === "once" || task.schedule?.kind === "once")) {
+    throw new ScheduleError(
+      "its run is with the runner now; change when it runs once that run is back",
+    )
+  }
   const at = now.toISOString()
   const removed = await cancelScheduledRuns(store, task.id)
   const updated = await store.updateTask(task.id, { schedule, at })
@@ -122,5 +142,5 @@ export async function reschedule(
     detail: JSON.stringify(schedule),
     at,
   })
-  return { task: updated, removed, next: await materialize(store, updated, owner, now) }
+  return { task: updated, removed, next: await materialize(store, updated, owner, now), jobOut }
 }

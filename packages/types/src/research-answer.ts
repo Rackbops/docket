@@ -106,7 +106,7 @@ export function safeUrl(value: unknown): string | null {
   if (url.username || url.password) return null
   const text = url.toString()
   // A URL is shown as is, so one that spells a mention could ping; it is no source.
-  if (/@(everyone|here)|<[@#]/i.test(decodeURIComponentSafe(text))) return null
+  if (/@(everyone|here)\b|<[@#]/i.test(decodeURIComponentSafe(text))) return null
   return text
 }
 

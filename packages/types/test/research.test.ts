@@ -662,5 +662,48 @@ describe("a source URL", () => {
       expect(safeUrl(bad)).toBeNull()
     }
     expect(safeUrl("https://a.example/@user")).toBe("https://a.example/@user")
+    expect(safeUrl("https://a.example/@heresy")).toBe("https://a.example/@heresy")
+    expect(safeUrl("https://a.example/@everyones-guide")).toBe("https://a.example/@everyones-guide")
+  })
+})
+
+describe("a research run whose Job is out when its deadline passes", () => {
+  it("is collected and goes on to review: the deadline only stops a run not yet sent", async () => {
+    let n = 0
+    const keys: string[] = []
+    const executor: Executor = {
+      run: async (_spec, _occurrenceId, jobKey) => {
+        keys.push(jobKey)
+        n++
+        if (n === 1) throw new JobPendingError("running")
+        return n === 2 ? researched : approved
+      },
+    }
+    const store = new MemoryStore()
+    const clock = new FakeClock(new Date(T0))
+    const notifier = new FakeNotifier()
+    const larry = await store.createUser({ discordId: "d-larry", at: T0 })
+    const lanes = new Lanes({ store, clock, types: TASK_TYPES, notifier, executor })
+    const { task } = await createTask(
+      store,
+      actor(larry),
+      larry,
+      {
+        type: research,
+        title: "Tight",
+        config: { ...CONFIG, deadline: "2026-03-02T12:30:00.000Z" },
+        schedule: { kind: "once", at: T0 },
+      },
+      clock.now(),
+    )
+    await lanes.tickExecute()
+    clock.set("2026-03-02T13:00:00.000Z")
+    await lanes.tickExecute()
+    await lanes.tickExecute()
+    expect(keys).toHaveLength(3)
+    expect(await store.listUsage()).toHaveLength(2)
+    expect(notifier.sent[0]?.message.text).toContain(DRAFT.summary)
+    expect(notifier.sent[0]?.message.text).not.toContain("deadline")
+    expect((await store.getTask(task.id))?.status).toBe("done")
   })
 })

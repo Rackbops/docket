@@ -224,7 +224,8 @@ describe("a follow-up run", () => {
     const store = new MemoryStore()
     const clock = new FakeClock(new Date(T0))
     const { larry } = await people(store)
-    const lanes = new Lanes({ store, clock, types: { forever }, notifier: new FakeNotifier() })
+    const notifier = new FakeNotifier()
+    const lanes = new Lanes({ store, clock, types: { forever }, notifier })
     const { task } = await createTask(
       store,
       actor(larry),
@@ -241,6 +242,9 @@ describe("a follow-up run", () => {
     expect(events.some((e) => e.type === "error" && e.text.includes("no follow-up"))).toBe(true)
     // Ended, not stranded active with nothing queued.
     expect((await store.getTask(task.id))?.status).toBe("done")
+    expect(notifier.sent.filter((m) => m.userId === larry.id).map((m) => m.message.text)).toEqual([
+      expect.stringContaining("it asked for more than 5 runs in a row"),
+    ])
   })
 
   it("from a record carrying a malformed follow-up is no record at all", () => {

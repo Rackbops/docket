@@ -68,11 +68,14 @@ three new cases cover the changes.
 - No new occurrence column. A follow-up is an ordinary occurrence whose `dedupeKey` is
   `followup:<occurrence>`. A run's Job state (its key, whether it is out) is read from its own
   `status` events (`job-state.ts`), which the host stores already.
+- Each execute tick reads the events of every due execute-lane run (`hasJobOut`), and `reschedule`
+  reads them for the task's queued runs. That is cheap at the tracker's size, but index
+  `events(occurrence_id)` if the host has not already.
 
 **Executor**
 
-- `run(spec, occurrenceId, jobKey)` takes a third argument. Submit under `jobKey`, not the
-  occurrence id. It is the occurrence id for a run's first Job and `<occurrence id>:<n>` after the
+- `run(spec, occurrenceId, jobKey)` takes a third argument, and `spec` may be **null**. Submit
+  under `jobKey`, not the occurrence id. It is the occurrence id for a run's first Job and `<occurrence id>:<n>` after the
   n-th usage limit, because city-hall answers a known key with that Job's result, and a usage
   limit's result would otherwise come back for good.
 - `run` need not wait for the runner. Submit with `POST /api/execute/jobs` and `key = jobKey`.
@@ -86,12 +89,29 @@ three new cases cover the changes.
     would only delay collecting it.
   - It writes one `submitted` event for the whole wait, and is charged once, when the result
     comes back.
-  - `prepare` is called again on each ask. city-hall ignores the spec for a known key.
-- The wait is bounded. A Job not back within `PENDING_LIMIT_MS` (6 hours; inferred, no plan item
-  sets it) is given up: the run writes one `error` event, and the type's `finish` gets
-  `{ kind: "error", detail: "the job did not finish in time" }`. That result is charged as one
-  call, since the Job may have run. The lane then moves on.
-- A run whose Job is out is never deleted. `reschedule` and a task completing keep it. It is
+  - `prepare` is **not** called again. Every later ask passes `spec = null`: answer the Job
+    already out under `jobKey`, and never submit anything new. So keep what you need to find it by
+    key (city-hall's job id from the first POST, say) in the plugin's own store. That way a
+    `prepare` that would now decide differently (edited config, a passed deadline) cannot fire
+    the run without collecting the Job.
+  - Any other error on a Job already out (an HTTP 500, say) is treated like pending: same key, no
+    new Job, up to the same limit. The first Job may still run, so it is never resubmitted under a
+    new key.
+- The wait is bounded, and **the lane is held for every owner meanwhile**.
+  - A Job pending past `SLOW_JOB_MS` (1 hour, inferred) is reported to the admins once, with one
+    `error` event on the run.
+  - A Job still answering pending (or failing) `PENDING_LIMIT_MS` (6 hours, inferred) after its
+    submission is given up. The run writes one `error` event, and the type's `finish` gets
+    `{ kind: "error", detail: "the job did not finish in time" }`. That result is charged as one
+    call, since the Job may have run. The lane then moves on.
+  - A Job is given up only on an answer, never during `ExecutorUnavailableError`. So a Job that
+    finished while city-hall was unreachable is collected when city-hall is back.
+- "One Job at a time" holds from the tracker's side. A Job it gave up on may still be running at
+  the runner, and nothing cancels it there.
+- A run whose Job is out is never deleted. `reschedule` and a task completing keep it.
+  `reschedule` returns `jobOut: true` so the host can tell the owner the run in flight still
+  counts. For a `once` schedule, old or new, it throws `ScheduleError` instead: that run is the
+  task, and the edit would run it twice. It is
   collected and charged even if its task was paused, completed or archived meanwhile.
   - For a **paused** task, the outcome is applied and its sends wait for the resume, as for any
     fired run.
@@ -99,7 +119,7 @@ three new cases cover the changes.
     and the charge stays.
 - `ExecutorUnavailableError` still means nothing could be asked (city-hall unreachable, no
   runner). The run is requeued; a Job already out is asked about under its key next time. **Any
-  other error from `run` is not retried by the core.** It becomes an uncharged
+  other error from a first submission is not retried by the core.** It becomes an uncharged
   `{ kind: "error" }` result for the type's `finish`. So throw `ExecutorUnavailableError` for a
   transport failure that may pass.
 - A Store error while a pending run goes back to the queue leaves it `running`. The next sweep
@@ -108,6 +128,11 @@ three new cases cover the changes.
   the keyed charge is not counted twice.
 
 **Types and lanes**
+
+- A fired run whose outcome completes a **paused** task does not complete it while it is paused:
+  that would make the task done and send at once, through the pause. The run waits, applied.
+  The first notify tick after the resume completes the task and sends the message. A task
+  archived meanwhile is never turned to done.
 
 - An execute-lane type's `finish` always runs once its run starts. A `prepare` that throws, or an
   Executor that throws (other than pending, unavailable or a usage limit), becomes an uncharged
@@ -123,8 +148,8 @@ three new cases cover the changes.
   - It waits until the asking run has finished (`isFinishing`), and on the execute lane it is
     budget-checked, charged and limited like any model run.
   - It is ignored together with `complete` and from `onReply`.
-  - Past `MAX_FOLLOW_UPS` (5) in a row the run writes an error event and the task completes. A
-    snooze's run in a chain starts a new count.
+  - Past `MAX_FOLLOW_UPS` (5) in a row the run writes an error event, the task completes, and
+    the owner and admins are told once. A snooze's run in a chain starts a new count.
 - `Outcome.findings` are stored when the outcome is applied, each with the task's owner and type.
   `Finding.key` is optional. `visibleFindings(store, actor, taskId, { since? })` serves them to
   the owner, accepted recipients and admins (the series' rule), and returns null for anyone else.
