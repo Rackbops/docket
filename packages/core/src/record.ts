@@ -64,9 +64,14 @@ function isFindings(v: unknown): boolean {
         isObj(f) &&
         isString(f.text) &&
         optional(f, "tags", isStringArray) &&
-        optional(f, "source", isString),
+        optional(f, "source", isString) &&
+        optional(f, "key", isString),
     )
   )
+}
+
+function isFollowUp(v: unknown): boolean {
+  return isObj(v) && optional(v, "at", (at) => isString(at) && !Number.isNaN(Date.parse(at)))
 }
 
 function isOutcome(v: unknown): boolean {
@@ -77,7 +82,8 @@ function isOutcome(v: unknown): boolean {
     optional(v, "summary", isString) &&
     optional(v, "series", isSeries) &&
     optional(v, "complete", (c) => typeof c === "boolean") &&
-    optional(v, "findings", isFindings)
+    optional(v, "findings", isFindings) &&
+    optional(v, "followUp", isFollowUp)
   )
 }
 

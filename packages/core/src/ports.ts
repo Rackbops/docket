@@ -14,6 +14,7 @@ import type {
   ReplyKind,
   RunRecord,
   SeriesPoint,
+  StoredFinding,
   Task,
   TaskEvent,
   TaskEventKind,
@@ -98,9 +99,42 @@ export class DeliveryFailedError extends Error {
   }
 }
 
-/** Runs one Job through the runner and returns what came back (plan 5.12). */
+/**
+ * Runs one Job through the runner and returns what came back (plan 5.12). A runner takes
+ * minutes, so an Executor need not wait: it may submit the Job and throw `JobPendingError`, and
+ * the execute lane asks again on its next tick with the same `jobKey`. So `run` must be
+ * idempotent per `jobKey` -- submitting a key it has seen answers that Job (pending, or its
+ * result), never a second model call; city-hall's execute lane is, by `key`.
+ *
+ * `jobKey` is the occurrence id for a run's first Job. After a usage limit the run is requeued
+ * and its next try is a fresh Job, `<occurrence id>:<n>` for the n-th retry, since the old key's
+ * answer is the usage limit for good. Any other requeue (pending, runtime unavailable, a crash
+ * before the outcome was recorded) asks again under the same key and gets the same Job back.
+ */
 export interface Executor {
-  run(spec: JobSpec, occurrenceId: string): Promise<JobResult>
+  /**
+   * `spec` is null when the Job is already out under `jobKey`: answer that Job and submit
+   * nothing. The core never re-runs `prepare` for a Job that is out (its config or deadline may
+   * have changed since), so an adapter keeps what it needs to look the Job up by key -- city-hall's
+   * job id from the first submission, say -- in its own store.
+   */
+  run(spec: JobSpec | null, occurrenceId: string, jobKey: string): Promise<JobResult>
+}
+
+/**
+ * Thrown by an Executor whose Job is submitted but not finished: nothing to record yet. The run
+ * goes back to the queue unstarted and uncharged, and the execute lane starts nothing new while
+ * it is out (one Job at a time, plan 5.3): every tick asks about it first, under the same key,
+ * past the budget check, with no new events -- for at most `PENDING_LIMIT_MS`, after which the
+ * type's `finish` gets an `error` result and the lane moves on.
+ *
+ * Any other error from `run` on a first submission is an `error` result for `finish`, uncharged.
+ * On a Job already out it is treated like pending (the Job may still run), up to the same limit.
+ * Throw `ExecutorUnavailableError` for a transport failure that may pass (city-hall
+ * unreachable): the run is requeued and asked again under the same key, and never given up.
+ */
+export class JobPendingError extends Error {
+  override name = "JobPendingError"
 }
 
 /**
@@ -256,9 +290,31 @@ export interface NewUsage {
   taskId: string | null
   occurrenceId: string | null
   source: UsageSource
+  /** A charge with a key already stored is not added again (`Usage.key`). */
+  key?: string | null
   calls: number
   costUsd: number
   at: string
+}
+
+export interface NewFinding {
+  taskId: string
+  ownerId: string
+  occurrenceId: string | null
+  /** A finding with a key already stored is not added again (`StoredFinding.key`). */
+  key?: string | null
+  type: string
+  text: string
+  tags?: string[]
+  source?: string | null
+  at: string
+}
+
+export interface FindingFilter {
+  taskId?: string
+  ownerId?: string
+  /** Inclusive: findings at or after this instant. */
+  since?: string
 }
 
 export interface DeliveryFilter {
@@ -361,6 +417,17 @@ export interface Store {
   /** Oldest first. */
   listSeries(taskId: string, filter?: SeriesFilter): Promise<SeriesPoint[]>
 
+  /**
+   * Stores one finding. With a key already stored it adds nothing and returns the stored one, so a
+   * run's outcome applied twice stores each finding once.
+   */
+  addFinding(finding: NewFinding): Promise<StoredFinding>
+  /** Oldest first (by `at`, then insertion). */
+  listFindings(filter?: FindingFilter): Promise<StoredFinding[]>
+  /** Forget-me: deletes every finding of the tasks this person owns. Returns how many. */
+  deleteFindings(ownerId: string): Promise<number>
+
+  /** With a key already stored it adds nothing and returns the stored charge. */
   addUsage(usage: NewUsage): Promise<Usage>
   /** Oldest first. */
   listUsage(filter?: UsageFilter): Promise<Usage[]>

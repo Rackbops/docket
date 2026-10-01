@@ -57,7 +57,20 @@ epic is Rackbops/Tooling#816.
   delivers, so a retry never runs the type again or loses the alert. `tickNotify` takes an
   AbortSignal; a paused task's runs wait; a schedule edit keeps a queued snooze. Host changes:
   the core README's "Adopting 0.4.0".
-- Next: the execute lane against city-hall and the runner (E8), findings in the tracker's store.
+- **0.5.0 -- research** (plan 1.2 row 5, items 59, 61 (proposed), 62; for E8): the `research`
+  type, the first execute-lane type. A research run and a reviewer run go through the runner; the
+  reviewed answer is DMed and each claim saved as a finding; an optional deadline is honoured.
+  Core gains:
+  - a follow-up run (`Outcome.followUp`), budget-checked and charged like any model run;
+  - findings in the tracker's own store (`addFinding`, `listFindings`, `deleteFindings` for
+    forget-me, `visibleFindings`, type-supplied keys for do-not-resurface);
+  - an Executor that need not wait for the runner (`JobPendingError`): one Job out at a time,
+    collected whatever happens to its task, charged once by Job key, given up after six hours;
+  - `finish` always runs, even when `prepare` or the Executor throws;
+  - recipients no longer see a task's config and state.
+
+  Host changes: the core README's "Adopting 0.5.0".
+- Next: scout and wantlist (#13), and the execute lane live against city-hall and the runner.
 
 ## Use
 

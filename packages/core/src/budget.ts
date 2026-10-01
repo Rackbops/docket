@@ -146,6 +146,8 @@ export interface Charge {
   taskId: string | null
   occurrenceId?: string | null
   source: UsageSource
+  /** Makes the charge idempotent (`Usage.key`); the execute lane passes the Job key. */
+  key?: string | null
   calls: number
   costUsd?: number | null
   at: Date
@@ -158,6 +160,7 @@ export async function charge(store: Store, c: Charge): Promise<Usage> {
     taskId: c.taskId,
     occurrenceId: c.occurrenceId ?? null,
     source: c.source,
+    key: c.key ?? null,
     calls: c.calls,
     costUsd: c.costUsd ?? 0,
     at: c.at.toISOString(),
