@@ -12,7 +12,7 @@
   "engines": {
     "node": ">=24"
   },
-  "packageManager": "pnpm@12.4.2",
+  "packageManager": "pnpm@12.8.1",
   "scripts": {
     "build": "pnpm -r run build",
     "lint": "biome check .",
@@ -22,9 +22,9 @@
     "check": "pnpm lint && pnpm build && pnpm typecheck && pnpm test"
   },
   "devDependencies": {
-    "@biomejs/biome": "^2.5.14",
-    "@types/node": "^26.6.1",
+    "@biomejs/biome": "^2.5.15",
+    "@types/node": "^26.6.3",
     "typescript": "^7.0.0",
-    "vitest": "^5.0.1"
+    "vitest": "^5.0.3"
   }
 }
