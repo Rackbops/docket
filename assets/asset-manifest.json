@@ -1,0 +1,271 @@
+{
+  "character": "Rackbops Clerk",
+  "files": [
+    {
+      "path": "favicon-128.png",
+      "bytes": 19374,
+      "sha256": "d619f1d9852c4eacbb7d8ad4e364041f7f8271e0c8eee1701edfbfd497c92630",
+      "width": 128,
+      "height": 128,
+      "mode": "RGBA",
+      "alpha_range": [
+        0,
+        255
+      ]
+    },
+    {
+      "path": "favicon-16.png",
+      "bytes": 785,
+      "sha256": "53b8c1eede1bee8a619c9b0a495b574d87a8b36a0c9b5d20bd47770b52c2aba3",
+      "width": 16,
+      "height": 16,
+      "mode": "RGBA",
+      "alpha_range": [
+        0,
+        255
+      ]
+    },
+    {
+      "path": "favicon-256.png",
+      "bytes": 58004,
+      "sha256": "d60aaff14f1b6bbbc7a2194d7c2809baf5aea75271889d4492aa8572e9848939",
+      "width": 256,
+      "height": 256,
+      "mode": "RGBA",
+      "alpha_range": [
+        0,
+        255
+      ]
+    },
+    {
+      "path": "favicon-32.png",
+      "bytes": 2118,
+      "sha256": "ebbd58a23fac3315a8bd9f2740c8d44cf284435e990788111e156a7c958fb0bd",
+      "width": 32,
+      "height": 32,
+      "mode": "RGBA",
+      "alpha_range": [
+        0,
+        255
+      ]
+    },
+    {
+      "path": "favicon-48.png",
+      "bytes": 4031,
+      "sha256": "31da8fa6e35b9a017edc29f7aeb7d237862ac2563132105ea7eb08fa29c471f1",
+      "width": 48,
+      "height": 48,
+      "mode": "RGBA",
+      "alpha_range": [
+        0,
+        255
+      ]
+    },
+    {
+      "path": "favicon-64.png",
+      "bytes": 6516,
+      "sha256": "276d5e7ae9c3e75e0452d71667f96f2aae6b9c87623b1c9b91aeaadcebc46637",
+      "width": 64,
+      "height": 64,
+      "mode": "RGBA",
+      "alpha_range": [
+        0,
+        255
+      ]
+    },
+    {
+      "path": "favicon.ico",
+      "bytes": 13520,
+      "sha256": "7440944cea9a4e25061caf7f559d42e79b0ac93b355294f8bba0e90d6ccae30c",
+      "width": 64,
+      "height": 64,
+      "mode": "RGBA",
+      "alpha_range": [
+        0,
+        255
+      ]
+    },
+    {
+      "path": "poses/completed.png",
+      "bytes": 997146,
+      "sha256": "fcaaebc17f2348254d16f4ffa7af94fa2225ec096f41cac69bc9076f619a9769",
+      "width": 1254,
+      "height": 1254,
+      "mode": "RGBA",
+      "alpha_range": [
+        0,
+        255
+      ]
+    },
+    {
+      "path": "poses/concerned.png",
+      "bytes": 1097829,
+      "sha256": "a5635e79dad31255c7b82ca9287b8fd23beeb446ac09da54660a0ef72f2daf1b",
+      "width": 1254,
+      "height": 1254,
+      "mode": "RGBA",
+      "alpha_range": [
+        0,
+        255
+      ]
+    },
+    {
+      "path": "poses/price-finding.png",
+      "bytes": 1140829,
+      "sha256": "5b81f46b3c2fd7cd20095b811bdca950dd577a554e2a533d17f69007d912640e",
+      "width": 1254,
+      "height": 1254,
+      "mode": "RGBA",
+      "alpha_range": [
+        0,
+        255
+      ]
+    },
+    {
+      "path": "poses/reminder.png",
+      "bytes": 1142222,
+      "sha256": "474c0102b9c65eab80c8990ccd62e80dd303c478628a5468e76e6d49d927df2f",
+      "width": 1254,
+      "height": 1254,
+      "mode": "RGBA",
+      "alpha_range": [
+        0,
+        255
+      ]
+    },
+    {
+      "path": "poses/research.png",
+      "bytes": 1040253,
+      "sha256": "e215634b6188f0a8463fc59b33f495132e188231408b6098bf8ae4fa97408961",
+      "width": 1254,
+      "height": 1254,
+      "mode": "RGBA",
+      "alpha_range": [
+        0,
+        255
+      ]
+    },
+    {
+      "path": "poses/scout.png",
+      "bytes": 1060792,
+      "sha256": "761f9196fb7c71af9c4692fad018d0e51425362ad2e6d7961299c6b7905fd3a5",
+      "width": 1254,
+      "height": 1254,
+      "mode": "RGBA",
+      "alpha_range": [
+        0,
+        255
+      ]
+    },
+    {
+      "path": "poses/waiting.png",
+      "bytes": 1019810,
+      "sha256": "e74d6d4ec21c77d7517f88c0b3abc1953d8a1165d986c1be444ff98bdeef7276",
+      "width": 1254,
+      "height": 1254,
+      "mode": "RGBA",
+      "alpha_range": [
+        0,
+        255
+      ]
+    },
+    {
+      "path": "poses/welcome.png",
+      "bytes": 1077330,
+      "sha256": "a4d9b663629b48c6b3f46b7ef0e2ee2eaab3ea140b0d5d9722c0ab44b21c7281",
+      "width": 1254,
+      "height": 1254,
+      "mode": "RGBA",
+      "alpha_range": [
+        0,
+        255
+      ]
+    },
+    {
+      "path": "rackbops-clerk-avatar-128.png",
+      "bytes": 23533,
+      "sha256": "a562bbda551ab1ef1f879f4a9f45e3231ea7bc10cedfc849548b1796425963b4",
+      "width": 128,
+      "height": 128,
+      "mode": "RGB"
+    },
+    {
+      "path": "rackbops-clerk-avatar-256.png",
+      "bytes": 81423,
+      "sha256": "c34ed4d225430b3e3f673ffd06bbe43715cc14f18bfcf0e7c3023d3fd1ac06bf",
+      "width": 256,
+      "height": 256,
+      "mode": "RGB"
+    },
+    {
+      "path": "rackbops-clerk-avatar-32.png",
+      "bytes": 2125,
+      "sha256": "538206a313b86f854d8f9ed9ee1f3da1c40e80493b8ea7ef5d71de8217e893b0",
+      "width": 32,
+      "height": 32,
+      "mode": "RGB"
+    },
+    {
+      "path": "rackbops-clerk-avatar-512.png",
+      "bytes": 276795,
+      "sha256": "7d24e3784164c3d44f9fb97877138ea3a823d4c43c102679e8bbfd6821f7604d",
+      "width": 512,
+      "height": 512,
+      "mode": "RGB"
+    },
+    {
+      "path": "rackbops-clerk-avatar-64.png",
+      "bytes": 6880,
+      "sha256": "31b2dd2b3581f7e6c049efebd6d4e6ec079def7616a12b49860d9cb1a6db5046",
+      "width": 64,
+      "height": 64,
+      "mode": "RGB"
+    },
+    {
+      "path": "rackbops-clerk-avatar-master.png",
+      "bytes": 1774988,
+      "sha256": "4dd1722839df1e6b56679757e6b525289007b57e0c9cf51ec0da2f25884474e0",
+      "width": 1254,
+      "height": 1254,
+      "mode": "RGB"
+    },
+    {
+      "path": "rackbops-clerk-favicon-master.png",
+      "bytes": 784158,
+      "sha256": "a58f97308682b0968be773a6a3465477282f0f79f7b292fac4b00b40fc3d83ee",
+      "width": 1254,
+      "height": 1254,
+      "mode": "RGBA",
+      "alpha_range": [
+        0,
+        255
+      ]
+    },
+    {
+      "path": "rackbops-clerk-pose-sheet.pdf",
+      "bytes": 3917667,
+      "sha256": "212805154ee937e53c7af5acec5f8086c82260ba3bd6c30b67b14d1feff86d32",
+      "pages": 1
+    },
+    {
+      "path": "rackbops-clerk-pose-sheet.png",
+      "bytes": 954112,
+      "sha256": "9290c4710495e77110a7c894219fac300746eccffc424dde6d7110895f708e17",
+      "width": 1800,
+      "height": 1272,
+      "mode": "RGB"
+    },
+    {
+      "path": "rackbops-clerk-transparent.png",
+      "bytes": 1117256,
+      "sha256": "33375d7d760358b4f972ad01d512cfd5f4d5e84025527496e4d3781121db9080",
+      "width": 1254,
+      "height": 1254,
+      "mode": "RGBA",
+      "alpha_range": [
+        0,
+        255
+      ]
+    }
+  ]
+}

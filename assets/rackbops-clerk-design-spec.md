@@ -6,7 +6,7 @@ Product: Docket task tracker / Rackbops Clerk Discord instance.
 
 Role: Primary character mascot and approachable face of the task-tracking service.
 
-Status: Approved visual direction; this specification records the first concept. Production derivatives, favicon, and pose sheet are not yet created.
+Status: Approved visual direction; this specification records the first concept. The asset package includes a transparent mascot, eight transparent poses, a one-page pose sheet, Discord avatar exports, and favicon exports. See `README.md` for the inventory.
 
 ## 1. Character identity
 
@@ -41,7 +41,7 @@ Use the image as the authority rather than enforcing a rigid model sheet. Approx
 
 ## 5. Face and expression
 
-Skin is warm yellow-green, with muted peach inner ears and a softly pink nose. Large amber-gold eyes have dark pupils, clear highlights, and expressive dark brows. The mouth is a small, warm, closed smile. Keep the face open and readable; no tusks, threatening teeth, or exaggerated wrinkles.
+Skin is warm yellow-green, with muted peach inner ears and a softly pink nose. Large amber-gold eyes have dark pupils, clear highlights, and expressive dark brows. The baseline mouth is a small, warm, closed smile; welcome and reminder poses may use a modest open smile. Keep the face open and readable; no tusks, threatening teeth, or exaggerated wrinkles.
 
 Expressions include welcoming, focused, curious, pleased, gently concerned, and relieved. Errors should prompt a helpful, composed expression rather than panic or blame.
 
@@ -149,13 +149,13 @@ Use a true transparent cutout with a clean silhouette and an optional contrastin
 
 Do not shrink the complete figure to 16x16. Use a separately drawn compact head mark at 32-64 px: green face, broad ears, cream forelock, minimal eyes. At 16 px, test a simplified closed ledger with a brass clasp as an alternative. Selection remains open until both are inspected at actual size.
 
-No favicon asset has been delivered with this specification.
+The delivered favicon uses the separately redrawn compact head mark, exported at 16, 32, 48, 64, 128, and 256 px, with a multi-size ICO. Its identity is clearest at 32 px and above; at 16 px the green face and cream forelock carry recognition.
 
 ## 21. Background and transparency
 
 Preferred backgrounds are restrained warm cream, deep navy, or a true transparent cutout. Avoid busy offices, civic buildings, paper storms, sparkles, and dramatic magical effects.
 
-The generated reference was requested with transparency and is RGBA, but channel inspection shows alpha values from 0 to 254. It also visibly includes a dark atmospheric surround. It is a visual reference, not a verified clean production cutout. A future cutout must remove the surrounding atmosphere while preserving the character, then be checked on white, navy, and a checkerboard.
+The generated reference was requested with transparency and is RGBA, but channel inspection shows alpha values from 0 to 254. It also visibly includes a dark atmospheric surround. It is a visual reference, not a verified clean production cutout. The separate `rackbops-clerk-transparent.png` is the cleaned cutout. Transparent poses use that cutout as their reference. Their alpha channels and appearance on light and dark surfaces are checked before delivery; the original remains preserved unchanged.
 
 ## 22. Light and dark theme adaptation
 
@@ -189,7 +189,7 @@ Use the approved first concept as an image reference whenever possible.
 
 Before accepting a derivative, inspect face identity, ear tips, forelock, palette, ledger construction, hand anatomy, and the requested gesture. Check intended display size and circular crop where relevant. For cutouts, verify actual alpha and inspect edges on both light and dark surfaces. Keep each accepted variant versioned; do not overwrite the original concept.
 
-The first concept was generated with the built-in image-generation tool. No new image generation is part of this write-up.
+The concept, cutout, pose variants, avatar portrait, and simplified favicon master were generated with the built-in image-generation tool. PNG size exports and the ICO are resampled from those masters. The pose sheet is composed from the individual PNGs; it does not introduce another interpretation of the character.
 
 ## 27. Canonical priority and provenance
 
