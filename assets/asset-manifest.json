@@ -8,10 +8,7 @@
       "width": 128,
       "height": 128,
       "mode": "RGBA",
-      "alpha_range": [
-        0,
-        255
-      ]
+      "alpha_range": [0, 255]
     },
     {
       "path": "favicon-16.png",
@@ -20,10 +17,7 @@
       "width": 16,
       "height": 16,
       "mode": "RGBA",
-      "alpha_range": [
-        0,
-        255
-      ]
+      "alpha_range": [0, 255]
     },
     {
       "path": "favicon-256.png",
@@ -32,10 +26,7 @@
       "width": 256,
       "height": 256,
       "mode": "RGBA",
-      "alpha_range": [
-        0,
-        255
-      ]
+      "alpha_range": [0, 255]
     },
     {
       "path": "favicon-32.png",
@@ -44,10 +35,7 @@
       "width": 32,
       "height": 32,
       "mode": "RGBA",
-      "alpha_range": [
-        0,
-        255
-      ]
+      "alpha_range": [0, 255]
     },
     {
       "path": "favicon-48.png",
@@ -56,10 +44,7 @@
       "width": 48,
       "height": 48,
       "mode": "RGBA",
-      "alpha_range": [
-        0,
-        255
-      ]
+      "alpha_range": [0, 255]
     },
     {
       "path": "favicon-64.png",
@@ -68,10 +53,7 @@
       "width": 64,
       "height": 64,
       "mode": "RGBA",
-      "alpha_range": [
-        0,
-        255
-      ]
+      "alpha_range": [0, 255]
     },
     {
       "path": "favicon.ico",
@@ -80,10 +62,7 @@
       "width": 64,
       "height": 64,
       "mode": "RGBA",
-      "alpha_range": [
-        0,
-        255
-      ]
+      "alpha_range": [0, 255]
     },
     {
       "path": "poses/completed.png",
@@ -92,10 +71,7 @@
       "width": 1254,
       "height": 1254,
       "mode": "RGBA",
-      "alpha_range": [
-        0,
-        255
-      ]
+      "alpha_range": [0, 255]
     },
     {
       "path": "poses/concerned.png",
@@ -104,10 +80,7 @@
       "width": 1254,
       "height": 1254,
       "mode": "RGBA",
-      "alpha_range": [
-        0,
-        255
-      ]
+      "alpha_range": [0, 255]
     },
     {
       "path": "poses/price-finding.png",
@@ -116,10 +89,7 @@
       "width": 1254,
       "height": 1254,
       "mode": "RGBA",
-      "alpha_range": [
-        0,
-        255
-      ]
+      "alpha_range": [0, 255]
     },
     {
       "path": "poses/reminder.png",
@@ -128,10 +98,7 @@
       "width": 1254,
       "height": 1254,
       "mode": "RGBA",
-      "alpha_range": [
-        0,
-        255
-      ]
+      "alpha_range": [0, 255]
     },
     {
       "path": "poses/research.png",
@@ -140,10 +107,7 @@
       "width": 1254,
       "height": 1254,
       "mode": "RGBA",
-      "alpha_range": [
-        0,
-        255
-      ]
+      "alpha_range": [0, 255]
     },
     {
       "path": "poses/scout.png",
@@ -152,10 +116,7 @@
       "width": 1254,
       "height": 1254,
       "mode": "RGBA",
-      "alpha_range": [
-        0,
-        255
-      ]
+      "alpha_range": [0, 255]
     },
     {
       "path": "poses/waiting.png",
@@ -164,10 +125,7 @@
       "width": 1254,
       "height": 1254,
       "mode": "RGBA",
-      "alpha_range": [
-        0,
-        255
-      ]
+      "alpha_range": [0, 255]
     },
     {
       "path": "poses/welcome.png",
@@ -176,10 +134,7 @@
       "width": 1254,
       "height": 1254,
       "mode": "RGBA",
-      "alpha_range": [
-        0,
-        255
-      ]
+      "alpha_range": [0, 255]
     },
     {
       "path": "rackbops-clerk-avatar-128.png",
@@ -236,10 +191,7 @@
       "width": 1254,
       "height": 1254,
       "mode": "RGBA",
-      "alpha_range": [
-        0,
-        255
-      ]
+      "alpha_range": [0, 255]
     },
     {
       "path": "rackbops-clerk-pose-sheet.pdf",
@@ -262,10 +214,7 @@
       "width": 1254,
       "height": 1254,
       "mode": "RGBA",
-      "alpha_range": [
-        0,
-        255
-      ]
+      "alpha_range": [0, 255]
     }
   ]
 }
