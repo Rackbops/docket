@@ -4,6 +4,7 @@ import {
   BGG_SPACING_MS,
   bggSource,
   bggThingUrl,
+  inboxSource,
   isEbayHost,
   type Listing,
   listingsFromJsonLd,
@@ -15,6 +16,7 @@ import {
   renderWant,
   SourceMiss,
   SourceUnavailableError,
+  submittedListing,
   wantState,
   withinLimits,
 } from "../src/index.js"
@@ -345,5 +347,57 @@ describe("the wantlist type's pieces", () => {
         told: 7,
       }).reported,
     ).toHaveLength(MAX_REPORTED)
+  })
+})
+
+describe("the inbox source", () => {
+  it("cleans what was sent in, keeps http(s) listings only, and repeats nothing", async () => {
+    const source = inboxSource(async (key) =>
+      key === "k1"
+        ? [
+            {
+              title: "Wingspan: Oceania <@123>",
+              url: "https://www.ebay.com/itm/1?_trksid=x#top",
+              price: "$31.50",
+              currency: "usd",
+              seller: "meeple_barn (4.9)",
+            },
+            { title: "No address", url: "" },
+            { title: "Script", url: "javascript:alert(1)" },
+            { url: "https://www.ebay.com/itm/2" },
+            { title: "Again", url: "https://www.ebay.com/itm/1?_trksid=x#bottom", price: -4 },
+            {
+              title: "Free",
+              url: "https://boardgamegeek.com/market/product/9",
+              price: 0,
+              currency: "EURO",
+            },
+          ]
+        : [],
+    )
+    const got = await source.search("k1", undefined)
+    expect(got.map((l) => l.url)).toEqual([
+      "https://www.ebay.com/itm/1?_trksid=x",
+      "https://boardgamegeek.com/market/product/9",
+    ])
+    expect(got[0]).toMatchObject({ price: 31.5, currency: "USD", seller: "meeple_barn (4.9)" })
+    expect(got[0]?.title).not.toContain("<@123>")
+    expect(got[1]).toMatchObject({ price: 0 })
+    expect(got[1]?.currency).toBeUndefined()
+    expect(await source.search("other", undefined)).toEqual([])
+  })
+
+  it("counts an inbox that cannot be read as a miss, and keeps the newest when too much came in", async () => {
+    await expect(
+      inboxSource(async () => Promise.reject(new Error("db down"))).search("k", undefined),
+    ).rejects.toThrow(SourceMiss)
+    const many = Array.from({ length: 130 }, (_, i) => ({
+      title: `L${i}`,
+      url: `https://x.example/${i}`,
+    }))
+    const got = await inboxSource(async () => many).search("k", undefined)
+    expect(got).toHaveLength(100)
+    expect(got[0]?.title).toBe("L30")
+    expect(submittedListing({ title: "  ", url: "https://x.example/1" })).toBeNull()
   })
 })

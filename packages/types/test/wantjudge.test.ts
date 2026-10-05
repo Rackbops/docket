@@ -84,6 +84,22 @@ describe("the judge's Job and verdicts", () => {
     ).toEqual(["boardgamegeek.com"])
   })
 
+  it("opens nothing for an inbox watch and judges from the listings' text alone", () => {
+    const inbox = { source: "inbox" as const, target: "k1" }
+    const pending = [
+      listing("Wingspan Oceania", "https://www.ebay.com/itm/1", 30),
+      listing("Wingspan", "https://boardgamegeek.com/market/product/2"),
+    ]
+    expect(judgeHosts(pending, inbox)).toEqual([])
+    const job = judgeJob("Wingspan Oceania", inbox, pending)
+    expect(job.allowedTools).toEqual([])
+    expect(job.disallowedTools).toContain("WebSearch")
+    expect(job.disallowedTools).toContain("WebFetch")
+    expect(job.prompt).toContain("alert emails and searches sent in for them")
+    expect(job.prompt).toContain("You cannot open any page")
+    expect(job.prompt).toContain("1. Wingspan Oceania")
+  })
+
   it("keeps the first good verdict per number in range, cleaned, and calls anything else no answer", () => {
     const v = parseVerdicts(
       {

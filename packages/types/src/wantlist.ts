@@ -34,7 +34,7 @@ import {
 
 export interface WantConfig {
   source: SourceId
-  /** The page's address, or the BGG game (an id or its address). */
+  /** The page's address, the BGG game (an id or its address), or the inbox's key (the host's). */
   target: string
   /** Only listings at or under this, in `currency` when one is set. */
   maxPrice?: number
@@ -226,13 +226,13 @@ export function wantlistType(sources: Partial<Record<SourceId, Source>>): TaskTy
       options: [
         {
           name: "source",
-          description: "Where to look: page or bgg",
+          description: "Where to look: page, bgg or inbox",
           required: true,
           kind: "string",
         },
         {
           name: "target",
-          description: "The listing page's address, or the BGG game",
+          description: "The listing page's address, the BGG game, or the inbox's key",
           required: true,
           kind: "string",
         },

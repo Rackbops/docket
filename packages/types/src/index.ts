@@ -130,6 +130,7 @@ export {
   parseMarketplace,
 } from "./want-bgg.js"
 export {
+  inboxSource,
   isEbayHost,
   type Listing,
   listingKey,
@@ -137,12 +138,15 @@ export {
   MAX_LISTINGS,
   NEVER_EBAY,
   pageSource,
+  type ReadInbox,
   readListings,
   SOURCE_IDS,
   type Source,
   type SourceId,
   SourceMiss,
   SourceUnavailableError,
+  type Submitted,
+  submittedListing,
 } from "./want-sources.js"
 export {
   FITS,
