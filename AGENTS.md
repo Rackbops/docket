@@ -1,7 +1,7 @@
 # docket -- Agent Instructions
 
 The core of the task tracker for roshne and friends on Discord: `@rackbops/docket-core` (domain,
-scheduler, lanes, task-type contract, ports) and `@rackbops/docket-types` (the six task types).
+scheduler, lanes, task-type contract, ports) and `@rackbops/docket-types` (the task types: the six categories, plus the judged want-list watch).
 The host is the tracker plugin in Rackbops/rackbops-bot-plugins (`plugins/tracker`), running on
 a rackbops-discord-bot instance logged in as Rackbops Clerk; people live in the tracker's own
 store, and nothing goes to recall. Lepid-Labs/city-hall only queues and runs the tracker's model

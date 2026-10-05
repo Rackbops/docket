@@ -31,6 +31,10 @@ each package as a module (`just core test`, `just types build`).
   separate ignore list. Semicolons are **as needed**; `just fix` writes the formatting.
 - `tsc` (not `tsc -b`): per-package plain builds, topological order from pnpm, no project
   references to maintain.
+- `docket-types` imports one Node built-in, `node:crypto`'s sha256 (want-sources.ts `listingKey`,
+  scout.ts `itemKey`): the digests are stored keys from the tracker plugin's state, so they must
+  read the same after the move (0.6.0). Nothing else in either package imports `node:`; a type
+  that needs the outside world gets it through a port.
 
 ## Publishing
 
