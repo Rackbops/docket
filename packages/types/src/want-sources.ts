@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto"
 import { clean, type Fetch } from "@rackbops/docket-core"
-import { jsonLdBlocks, priceFromJson } from "./extract.js"
+import { jsonLdBlocks, parsePrice, priceFromJson } from "./extract.js"
 import { safeUrl } from "./research-answer.js"
 
 /**
@@ -14,6 +14,11 @@ import { safeUrl } from "./research-answer.js"
  *   them yields nothing, and the owner is told.
  * - `bgg` (want-bgg.ts): BoardGameGeek's marketplace, through its XML API, off until BGG approves
  *   roshne's application and `TRACKER_BGG_TOKEN` is set.
+ *
+ * - `inbox` (here): listings sent in for the watch rather than read by the tracker -- an alert email
+ *   a site sent the owner and they forwarded, or listings the owner's own browser found while they
+ *   ran it (`inboxSource`). The host keeps each watch's inbox (its `target` is the inbox's key) and
+ *   hands back what arrived; every field is untrusted and cleaned here (`submittedListing`).
  *
  * eBay is a third answer, not a source: the tracker never reads eBay (no API, no pages); `/want`
  * hands the owner an eBay search to save on eBay, whose own alerts do the watching (the tracker plugin's `/want`).
@@ -30,8 +35,8 @@ export interface Listing {
   seller?: string
 }
 
-export type SourceId = "page" | "bgg"
-export const SOURCE_IDS: readonly SourceId[] = ["page", "bgg"]
+export type SourceId = "page" | "bgg" | "inbox"
+export const SOURCE_IDS: readonly SourceId[] = ["page", "bgg", "inbox"]
 
 export interface Source {
   id: SourceId
@@ -230,4 +235,100 @@ export const pageSource: Source = {
       throw new SourceMiss("no listings in the page's structured data")
     return listings
   },
+}
+
+const nonNegative = (n: number | null): number | undefined =>
+  n !== null && Number.isFinite(n) && n >= 0 ? n : undefined
+
+/**
+ * An eBay item's address as `https://<its eBay site>/itm/<number>`: eBay's alert emails put a
+ * different set of tracking parameters on every link (`_trksid`, `mkevt`, `euid`, ...), so the
+ * one item would otherwise get a new id in every email. Any other address is kept as it is.
+ */
+function ebayItem(url: string | null): string | null {
+  if (url === null) return null
+  const u = new URL(url)
+  const item = /^\/itm\/(?:[^/]+\/)?(\d{6,20})\/?$/.exec(u.pathname)
+  return isEbayHost(u.hostname) && item ? `https://${u.hostname}/itm/${item[1]}` : url
+}
+
+/** What a host stores for one listing sent in: every field as it came, untrusted. */
+export interface Submitted {
+  title?: unknown
+  url?: unknown
+  price?: unknown
+  currency?: unknown
+  condition?: unknown
+  seller?: unknown
+}
+
+/**
+ * One sent-in listing as a `Listing`, or null without a title or an absolute http(s) address:
+ * capped, cleaned to one line, the address without its fragment or per-view parameters, and an
+ * eBay item's as its bare `/itm/<number>` (so one listing keeps one id), a price only when it is a finite number at or above zero, a currency only as
+ * three letters. Pure.
+ */
+export function submittedListing(raw: Submitted): Listing | null {
+  const title = typeof raw.title === "string" ? clean(raw.title, TITLE_CHARS, true) : ""
+  // Absolute only: a relative or protocol-relative address names no site of its own.
+  if (typeof raw.url !== "string" || !/^https?:\/\/[^/\\]/i.test(raw.url.trim())) return null
+  const url = ebayItem(absolute(raw.url, "https://invalid.example/"))
+  if (!title || !url || url.startsWith("https://invalid.example/")) return null
+  const price =
+    typeof raw.price === "number" && Number.isFinite(raw.price) && raw.price >= 0
+      ? raw.price
+      : typeof raw.price === "string"
+        ? nonNegative(parsePrice(raw.price))
+        : undefined
+  const currency =
+    typeof raw.currency === "string" && /^[A-Za-z]{3}$/.test(raw.currency.trim())
+      ? raw.currency.trim().toUpperCase()
+      : undefined
+  const condition =
+    typeof raw.condition === "string" ? clean(raw.condition, CONDITION_CHARS, true) : ""
+  const seller = typeof raw.seller === "string" ? clean(raw.seller, SELLER_CHARS, true) : ""
+  return {
+    id: url,
+    title,
+    url,
+    ...(price !== undefined ? { price } : {}),
+    ...(currency ? { currency } : {}),
+    ...(condition ? { condition } : {}),
+    ...(seller ? { seller } : {}),
+  }
+}
+
+/** The host's inbox: what has arrived for the watch whose inbox key is `key`, newest last. */
+export type ReadInbox = (key: string) => Promise<readonly Submitted[]>
+
+/**
+ * The `inbox` source over a host's `read`: each run hands back the inbox's listings, cleaned and
+ * without repeats (a listing sent in again counts as sent now, with its newest details), the
+ * newest `MAX_LISTINGS`; the type's own memory of what it told keeps a listing from going out
+ * twice. More than `MAX_LISTINGS` arriving between two runs loses the oldest of them, so a host
+ * polls an inbox watch often. A host's read error is not passed on: the owner hears only that the
+ * inbox could not be read. An empty inbox is no miss: nothing came in.
+ */
+export function inboxSource(read: ReadInbox): Source {
+  return {
+    id: "inbox",
+    async search(target) {
+      let items: readonly Submitted[]
+      try {
+        items = await read(target)
+      } catch (err) {
+        throw new SourceMiss("the inbox could not be read", { cause: err })
+      }
+      // A repeat moves to where it came in last, carrying its newest details.
+      const byId = new Map<string, Listing>()
+      for (const raw of items) {
+        const l = submittedListing(raw)
+        if (!l) continue
+        byId.delete(l.id)
+        byId.set(l.id, l)
+      }
+      // The newest are the ones worth keeping when more came in than one run takes.
+      return [...byId.values()].slice(-MAX_LISTINGS)
+    },
+  }
 }

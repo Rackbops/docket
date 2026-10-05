@@ -4,6 +4,7 @@ import {
   BGG_SPACING_MS,
   bggSource,
   bggThingUrl,
+  inboxSource,
   isEbayHost,
   type Listing,
   listingsFromJsonLd,
@@ -15,6 +16,7 @@ import {
   renderWant,
   SourceMiss,
   SourceUnavailableError,
+  submittedListing,
   wantState,
   withinLimits,
 } from "../src/index.js"
@@ -345,5 +347,87 @@ describe("the wantlist type's pieces", () => {
         told: 7,
       }).reported,
     ).toHaveLength(MAX_REPORTED)
+  })
+})
+
+describe("the inbox source", () => {
+  it("cleans what was sent in, keeps absolute http(s) listings only, and repeats nothing", async () => {
+    const source = inboxSource(async (key) =>
+      key === "k1"
+        ? [
+            {
+              title: "Wingspan: Oceania <@123>",
+              url: "https://www.ebay.com/itm/123456789012?_trksid=x&mkevt=1#top",
+              price: "$31.50",
+              currency: "usd",
+              seller: "meeple_barn (4.9)",
+            },
+            { title: "No address", url: "" },
+            { title: "Script", url: "javascript:alert(1)" },
+            { title: "Relative", url: "//evil.example/x" },
+            { title: "Backslash", url: "\\\\evil.example\\x" },
+            { title: "Path", url: "/itm/5" },
+            { url: "https://www.ebay.com/itm/2" },
+            {
+              title: "Free",
+              url: "https://boardgamegeek.com/market/product/9",
+              price: 0,
+              currency: "EURO",
+            },
+            {
+              title: "Again",
+              url: "https://www.ebay.com/itm/Wingspan-Oceania/123456789012?euid=y&_trksid=z",
+              price: -4,
+            },
+          ]
+        : [],
+    )
+    const got = await source.search("k1", undefined)
+    // One eBay item keeps one id whatever tracking each email puts on it; a repeat counts as
+    // sent when it came in last, with its newest details.
+    expect(got.map((l) => l.url)).toEqual([
+      "https://boardgamegeek.com/market/product/9",
+      "https://www.ebay.com/itm/123456789012",
+    ])
+    expect(got[0]).toMatchObject({ price: 0 })
+    expect(got[0]?.currency).toBeUndefined()
+    expect(got[1]?.title).toBe("Again")
+    expect(got[1]?.price).toBeUndefined()
+    const first = submittedListing({
+      title: "Wingspan: Oceania <@123>",
+      url: "https://www.ebay.com/itm/123456789012?_trksid=x",
+      price: "$31.50",
+      currency: "usd",
+      seller: "meeple_barn (4.9)",
+    })
+    expect(first).toMatchObject({
+      id: "https://www.ebay.com/itm/123456789012",
+      price: 31.5,
+      currency: "USD",
+      seller: "meeple_barn (4.9)",
+    })
+    expect(first?.title).not.toContain("<@123>")
+    expect(await source.search("other", undefined)).toEqual([])
+  })
+
+  it("counts an inbox that cannot be read as a miss, and keeps the newest when too much came in", async () => {
+    const failed = inboxSource(async () => Promise.reject(new Error("db down at /var/x"))).search(
+      "k",
+      undefined,
+    )
+    await expect(failed).rejects.toThrow(SourceMiss)
+    await expect(failed).rejects.toThrow(/^the inbox could not be read$/)
+    const many = Array.from({ length: 130 }, (_, i) => ({
+      title: `L${i}`,
+      url: `https://x.example/${i}`,
+    }))
+    const got = await inboxSource(async () => many).search("k", undefined)
+    expect(got).toHaveLength(100)
+    expect(got[0]?.title).toBe("L30")
+    expect(submittedListing({ title: "  ", url: "https://x.example/1" })).toBeNull()
+    expect(
+      submittedListing({ title: "UK", url: "https://www.ebay.co.uk/itm/223344556677/?mkevt=1" })
+        ?.url,
+    ).toBe("https://www.ebay.co.uk/itm/223344556677")
   })
 })

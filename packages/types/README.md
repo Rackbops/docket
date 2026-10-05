@@ -46,7 +46,10 @@ The tracker's task types, built on `@rackbops/docket-core`'s contract. Shipped s
 - `wantlist` (category 2, E9): notify lane, `poll`, no model. Reads a source each run, keeps the
   listings within the owner's limits and DMs the new ones with a Done button, each a finding.
   Sources: `pageSource` (a pasted page's JSON-LD `ItemList`s and `Product`s, through the host's
-  Fetch port, never eBay) and `bggSource` (BGG's XML API, with the host's token).
+  Fetch port, never eBay), `bggSource` (BGG's XML API, with the host's token) and `inboxSource`
+  (listings the host stored for the watch's inbox key: alert emails, or searches someone ran in
+  their own browser and sent in; `submittedListing` cleans each one, and the judge opens no
+  page for such a watch).
 - `wantjudge` (category 2, plan 5.4, item 63): the same watch on the execute lane. New listings
   are read in plain code (no charge), then one Job has the model judge each one and its seller
   (WebFetch only on the watch's own host, never WebSearch or the runner's files; 12 turns,
@@ -65,6 +68,8 @@ host:
   the runner WebFetch on the watch's own host only because the host's reads already reach it;
 - `bggSource` gets a Fetch that hands back the body as sent and follows no redirect, so BGG's
   token never leaves BGG's host;
+- `inboxSource(read)` gets a `read(key)` that returns what was sent in for that inbox, oldest
+  first; the host decides who may send to an inbox and keeps it from growing without end;
 - the DM text names the tracker plugin's `/task history` command, and a judged watch with no
   Fetch says "this bot reads no pages".
 
@@ -73,7 +78,7 @@ host:
 
 ```ts
 import { TASK_TYPES, reminder, renewal, price, research, scout, TYPE_IDS, isTypeId } from "@rackbops/docket-types"
-import { bggSource, pageSource, wantjudgeType, wantlistType } from "@rackbops/docket-types"
+import { bggSource, inboxSource, pageSource, wantjudgeType, wantlistType } from "@rackbops/docket-types"
 ```
 
 `TASK_TYPES` is every shipped type keyed by id, ready for the dispatcher. Every type is declared

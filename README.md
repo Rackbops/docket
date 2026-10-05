@@ -79,6 +79,10 @@ epic is Rackbops/Tooling#816.
   sources are parameters (`wantlistType`, `wantjudgeType`): `TASK_TYPES` carries both watches over
   the page source only, and a host with a BGG token builds its own with `bggSource`. A host's
   Fetch port must honour and strip the `NEVER_EBAY` header. No core change.
+- **0.7.0 -- the inbox source** (E9, the alert-email and in-browser routes): an `inbox` source. A host stores
+  listings sent in for a watch (alert emails from eBay or BGG, or a search run in someone's own
+  browser) and `inboxSource` reads them; the judge opens no page for an inbox watch and judges
+  from the listing text alone. No core change.
 
 ## Use
 
