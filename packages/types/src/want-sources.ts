@@ -241,15 +241,15 @@ const nonNegative = (n: number | null): number | undefined =>
   n !== null && Number.isFinite(n) && n >= 0 ? n : undefined
 
 /**
- * An eBay item's address as `https://www.ebay.com/itm/<number>`: eBay's alert emails put a
+ * An eBay item's address as `https://<its eBay site>/itm/<number>`: eBay's alert emails put a
  * different set of tracking parameters on every link (`_trksid`, `mkevt`, `euid`, ...), so the
  * one item would otherwise get a new id in every email. Any other address is kept as it is.
  */
 function ebayItem(url: string | null): string | null {
   if (url === null) return null
   const u = new URL(url)
-  const item = /^\/itm\/(?:[^/]+\/)?(\d{6,20})$/.exec(u.pathname)
-  return isEbayHost(u.hostname) && item ? `https://www.ebay.com/itm/${item[1]}` : url
+  const item = /^\/itm\/(?:[^/]+\/)?(\d{6,20})\/?$/.exec(u.pathname)
+  return isEbayHost(u.hostname) && item ? `https://${u.hostname}/itm/${item[1]}` : url
 }
 
 /** What a host stores for one listing sent in: every field as it came, untrusted. */

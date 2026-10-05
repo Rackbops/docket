@@ -425,5 +425,9 @@ describe("the inbox source", () => {
     expect(got).toHaveLength(100)
     expect(got[0]?.title).toBe("L30")
     expect(submittedListing({ title: "  ", url: "https://x.example/1" })).toBeNull()
+    expect(
+      submittedListing({ title: "UK", url: "https://www.ebay.co.uk/itm/223344556677/?mkevt=1" })
+        ?.url,
+    ).toBe("https://www.ebay.co.uk/itm/223344556677")
   })
 })
