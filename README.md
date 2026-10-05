@@ -6,7 +6,7 @@ one version, one tag:
 | Package | What it holds |
 |---|---|
 | [`@rackbops/docket-core`](packages/core) | the domain, the scheduler, the two lanes, the task-type contract and the **ports** a host implements: Store, Clock, Identity, Notifier, Executor, Fetch |
-| [`@rackbops/docket-types`](packages/types) | the six task types: reminder, renewal, price, research, scout, wantlist |
+| [`@rackbops/docket-types`](packages/types) | the task types: reminder, renewal, price, research, scout, wantlist, wantjudge |
 
 docket is a **library**, never a service: it imports no Hono, discord.js, sqlite or fetch, and it
 never calls a model. A host supplies the adapters and the surfaces. The host is the tracker plugin in
@@ -70,7 +70,15 @@ epic is Rackbops/Tooling#816.
   - recipients no longer see a task's config and state.
 
   Host changes: the core README's "Adopting 0.5.0".
-- Next: scout and wantlist (#13), and the execute lane live against city-hall and the runner.
+- **0.6.0 -- scout and want-list watcher** (plan 1.2 rows 1 and 2, 5.4, items 63, 103 to 105,
+  104's give-back; E9): the three types the tracker plugin built and ran live in tracker 0.15.0 to
+  0.17.0, moved here unchanged in behaviour. `scout`, the interest scout (execute lane, every N
+  days at the owner's hour); `wantlist`, a watch on a pasted page's JSON-LD or BGG's marketplace
+  (notify lane, no model); `wantjudge`, the same watch with the model looking at each new listing
+  and its seller before it is DMed (execute lane, WebFetch only on the watch's own host). The
+  sources are parameters (`wantlistType`, `wantjudgeType`): `TASK_TYPES` carries both watches over
+  the page source only, and a host with a BGG token builds its own with `bggSource`. A host's
+  Fetch port must honour and strip the `NEVER_EBAY` header. No core change.
 
 ## Use
 

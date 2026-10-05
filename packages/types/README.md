@@ -38,10 +38,28 @@ The tracker's task types, built on `@rackbops/docket-core`'s contract. Shipped s
   A request costs up to 1.5 USD when every run succeeds, and up to about 3 USD with one retry per
   phase. The CLI can end a run over its cap.
 
-The first three call no model. Scout and wantlist land with their epic (#13).
+- `scout` (category 1, E9): execute lane, `calendar` every 1 to 30 days at the owner's hour. One
+  `claude -p` Job a run (WebSearch and WebFetch; 30 turns, 1.50 USD, 10 minutes, item 61 proposed)
+  asks for five to ten things through a gift lens; an item shown once is never shown again (the
+  state keeps the newest 300 digests, each item is also a finding).
+- `wantlist` (category 2, E9): notify lane, `poll`, no model. Reads a source each run, keeps the
+  listings within the owner's limits and DMs the new ones with a Done button, each a finding.
+  Sources: `pageSource` (a pasted page's JSON-LD `ItemList`s and `Product`s, through the host's
+  Fetch port, never eBay) and `bggSource` (BGG's XML API, with the host's token).
+- `wantjudge` (category 2, plan 5.4, item 63): the same watch on the execute lane. New listings
+  are read in plain code (no charge), then one Job has the model judge each one and its seller
+  (WebFetch only on the watch's own host, never WebSearch or the runner's files; 12 turns,
+  0.50 USD, 5 minutes). The DM puts the ones worth a look first with the model's note; a look
+  that fails for good sends the listings unchecked.
+
+`wantlistType(sources)` and `wantjudgeType(sources)` build the two watches over the sources a
+host can run; `TASK_TYPES` has them over `pageSource` only. A host's Fetch port must refuse any
+hop to eBay when a read carries the `NEVER_EBAY` header, and must not send that header on.
+
+The first three call no model.
 
 ```ts
-import { TASK_TYPES, reminder, renewal, price, research, TYPE_IDS, isTypeId } from "@rackbops/docket-types"
+import { TASK_TYPES, reminder, renewal, price, research, scout, TYPE_IDS, isTypeId } from "@rackbops/docket-types"
 ```
 
 `TASK_TYPES` is every shipped type keyed by id, ready for the dispatcher. Every type is declared

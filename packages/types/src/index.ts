@@ -4,8 +4,9 @@
  * The six categories of the plan (section 1.2) as type identifiers, and the types shipped so far:
  * `reminder` with the reminder slice (Lepid-Labs/city-hall#7), `renewal` and `price` with the
  * renewal and price-tracker slice (city-hall#11), and `research` (category 5, E8), the first
- * execute-lane type: a research run and a reviewer run through the runner. The others land with
- * their epics (#13: scout, wantlist).
+ * execute-lane type: a research run and a reviewer run through the runner. `scout` (category 1),
+ * `wantlist` and the judged `wantjudge` (category 2) came from the tracker plugin in 0.6.0 (E9,
+ * plan item 104).
  */
 
 import type { TaskType } from "@rackbops/docket-core"
@@ -13,6 +14,10 @@ import { price } from "./price.js"
 import { reminder } from "./reminder.js"
 import { renewal } from "./renewal.js"
 import { research } from "./research.js"
+import { scout } from "./scout.js"
+import { pageSource } from "./want-sources.js"
+import { wantjudgeType } from "./wantjudge.js"
+import { wantlistType } from "./wantlist.js"
 
 export type { Lane } from "@rackbops/docket-core"
 export {
@@ -85,9 +90,113 @@ export {
   type Verdict,
   ZWSP,
 } from "./research-answer.js"
+export {
+  itemKey,
+  LENS_TEXT,
+  LENSES,
+  type Lens,
+  lensOf,
+  MAX_FOR_CHARS,
+  MAX_INTEREST_CHARS,
+  MAX_INTERESTS,
+  MAX_ITEMS,
+  MAX_SCOUT_NOTES,
+  MAX_SHOWN,
+  MIN_ITEMS,
+  PROMPT_SHOWN,
+  parseScout,
+  renderScout,
+  SCOUT_MAX_BUDGET_USD,
+  SCOUT_MAX_TURNS,
+  SCOUT_SCHEMA,
+  SCOUT_TIMEOUT_MS,
+  type ScoutConfig,
+  type ScoutItem,
+  type ScoutState,
+  type ShownItem,
+  scout,
+  scoutJob,
+  scoutState,
+} from "./scout.js"
+export {
+  BGG_ATTRIBUTION,
+  BGG_HOST,
+  BGG_SPACING_MS,
+  type BggOptions,
+  bggSource,
+  bggThingUrl,
+  MAX_SCANNED,
+  parseBggThingId,
+  parseMarketplace,
+} from "./want-bgg.js"
+export {
+  isEbayHost,
+  type Listing,
+  listingKey,
+  listingsFromJsonLd,
+  MAX_LISTINGS,
+  NEVER_EBAY,
+  pageSource,
+  readListings,
+  SOURCE_IDS,
+  type Source,
+  type SourceId,
+  SourceMiss,
+  SourceUnavailableError,
+} from "./want-sources.js"
+export {
+  FITS,
+  type Fit,
+  JUDGE_MAX_BUDGET_USD,
+  JUDGE_MAX_TURNS,
+  JUDGE_SCHEMA,
+  JUDGE_TIMEOUT_MS,
+  type JudgeOptions,
+  type JudgeState,
+  type JudgeVerdict,
+  judgeHosts,
+  judgeJob,
+  judgeState,
+  parseVerdicts,
+  RETRY_GRACE_MS,
+  renderJudged,
+  renderUnchecked,
+  wantjudgeType,
+} from "./wantjudge.js"
+export {
+  clip,
+  inert,
+  listingFinding,
+  listingLine,
+  MAX_DM_CHARS,
+  MAX_NEW_PER_RUN,
+  MAX_REPORTED,
+  miss,
+  type Polled,
+  pollWant,
+  priceText,
+  renderWant,
+  SHOWN_IN_DM,
+  type WantConfig,
+  type WantState,
+  wantlistType,
+  wantState,
+  withinLimits,
+} from "./wantlist.js"
 
-/** The six task categories the tracker starts with (plan section 1.2), as type identifiers. */
-export const TYPE_IDS = ["reminder", "renewal", "price", "research", "scout", "wantlist"] as const
+/**
+ * The six task categories the tracker starts with (plan section 1.2), as type identifiers, then
+ * `wantjudge`: category 2's watch with the model's look first (plan 5.4), a type of its own.
+ */
+export const TYPE_IDS = [
+  "reminder",
+  "renewal",
+  "price",
+  "research",
+  "scout",
+  "wantlist",
+  "wantjudge",
+] as const
 
 export type TypeId = (typeof TYPE_IDS)[number]
 
@@ -102,4 +211,8 @@ export const TASK_TYPES: Readonly<Record<string, TaskType<unknown>>> = Object.fr
   renewal: renewal as TaskType<unknown>,
   price: price as TaskType<unknown>,
   research: research as TaskType<unknown>,
+  scout: scout as TaskType<unknown>,
+  // Over the page source only: BGG needs a host's token, so a host with one builds its own.
+  wantlist: wantlistType({ page: pageSource }) as TaskType<unknown>,
+  wantjudge: wantjudgeType({ page: pageSource }) as TaskType<unknown>,
 })
