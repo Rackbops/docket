@@ -12,10 +12,10 @@ import {
 /**
  * The BoardGameGeek source (rackbops-bot-plugins#83; the #83a plan of 2026-09-29): a board game's
  * marketplace listings from BGG's XML API, `GET https://boardgamegeek.com/xmlapi2/thing?id=<id>&marketplace=1`
- * with `Authorization: Bearer <TRACKER_BGG_TOKEN>` -- BGG's rule for registered applications
+ * with `Authorization: Bearer <token>` (the host's; the tracker plugin's `TRACKER_BGG_TOKEN`) -- BGG's rule for registered applications
  * (boardgamegeek.com/using_the_xml_api, read 2026-09-29) -- on the bare host (never `www.`), at
- * least `BGG_SPACING_MS` between two requests. roshne applied on 2026-09-29 and BGG has not
- * answered yet, so a host registers the source only once it has a token, and
+ * least `BGG_SPACING_MS` between two requests. A host registers the source only once it has a
+ * token. While none has been issued (roshne applied on 2026-09-29),
  * **the parser's fixture is hand-written to the documented shape, not a captured response**:
  * one real response, saved once the token exists, is the check.
  *
@@ -154,7 +154,7 @@ export function parseMarketplace(xml: string): Listing[] {
 
 export interface BggOptions {
   token: string
-  /** Raw bodies with no redirects followed (the tracker plugin's `raw` and `noRedirects` page fetch): the XML as sent, fenced like every other read, and the token never leaves BGG's host. */
+  /** Raw bodies with no redirects followed (the body as sent, no redirect followed; the tracker plugin's `raw` and `noRedirects` page fetch): the XML as sent, fenced like every other read, and the token never leaves BGG's host. */
   fetch: Fetch
   now?: () => number
 }

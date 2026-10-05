@@ -16,7 +16,7 @@ import { safeUrl } from "./research-answer.js"
  *   roshne's application and `TRACKER_BGG_TOKEN` is set.
  *
  * eBay is a third answer, not a source: the tracker never reads eBay (no API, no pages); `/want`
- * hands the owner an eBay search to save on eBay, whose own alerts do the watching (the host's `/want`).
+ * hands the owner an eBay search to save on eBay, whose own alerts do the watching (the tracker plugin's `/want`).
  */
 
 export interface Listing {

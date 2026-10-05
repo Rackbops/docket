@@ -38,7 +38,8 @@ The tracker's task types, built on `@rackbops/docket-core`'s contract. Shipped s
   A request costs up to 1.5 USD when every run succeeds, and up to about 3 USD with one retry per
   phase. The CLI can end a run over its cap.
 
-- `scout` (category 1, E9): execute lane, `calendar` every 1 to 30 days at the owner's hour. One
+- `scout` (category 1, E9): execute lane, `calendar` every N days at the owner's hour (the host bounds N; the tracker
+  plugin allows 1 to 30). One
   `claude -p` Job a run (WebSearch and WebFetch; 30 turns, 1.50 USD, 10 minutes, item 61 proposed)
   asks for five to ten things through a gift lens; an item shown once is never shown again (the
   state keeps the newest 300 digests, each item is also a finding).
@@ -52,14 +53,27 @@ The tracker's task types, built on `@rackbops/docket-core`'s contract. Shipped s
   0.50 USD, 5 minutes). The DM puts the ones worth a look first with the model's note; a look
   that fails for good sends the listings unchecked.
 
-`wantlistType(sources)` and `wantjudgeType(sources)` build the two watches over the sources a
-host can run; `TASK_TYPES` has them over `pageSource` only. A host's Fetch port must refuse any
-hop to eBay when a read carries the `NEVER_EBAY` header, and must not send that header on.
+`reminder`, `renewal`, `price` and `wantlist` call no model.
 
-The first three call no model.
+`wantlistType(sources)` and `wantjudgeType(sources)` build the two watches over the sources a
+host can run; `TASK_TYPES` has them over `pageSource` only. What the want-list types ask of a
+host:
+
+- its Fetch port refuses any hop to eBay when a read carries the `NEVER_EBAY` header, and does
+  not send that header on;
+- its Fetch port reaches only public addresses, checked after the name lookup: the judge grants
+  the runner WebFetch on the watch's own host only because the host's reads already reach it;
+- `bggSource` gets a Fetch that hands back the body as sent and follows no redirect, so BGG's
+  token never leaves BGG's host;
+- the DM text names the tracker plugin's `/task history` command, and a judged watch with no
+  Fetch says "this bot reads no pages".
+
+`wantjudgeType`'s `wait` (BGG's spacing, default `setTimeout`) and `bggSource`'s `now` (default
+`Date.now`) can be injected; a host that keeps time behind its Clock passes them.
 
 ```ts
 import { TASK_TYPES, reminder, renewal, price, research, scout, TYPE_IDS, isTypeId } from "@rackbops/docket-types"
+import { bggSource, pageSource, wantjudgeType, wantlistType } from "@rackbops/docket-types"
 ```
 
 `TASK_TYPES` is every shipped type keyed by id, ready for the dispatcher. Every type is declared
