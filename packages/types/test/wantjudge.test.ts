@@ -97,6 +97,7 @@ describe("the judge's Job and verdicts", () => {
     expect(job.disallowedTools).toContain("WebFetch")
     expect(job.prompt).toContain("alert emails and searches sent in for them")
     expect(job.prompt).toContain("You cannot open any page")
+    expect(job.prompt).not.toContain("where you may open it")
     expect(job.prompt).toContain("1. Wingspan Oceania")
   })
 

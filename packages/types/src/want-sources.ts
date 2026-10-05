@@ -240,6 +240,18 @@ export const pageSource: Source = {
 const nonNegative = (n: number | null): number | undefined =>
   n !== null && Number.isFinite(n) && n >= 0 ? n : undefined
 
+/**
+ * An eBay item's address as `https://www.ebay.com/itm/<number>`: eBay's alert emails put a
+ * different set of tracking parameters on every link (`_trksid`, `mkevt`, `euid`, ...), so the
+ * one item would otherwise get a new id in every email. Any other address is kept as it is.
+ */
+function ebayItem(url: string | null): string | null {
+  if (url === null) return null
+  const u = new URL(url)
+  const item = /^\/itm\/(?:[^/]+\/)?(\d{6,20})$/.exec(u.pathname)
+  return isEbayHost(u.hostname) && item ? `https://www.ebay.com/itm/${item[1]}` : url
+}
+
 /** What a host stores for one listing sent in: every field as it came, untrusted. */
 export interface Submitted {
   title?: unknown
@@ -251,14 +263,16 @@ export interface Submitted {
 }
 
 /**
- * One sent-in listing as a `Listing`, or null without a title or an http(s) address: capped,
- * cleaned to one line, the address without its fragment or per-view parameters (so one listing
- * keeps one id), a price only when it is a finite number at or above zero, a currency only as
+ * One sent-in listing as a `Listing`, or null without a title or an absolute http(s) address:
+ * capped, cleaned to one line, the address without its fragment or per-view parameters, and an
+ * eBay item's as its bare `/itm/<number>` (so one listing keeps one id), a price only when it is a finite number at or above zero, a currency only as
  * three letters. Pure.
  */
 export function submittedListing(raw: Submitted): Listing | null {
   const title = typeof raw.title === "string" ? clean(raw.title, TITLE_CHARS, true) : ""
-  const url = absolute(raw.url, "https://invalid.example/")
+  // Absolute only: a relative or protocol-relative address names no site of its own.
+  if (typeof raw.url !== "string" || !/^https?:\/\/[^/\\]/i.test(raw.url.trim())) return null
+  const url = ebayItem(absolute(raw.url, "https://invalid.example/"))
   if (!title || !url || url.startsWith("https://invalid.example/")) return null
   const price =
     typeof raw.price === "number" && Number.isFinite(raw.price) && raw.price >= 0
@@ -289,9 +303,11 @@ export type ReadInbox = (key: string) => Promise<readonly Submitted[]>
 
 /**
  * The `inbox` source over a host's `read`: each run hands back the inbox's listings, cleaned and
- * without repeats, the newest `MAX_LISTINGS`; the type's own memory of what it told keeps a listing
- * from going out twice, so the host may keep an item in the inbox for as long as it likes. An
- * empty inbox is no miss: nothing came in.
+ * without repeats (a listing sent in again counts as sent now, with its newest details), the
+ * newest `MAX_LISTINGS`; the type's own memory of what it told keeps a listing from going out
+ * twice. More than `MAX_LISTINGS` arriving between two runs loses the oldest of them, so a host
+ * polls an inbox watch often. A host's read error is not passed on: the owner hears only that the
+ * inbox could not be read. An empty inbox is no miss: nothing came in.
  */
 export function inboxSource(read: ReadInbox): Source {
   return {
@@ -301,21 +317,18 @@ export function inboxSource(read: ReadInbox): Source {
       try {
         items = await read(target)
       } catch (err) {
-        throw new SourceMiss(
-          `the inbox could not be read: ${err instanceof Error ? err.message : String(err)}`,
-          { cause: err },
-        )
+        throw new SourceMiss("the inbox could not be read", { cause: err })
       }
-      const out: Listing[] = []
-      const seen = new Set<string>()
+      // A repeat moves to where it came in last, carrying its newest details.
+      const byId = new Map<string, Listing>()
       for (const raw of items) {
         const l = submittedListing(raw)
-        if (!l || seen.has(l.id)) continue
-        seen.add(l.id)
-        out.push(l)
+        if (!l) continue
+        byId.delete(l.id)
+        byId.set(l.id, l)
       }
       // The newest are the ones worth keeping when more came in than one run takes.
-      return out.slice(-MAX_LISTINGS)
+      return [...byId.values()].slice(-MAX_LISTINGS)
     },
   }
 }

@@ -143,7 +143,12 @@ export function miss<S extends WantState>(
     summary: `nothing read: ${reason}`,
   }
   if (tell) {
-    const where = ctx.config.source === "bgg" ? "BoardGameGeek" : ctx.config.target
+    const where =
+      ctx.config.source === "bgg"
+        ? "BoardGameGeek"
+        : ctx.config.source === "inbox"
+          ? "what was sent in"
+          : ctx.config.target
     outcome.notify = {
       text: clip(
         `${ctx.task.title}: I could read no listings from ${where} ${misses === 1 ? "just now" : `${misses} times in a row`} (${reason}). ` +
