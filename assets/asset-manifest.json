@@ -185,6 +185,22 @@
       "mode": "RGB"
     },
     {
+      "path": "rackbops-clerk-discord-banner-680x240.png",
+      "bytes": 188475,
+      "sha256": "5665036b72801b2610ebcadfc89a2fbaab8937985980c83b4fda76ac73a8d849",
+      "width": 680,
+      "height": 240,
+      "mode": "RGB"
+    },
+    {
+      "path": "rackbops-clerk-discord-banner-master.png",
+      "bytes": 1850333,
+      "sha256": "b2705921a8917556fad7c01a43eb0069e771e25771f9940d9c1061bf7e725d1c",
+      "width": 2110,
+      "height": 745,
+      "mode": "RGB"
+    },
+    {
       "path": "rackbops-clerk-favicon-master.png",
       "bytes": 784158,
       "sha256": "a58f97308682b0968be773a6a3465477282f0f79f7b292fac4b00b40fc3d83ee",
