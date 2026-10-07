@@ -6,7 +6,7 @@ Product: Docket task tracker / Rackbops Clerk Discord instance.
 
 Role: Primary character mascot and approachable face of the task-tracking service.
 
-Status: Approved visual direction; this specification records the first concept. The asset package includes a transparent mascot, eight transparent poses, a one-page pose sheet, Discord avatar exports, and favicon exports. See `README.md` for the inventory.
+Status: Approved visual direction; this specification records the first concept. The asset package includes a transparent mascot, eight transparent poses, a one-page pose sheet, Discord avatar exports, favicon exports, and a Discord profile banner. See `README.md` for the inventory.
 
 ## 1. Character identity
 
@@ -214,3 +214,13 @@ Product grounding, read 2026-10-01:
 - [Cross-repo tracker goal and plan](https://github.com/Rackbops/Tooling/blob/main/research/city-hall-task-tracker.md), section 0, blob `a48579a7348fbdda6b1737e2d08065f9c74db7ec`.
 
 City-hall's own purpose file was not accessible through the connected repository reader; its role above is grounded in Docket, docket-runner, and the cross-repo plan. Costume, symbolism, and palette are design decisions, not requirements stated by those source documents.
+
+## 28. Discord profile banner
+
+Use `rackbops-clerk-discord-banner-680x240.png` for upload: exactly 680x240 (17:6), 188,475 bytes, opaque RGB PNG. The unchanged generated master is `rackbops-clerk-discord-banner-master.png` at 2110x745. The master is approximately 17:6; the export normalizes it to the exact target ratio.
+
+The banner is a restrained companion to the character avatar. Its deep navy backing carries a closed brown leather docket ledger, cream feather quill with navy tip, and old-fashioned brass key on the right. Warm cream pages, burgundy/navy ribbon markers, and brass fittings preserve the established identity. Keep the left half quiet, especially the lower-left area where the circular avatar overlaps. Do not add a second character, text, a busy office, magical effects, or unrelated scenery.
+
+Generated on 2026-10-07 with the built-in image generator using the approved 512 px avatar as the actual visual reference. The banner was inspected at its upload size; all three props are visible and the left-side safe area is clear. The PNG export uses only Lanczos resampling and a centered 680x240 extent, with no manually drawn or composited artwork.
+
+See [the exact prompt](rackbops-clerk-discord-banner-prompt.txt) and [banner provenance](rackbops-clerk-discord-banner-provenance.md) for source image and specification blob IDs, reproduction details, and verification. Adding these files does not apply a Discord profile setting.

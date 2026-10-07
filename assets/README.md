@@ -39,10 +39,23 @@ Each pose is an individual full-body transparent PNG. Use the pose sheet to comp
 
 The favicon is derived from a dedicated simplified master, not the full character. Avatar and favicon masters remain preserved; exports use Lanczos resampling. The pose sheet uses the individual pose PNGs directly.
 
+## Discord profile banner
+
+![Clerk Discord banner](rackbops-clerk-discord-banner-680x240.png)
+
+| File | Use |
+|---|---|
+| [rackbops-clerk-discord-banner-680x240.png](rackbops-clerk-discord-banner-680x240.png) | Upload-ready 680x240 PNG (17:6), 188,475 bytes |
+| [rackbops-clerk-discord-banner-master.png](rackbops-clerk-discord-banner-master.png) | Unchanged generated 2110x745 master |
+| [rackbops-clerk-discord-banner-prompt.txt](rackbops-clerk-discord-banner-prompt.txt) | Exact generation prompt |
+| [rackbops-clerk-discord-banner-provenance.md](rackbops-clerk-discord-banner-provenance.md) | Reference, generation, export and validation details |
+
+The opaque navy banner places the leather ledger, cream quill and brass key on the right. Its left half stays quiet for the Discord avatar overlap; there is no duplicate character or text. Use the 680x240 export directly rather than cropping the portrait avatar.
+
 ## Validation and provenance
 
-The original concept was approved on 2026-10-01. The complete asset set was created on 2026-10-02 using the built-in image generator, with the approved concept and clean cutout as references. See the design spec for source repositories and product boundaries.
+The original concept was approved on 2026-10-01. The initial asset set was created on 2026-10-02 using the built-in image generator, with the approved concept and clean cutout as references. The banner was generated on 2026-10-07 using the approved Clerk avatar as a style and palette reference. See the design spec for source repositories and product boundaries.
 
 Alpha channels, light/dark rendering, avatar circle crop, icon sizes, and pose-sheet layout were inspected. The original remains a reference illustration; use the separate transparent master for cutout placement. `asset-manifest.json` records dimensions, alpha ranges, file sizes and SHA-256 digests for the delivered image/PDF files.
 
-This package adds reusable artwork only. It does not wire assets into an app or change the Discord bot avatar.
+This package adds reusable artwork only. It does not wire assets into an app or change the Discord bot avatar or banner.
