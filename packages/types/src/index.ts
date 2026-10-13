@@ -66,12 +66,15 @@ export {
   REVIEW_MAX_TURNS,
   REVIEW_TIMEOUT_MS,
   type ResearchConfig,
+  type ResearchOptions,
   type ResearchPhase,
   type ResearchState,
   research,
   researchJob,
   researchState,
+  researchType,
   reviewJob,
+  usesSentSources,
 } from "./research.js"
 export {
   ANSWER_SCHEMA,
@@ -90,6 +93,19 @@ export {
   type Verdict,
   ZWSP,
 } from "./research-answer.js"
+export {
+  type GatheredPage,
+  gatheredPages,
+  MAX_GATHERED_CHARS,
+  MAX_GATHERED_PAGES,
+  MAX_PAGE_CHARS,
+  MAX_PAGE_TITLE_CHARS,
+  MIN_PAGE_CHARS,
+  pagesBlock,
+  pagesJson,
+  type ReadSources,
+  SENT_DISALLOWED_TOOLS,
+} from "./research-sources.js"
 export {
   itemKey,
   LENS_TEXT,
