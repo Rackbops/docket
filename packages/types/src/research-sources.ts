@@ -35,44 +35,50 @@ export const MAX_GATHERED_CHARS = 100_000
 
 /**
  * What a run on gathered pages may not fetch: BoardGameGeek, which refuses the runner, and eBay,
- * which the tracker never opens. Claude Code permission rules (`WebFetch(domain:<host>)`), each
- * host named, since whether a rule covers subdomains is not documented (inferred). WebSearch
- * cannot be limited by site, so a search may still list their pages; the run cannot open them.
+ * which the tracker never opens. Claude Code permission rules (code.claude.com/docs/en/permissions,
+ * read 2026-10-13): `domain:host` matches that host only, `domain:*.host` any subdomain at any
+ * depth, and a `*` elsewhere one label, so `ebay.*` is `ebay.fr` and `ebay.co.*` is `ebay.co.uk`.
+ * Whether `*.ebay.*` (a leading and a later `*`) is accepted is inferred from that wording. Deny
+ * rules beat the bare `WebFetch` allowed. WebSearch cannot be limited by site, so a search may
+ * still list their pages; the run cannot open them there (a cache or proxy site could still serve
+ * them: not covered).
  */
 export const SENT_DISALLOWED_TOOLS = [
   "boardgamegeek.com",
-  "www.boardgamegeek.com",
-  "api.geekdo.com",
+  "*.boardgamegeek.com",
   "geekdo.com",
-  "ebay.com",
-  "www.ebay.com",
-  "ebay.co.uk",
-  "www.ebay.co.uk",
-  "ebay.ca",
-  "www.ebay.ca",
-  "ebay.de",
-  "www.ebay.de",
-  "ebay.com.au",
-  "www.ebay.com.au",
+  "*.geekdo.com",
+  "ebay.*",
+  "*.ebay.*",
+  "ebay.co.*",
+  "*.ebay.co.*",
+  "ebay.com.*",
+  "*.ebay.com.*",
 ].map((host) => `WebFetch(domain:${host})`)
+
+/** A page whose text would be cut shorter than this to fit the whole is dropped instead. */
+export const MIN_PAGE_CHARS = 200
 
 /**
  * The host's pages made safe to quote: an absolute http(s) address (`safeUrl`), a one-line title,
  * text without control characters, each capped, the first of each address only, at most
- * `MAX_GATHERED_PAGES`, and `MAX_GATHERED_CHARS` of text in all. A page with no usable address or
- * no text is dropped.
+ * `MAX_GATHERED_PAGES`, and `MAX_GATHERED_CHARS` of text in all (a page that would get fewer than
+ * `MIN_PAGE_CHARS` of what is left ends the list). A page with no usable address or no text is
+ * dropped.
  */
 export function gatheredPages(raw: readonly unknown[]): GatheredPage[] {
   const out: GatheredPage[] = []
   const seen = new Set<string>()
   let budget = MAX_GATHERED_CHARS
   for (const item of raw) {
-    if (out.length >= MAX_GATHERED_PAGES || budget <= 0) break
+    if (out.length >= MAX_GATHERED_PAGES || budget < MIN_PAGE_CHARS) break
     if (typeof item !== "object" || item === null) continue
     const p = item as Partial<Record<keyof GatheredPage, unknown>>
     const url = safeUrl(p.url)
     if (!url || seen.has(url)) continue
-    const text = typeof p.text === "string" ? clean(p.text, Math.min(MAX_PAGE_CHARS, budget)) : ""
+    // Cut before cleaning, so a huge page costs nothing to read; `clean` then caps to what fits.
+    const cap = Math.min(MAX_PAGE_CHARS, budget)
+    const text = typeof p.text === "string" ? clean(p.text.slice(0, cap * 2), cap) : ""
     if (text.length === 0) continue
     const title = typeof p.title === "string" ? clean(p.title, MAX_PAGE_TITLE_CHARS, true) : ""
     seen.add(url)

@@ -22,6 +22,7 @@ import {
   reviewJob,
   SENT_DISALLOWED_TOOLS,
   TASK_TYPES,
+  usesSentSources,
 } from "../src/index.js"
 import { actor, FakeClock, FakeNotifier, T0 } from "./helpers.js"
 
@@ -131,7 +132,9 @@ describe("gathered pages", () => {
       expect(spec.disallowedTools).toEqual([...DEFAULT_DISALLOWED_TOOLS, ...SENT_DISALLOWED_TOOLS])
     }
     expect(SENT_DISALLOWED_TOOLS).toContain("WebFetch(domain:boardgamegeek.com)")
-    expect(SENT_DISALLOWED_TOOLS).toContain("WebFetch(domain:www.ebay.com)")
+    expect(SENT_DISALLOWED_TOOLS).toContain("WebFetch(domain:*.boardgamegeek.com)")
+    expect(SENT_DISALLOWED_TOOLS).toContain("WebFetch(domain:*.ebay.*)")
+    expect(SENT_DISALLOWED_TOOLS).toContain("WebFetch(domain:ebay.co.*)")
     expect(review.prompt).toContain("check it against that page's text above")
   })
 
@@ -164,24 +167,74 @@ describe("a research request on gathered pages", () => {
     const { lanes, notifier, store, task } = await setup(executor, async () => [])
     await lanes.tickExecute()
     expect(specs).toEqual([])
-    expect(notifier.sent[0]?.message.text).toContain("No pages were gathered for it")
+    expect(notifier.sent[0]?.message.text).toContain("No pages were gathered, so nothing was run")
     expect(await store.listUsage()).toEqual([])
     expect((await store.getTask(task.id))?.status).toBe("done")
   })
 
-  it("makes no model call when the host cannot read them, or has no store for them", async () => {
+  it("makes no model call when the host has no store for them", async () => {
+    const { executor, specs } = scripted()
+    const { lanes, notifier } = await setup(executor)
+    await lanes.tickExecute()
+    expect(specs).toEqual([])
+    expect(notifier.sent[0]?.message.text).toContain("This bot cannot read gathered pages")
+  })
+
+  it("retries a host's read error once, uncharged, without telling its words", async () => {
     for (const read of [
       async () => {
         throw new Error("disk")
       },
-      undefined,
+      async () => null as unknown as GatheredPage[],
     ]) {
       const { executor, specs } = scripted()
-      const { lanes, notifier } = await setup(executor, read)
+      const { lanes, notifier, store, task } = await setup(executor, read)
+      await lanes.tickExecute()
       await lanes.tickExecute()
       expect(specs).toEqual([])
-      expect(notifier.sent[0]?.message.text).toMatch(/could not be read|cannot read gathered/)
+      expect(notifier.sent).toHaveLength(1)
+      expect(notifier.sent[0]?.message.text).toContain("the run failed")
       expect(notifier.sent[0]?.message.text).not.toContain("disk")
+      expect(await store.listUsage()).toEqual([])
+      expect((await store.getTask(task.id))?.status).toBe("done")
     }
+  })
+
+  it("says the answer could not be checked when the pages are gone by the review", async () => {
+    let reads = 0
+    const { executor, specs } = scripted(researched)
+    const { lanes, notifier, store, task } = await setup(executor, async () =>
+      reads++ === 0 ? PAGES : [],
+    )
+    await lanes.tickExecute()
+    await lanes.tickExecute()
+    expect(specs).toHaveLength(1)
+    const text = notifier.sent[0]?.message.text ?? ""
+    expect(text).toContain("the answer could not be checked and is not sent")
+    expect(text).not.toContain("nothing was run")
+    expect(await store.listFindings({ taskId: task.id })).toEqual([])
+    expect((await store.getTask(task.id))?.status).toBe("done")
+  })
+})
+
+describe("gathered pages, at the edges", () => {
+  it("never runs past the whole when little of it is left", () => {
+    const sizes = [12_000, 12_000, 12_000, 12_000, 12_000, 12_000, 12_000, 12_000, 3_998]
+    const pages = gatheredPages([
+      ...sizes.map((n, i) => ({
+        url: `https://example.org/${i}`,
+        title: "t",
+        text: "x".repeat(n),
+      })),
+      { url: "https://example.org/huge", title: "t", text: "y".repeat(1_000_000) },
+    ])
+    expect(pages.reduce((n, p) => n + p.text.length, 0)).toBeLessThanOrEqual(MAX_GATHERED_CHARS)
+    expect(pages.some((p) => p.url.endsWith("/huge"))).toBe(false)
+  })
+
+  it("reads `sources` without minding case or spaces", () => {
+    expect(usesSentSources({ question: "q", sources: " Sent " as "sent" })).toBe(true)
+    expect(usesSentSources({ question: "q", sources: "web" })).toBe(false)
+    expect(usesSentSources({ question: "q" })).toBe(false)
   })
 })

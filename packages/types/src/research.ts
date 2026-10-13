@@ -81,7 +81,7 @@ export interface ResearchConfig {
 
 /** True when `config` asks for gathered pages. */
 export function usesSentSources(config: ResearchConfig): boolean {
-  return config.sources === "sent"
+  return typeof config.sources === "string" && config.sources.trim().toLowerCase() === "sent"
 }
 
 export type ResearchPhase = "research" | "review" | "done"
@@ -250,6 +250,8 @@ export function reviewJob(
       ? [
           "- A claim citing a gathered page's `url`: check it against that page's text above; " +
             "do not try to open it, and do not open BoardGameGeek or eBay at all.",
+          "- A claim resting only on a BoardGameGeek or eBay address that is not one of the " +
+            "gathered pages cannot be checked: move it to `uncertain`.",
         ]
       : []),
     "- Open the sources behind every claim a reader might act on, and confirm each one says what " +
@@ -393,17 +395,25 @@ function missed(ctx: RunContext<ResearchConfig>, deadline: Date): Outcome {
   }
 }
 
-/** A request on gathered pages that makes no model call: none came in, or the host cannot read them. */
-function noPages(ctx: RunContext<ResearchConfig>, why: string): Outcome {
+/**
+ * A request on gathered pages that makes no model call: none came in, or the host has no store for
+ * them. In the review phase the research run already ran, so the owner hears that its answer could
+ * not be checked, not that nothing was run.
+ */
+function noPages(ctx: RunContext<ResearchConfig>, state: ResearchState, why: string): Outcome {
+  const title = clean(ctx.task.title, 200, true)
+  const text =
+    state.phase === "review"
+      ? `Research: ${title}\n\n${why} for the reviewer run, so the answer could not be checked ` +
+        "and is not sent. Nothing was saved. Ask again, and have your browser gather the pages, " +
+        "if you still want it."
+      : `Research: ${title}\n\n${why}, so nothing was run. Ask again, and have your browser ` +
+        "gather the pages, if you still want it."
   return {
-    state: { phase: "done", failures: 0, draft: null },
-    notify: {
-      text:
-        `Research: ${clean(ctx.task.title, 200, true)}\n\n${why}, so nothing was run. Ask ` +
-        "again, and have your browser gather the pages, if you still want it.",
-    },
+    state: { phase: "done", failures: state.failures, draft: state.draft },
+    notify: { text },
     complete: true,
-    summary: `no gathered pages: ${why}`,
+    summary: `${state.phase}: no gathered pages: ${why}`,
   }
 }
 
@@ -418,20 +428,20 @@ export interface ResearchOptions {
  */
 export function researchType(options: ResearchOptions = {}): TaskType<ResearchConfig> {
   const { readSources } = options
-  /** The gathered pages, cleaned; or an outcome when there are none to run on. */
+  /**
+   * The gathered pages, cleaned; or an outcome when there are none to run on. A host's read error
+   * (or an answer that is not a list) is thrown on: the dispatcher hands `finish` an uncharged
+   * `error`, retried once in the same phase like any other.
+   */
   async function pagesFor(
     ctx: RunContext<ResearchConfig>,
+    state: ResearchState,
   ): Promise<{ pages: GatheredPage[] } | { outcome: Outcome }> {
-    if (!readSources) return { outcome: noPages(ctx, "This bot cannot read gathered pages") }
-    let raw: readonly unknown[]
-    try {
-      raw = await readSources(ctx.task.id)
-    } catch {
-      // The host's error stays in the host's log; the owner hears only that it failed.
-      return { outcome: noPages(ctx, "The gathered pages could not be read") }
-    }
+    if (!readSources) return { outcome: noPages(ctx, state, "This bot cannot read gathered pages") }
+    const raw: unknown = await readSources(ctx.task.id)
+    if (!Array.isArray(raw)) throw new Error("the host's gathered pages are not a list")
     const pages = gatheredPages(raw)
-    if (pages.length === 0) return { outcome: noPages(ctx, "No pages were gathered for it") }
+    if (pages.length === 0) return { outcome: noPages(ctx, state, "No pages were gathered") }
     return { pages }
   }
   return defineTaskType<ResearchConfig>({
@@ -475,13 +485,13 @@ export function researchType(options: ResearchOptions = {}): TaskType<ResearchCo
       const sent = usesSentSources(ctx.config)
       if (state.phase === "review" && state.draft) {
         if (!sent) return reviewJob(ctx.config, state.draft)
-        const got = await pagesFor(ctx)
+        const got = await pagesFor(ctx, state)
         return "outcome" in got ? got : reviewJob(ctx.config, state.draft, got.pages)
       }
       const deadline = deadlineOf(ctx.config)
       if (deadline && ctx.now > deadline) return { outcome: missed(ctx, deadline) }
       if (!sent) return researchJob(ctx.config)
-      const got = await pagesFor(ctx)
+      const got = await pagesFor(ctx, state)
       return "outcome" in got ? got : researchJob(ctx.config, got.pages)
     },
     async finish(ctx: RunContext<ResearchConfig>, result: JobResult): Promise<Outcome> {

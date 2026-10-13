@@ -86,8 +86,8 @@ epic is Rackbops/Tooling#816.
 - **0.8.0 -- research on gathered pages** (E9, the Claude in Chrome route, rackbops-bot-plugins#125):
   `ResearchConfig.sources: "sent"` answers from pages the person's own browser gathered, read
   through the host's `ReadSources` (`researchType({ readSources })`); neither run may fetch
-  BoardGameGeek or eBay. `sources` only widens the config, and a `web` request is unchanged. No
-  core change.
+  BoardGameGeek or eBay. `sources` only widens the config (and the intake gains it); a `web`
+  request's runs are unchanged. No core change.
 
 ## Use
 

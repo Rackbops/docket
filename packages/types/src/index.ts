@@ -100,6 +100,7 @@ export {
   MAX_GATHERED_PAGES,
   MAX_PAGE_CHARS,
   MAX_PAGE_TITLE_CHARS,
+  MIN_PAGE_CHARS,
   pagesBlock,
   pagesJson,
   type ReadSources,

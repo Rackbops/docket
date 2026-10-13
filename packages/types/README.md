@@ -45,7 +45,10 @@ The tracker's task types, built on `@rackbops/docket-core`'s contract. Shipped s
   web. `researchType({ readSources })` builds the type over the host's store, read by task id at
   each run; `research` (and `TASK_TYPES`) has none, so a `sent` request there is not run. When a
   `sent` request runs is the host's: it moves the run to now once the pages are in. A run with no
-  usable page, or a host that cannot read them, makes no model call and tells the owner.
+  usable page, or a host with no store, makes no model call and tells the owner (in the review
+  phase, that the answer could not be checked); a host's read error is retried once like any
+  failed run. The intake lists the new `sources` option, which a host without a store should not
+  offer.
 
 - `scout` (category 1, E9): execute lane, `calendar` every N days at the owner's hour (the host bounds N; the tracker
   plugin allows 1 to 30). One
