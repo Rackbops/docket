@@ -18,11 +18,24 @@ export interface ResearchFinding {
   sources: string[]
 }
 
+/**
+ * A page the run needed but could not open (0.9.0): refused, a 403, a CAPTCHA, a sign-in wall.
+ * What the person's own browser could gather for a fuller pass.
+ */
+export interface BlockedPage {
+  site: string
+  /** An http(s) URL, when the run had one. */
+  url?: string
+  why: string
+}
+
 /** The shape both runs return (the reviewer inside its verdict). */
 export interface ResearchAnswer {
   summary: string
   findings: ResearchFinding[]
   uncertain: string[]
+  /** Pages the run needed but could not open; absent when there were none. Never rendered. */
+  blocked?: BlockedPage[]
 }
 
 export const MAX_SUMMARY_CHARS = 1200
@@ -32,6 +45,9 @@ export const MAX_FINDINGS = 12
 export const MAX_SOURCES_PER_FINDING = 4
 export const MAX_UNCERTAIN = 6
 export const MAX_UNCERTAIN_CHARS = 300
+export const MAX_BLOCKED = 6
+export const MAX_BLOCKED_SITE_CHARS = 100
+export const MAX_BLOCKED_WHY_CHARS = 200
 /** Discord's DM limit is 2000 characters; the rest is headroom for the host's own framing. */
 export const MAX_MESSAGE_CHARS = 1900
 
@@ -55,6 +71,21 @@ export const ANSWER_SCHEMA = {
       },
     },
     uncertain: { type: "array", items: { type: "string" } },
+    blocked: {
+      type: "array",
+      description:
+        "Pages you needed but could not open (refused, 403, CAPTCHA, sign-in wall); leave it " +
+        "out or empty when there were none.",
+      items: {
+        type: "object",
+        properties: {
+          site: { type: "string", description: "The site, such as boardgamegeek.com." },
+          url: { type: "string", description: "The page's URL, if you had one." },
+          why: { type: "string", description: "What stopped you, in a few words." },
+        },
+        required: ["site", "why"],
+      },
+    },
   },
   required: ["summary", "findings", "uncertain"],
 } as const
@@ -118,11 +149,32 @@ export function parseAnswer(value: unknown): ResearchAnswer | null {
     const line = clean(u, MAX_UNCERTAIN_CHARS, true)
     if (line.length > 0) uncertain.push(line)
   }
+  const blocked = parseBlocked(value.blocked)
   return {
     summary,
     findings: findings.slice(0, MAX_FINDINGS),
     uncertain: uncertain.slice(0, MAX_UNCERTAIN),
+    ...(blocked.length > 0 ? { blocked } : {}),
   }
+}
+
+/**
+ * The blocked pages in `value`, cleaned: a one-line site and reason, the URL only when `safeUrl`
+ * takes it, at most `MAX_BLOCKED`. An entry with no site is dropped; anything not a list is none.
+ */
+export function parseBlocked(value: unknown): BlockedPage[] {
+  if (!Array.isArray(value)) return []
+  const out: BlockedPage[] = []
+  for (const b of value) {
+    if (out.length >= MAX_BLOCKED) break
+    if (!isObj(b) || typeof b.site !== "string") continue
+    const site = clean(b.site, MAX_BLOCKED_SITE_CHARS, true)
+    if (site.length === 0) continue
+    const why = typeof b.why === "string" ? clean(b.why, MAX_BLOCKED_WHY_CHARS, true) : ""
+    const url = safeUrl(b.url)
+    out.push({ site, ...(url ? { url } : {}), why })
+  }
+  return out
 }
 
 /** The reviewer's three verdicts. */
@@ -210,9 +262,16 @@ export function fitMessage(lines: string[]): string {
 
 /**
  * The DM a reviewed answer goes out as, at most `MAX_MESSAGE_CHARS`. Every piece of it was
- * cleaned by `parseAnswer`; the title is the owner's own and is cleaned here.
+ * cleaned by `parseAnswer`; the title is the owner's own and is cleaned here. `tail`, when given,
+ * goes after the reviewer's note and is kept whole: the caller bounds it (the "couldn't open" list
+ * and the queued line, 0.9.0). Without it the DM is what it was before 0.9.0.
  */
-export function renderAnswer(title: string, answer: ResearchAnswer, review: Review): string {
+export function renderAnswer(
+  title: string,
+  answer: ResearchAnswer,
+  review: Review,
+  tail = "",
+): string {
   const lines = [`Research: ${clean(title, 200, true)}`, "", answer.summary]
   if (answer.findings.length > 0) {
     lines.push("", "Findings:")
@@ -223,6 +282,31 @@ export function renderAnswer(title: string, answer: ResearchAnswer, review: Revi
     lines.push("", "Uncertain:")
     for (const u of answer.uncertain) lines.push(`- ${u}`)
   }
+  const note =
+    review.verdict === "approve"
+      ? "Checked by a reviewer run."
+      : `Checked and corrected by a reviewer run (${review.problems.length} problem(s) fixed).`
+  const after = tail.length > 0 ? `${note}\n\n${tail}` : note
+  return `${fit(lines, MAX_MESSAGE_CHARS - after.length - 2)}\n\n${after}`
+}
+
+/** Lines fitted into at most `max` characters, whole lines dropped from the end. */
+export function fitLines(lines: string[], max: number): string {
+  return fit(lines, max)
+}
+
+/**
+ * The DM a reviewed second pass goes out as (0.9.0): what the gathered pages added to an answer
+ * already sent, its new and corrected findings only, or one line when it adds nothing. At most
+ * `MAX_MESSAGE_CHARS`; every piece was cleaned by `parseAnswer`, the title is cleaned here.
+ */
+export function renderUpdate(title: string, update: ResearchAnswer, review: Review): string {
+  const head = `Update to ${clean(title, 200, true)}:`
+  if (update.findings.length === 0) {
+    return `${head} the pages added nothing new, so the first answer stands.`
+  }
+  const lines = [head, "", update.summary, "", "New or corrected:"]
+  for (const f of update.findings) lines.push(`- ${f.claim} <${f.sources[0]}>`)
   const note =
     review.verdict === "approve"
       ? "Checked by a reviewer run."

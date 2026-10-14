@@ -111,3 +111,32 @@ export function pagesBlock(pages: readonly GatheredPage[]): string[] {
     "PAGES>>>",
   ]
 }
+
+/** The longest a request waits for gathered pages, in days. */
+export const SOURCES_WAIT_DAYS = 14
+export const SOURCES_WAIT_MS = SOURCES_WAIT_DAYS * 24 * 60 * 60 * 1000
+
+/**
+ * How long before its deadline a wait for pages ends when the deadline comes first: a research run
+ * makes no call once it starts past the deadline, and the execute tick picks a due run up within a
+ * minute or two, so a run queued at the deadline itself would always miss it.
+ */
+export const SOURCES_DEADLINE_MARGIN_MINUTES = 10
+export const SOURCES_DEADLINE_MARGIN_MS = SOURCES_DEADLINE_MARGIN_MINUTES * 60 * 1000
+
+/**
+ * When a wait for gathered pages begun at `now` ends if the pages never come: `SOURCES_WAIT_DAYS`
+ * out, or `SOURCES_DEADLINE_MARGIN_MINUTES` before the deadline when that is sooner (never before
+ * `now`). `byDeadline` says which. The tracker plugin's own copy (rackbops-bot-plugins
+ * `research-sources.ts`) moves here (0.9.0).
+ */
+export function sourcesExpiry(now: Date, deadline: Date | null): { at: Date; byDeadline: boolean } {
+  const wait = now.getTime() + SOURCES_WAIT_MS
+  if (!deadline || deadline.getTime() - SOURCES_DEADLINE_MARGIN_MS >= wait) {
+    return { at: new Date(wait), byDeadline: false }
+  }
+  return {
+    at: new Date(Math.max(now.getTime(), deadline.getTime() - SOURCES_DEADLINE_MARGIN_MS)),
+    byDeadline: true,
+  }
+}

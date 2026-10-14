@@ -50,6 +50,31 @@ The tracker's task types, built on `@rackbops/docket-core`'s contract. Shipped s
   failed run. The intake lists the new `sources` option, which a host without a store should not
   offer.
 
+  **A fuller pass on blocked pages** (0.9.0): the research run may list in `blocked` (at most 6,
+  each `{site, url?, why}`, never shown in the answer) the pages it needed and could not open:
+  refused, a 403, a CAPTCHA, a sign-in wall. When the review passes, the research run's own draft
+  lists any, the host has a store (`readSources`) and the wait would end in the future, the owner
+  gets one DM: the reviewed answer, a "Couldn't open:" list, and a line asking them to have Claude
+  in Chrome gather pages for the request before the expiry. The findings are saved as always, and
+  the task waits in phase `awaiting-pages` (state `pass`, `blocked`, `earlier`) on a follow-up due
+  at `sourcesExpiry(now, deadline)`: 14 days (`SOURCES_WAIT_DAYS`), or 10 minutes
+  (`SOURCES_DEADLINE_MARGIN_MINUTES`) before a sooner deadline. The wait sends nothing, runs nothing
+  and charges nothing.
+
+  The host's `ready` for such a task must **delete the queued follow-up row and then `reschedule`
+  the once task to now**: core's `reschedule` cancels scheduled runs only, never a follow-up, and
+  a follow-up left in place would run the second pass again at the expiry. The second pass's
+  research run gets the pages and the earlier answer (escaped, between markers) and answers with
+  only new or corrected findings, under `SENT_DISALLOWED_TOOLS`; its reviewer checks them against
+  the pages. The owner gets an "Update to <title>:" DM of those findings (a claim the first answer
+  already made is dropped), or one line when there are none; they are saved tagged
+  `["research", verdict, "update"]` beside the first pass's. With no pages by the expiry, past the
+  deadline, on a rejected update or on a second failure, the task ends with one line: the first
+  answer stands. With no store, or nothing blocked, a request runs exactly as in 0.8.0; the answer
+  schema gains the optional field and the research prompt one sentence asking for it. A second
+  pass that the host never readies and that also retries can reach core's `MAX_FOLLOW_UPS`; the
+  host's `ready` starts a new chain.
+
 - `scout` (category 1, E9): execute lane, `calendar` every N days at the owner's hour (the host bounds N; the tracker
   plugin allows 1 to 30). One
   `claude -p` Job a run (WebSearch and WebFetch; 30 turns, 1.50 USD, 10 minutes, item 61 proposed)
