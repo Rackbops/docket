@@ -190,7 +190,8 @@ export const MAX_RESUMES = 3
  * the ninth follow-up in a row queues no more, and says so in its events. A guard against a type
  * that asks forever. Research with a second pass (docket-types 0.9.0) whose host never readies it
  * needs at most eight runs in a chain: research, a retry, the review, a retry, the wait's own run
- * (the second research), a retry, its review, a retry. 9 leaves one to spare (0.9.0; it was 5).
+ * (the second research), a retry, its review, a retry: seven follow-ups. 9 leaves two to spare
+ * (0.9.0; it was 5).
  */
 export const MAX_FOLLOW_UPS = 9
 

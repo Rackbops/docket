@@ -87,8 +87,9 @@ The tracker's task types, built on `@rackbops/docket-core`'s contract. Shipped s
   there are none; they are saved tagged `["research", verdict, "update"]` beside the first pass's.
   With no pages by the expiry, past the deadline, on a rejected update or on a second failure, the
   task ends with one line: the first answer stands. With no store, a `sent` request, or nothing
-  blocked, a request runs exactly as in 0.8.0; the answer schema gains the optional field and the
-  research prompt one sentence asking for it. A second pass that is never readied, with one retry in
+  blocked, a request runs exactly as in 0.8.0; the answer schema gains the optional field (and with
+  it the reviewer's schema, which embeds it, for every request) and the research prompt one sentence
+  asking for it. A second pass that is never readied, with one retry in
   every phase, is a chain of eight runs, inside core's `MAX_FOLLOW_UPS` (9 from 0.9.0).
 
 - `scout` (category 1, E9): execute lane, `calendar` every N days at the owner's hour (the host bounds N; the tracker
