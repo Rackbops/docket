@@ -187,10 +187,13 @@ export const MAX_RESUMES = 3
 
 /**
  * The longest chain of follow-ups one run may start (`Outcome.followUp`): a run that is itself
- * the fifth follow-up in a row queues no more, and says so in its events. A guard against a type
- * that asks forever; research needs at most three (a retry, the review, a retry of the review).
+ * the ninth follow-up in a row queues no more, and says so in its events. A guard against a type
+ * that asks forever. Research with a second pass (docket-types 0.9.0) whose host never readies it
+ * needs at most eight runs in a chain: research, a retry, the review, a retry, the wait's own run
+ * (the second research), a retry, its review, a retry: seven follow-ups. 9 leaves two to spare
+ * (0.9.0; it was 5).
  */
-export const MAX_FOLLOW_UPS = 5
+export const MAX_FOLLOW_UPS = 9
 
 /** A fired run still `running` this long after it (re)started is taken to have lost its tick. */
 export const STALE_RUN_MS = 10 * 60_000

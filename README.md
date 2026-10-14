@@ -88,6 +88,21 @@ epic is Rackbops/Tooling#816.
   through the host's `ReadSources` (`researchType({ readSources })`); neither run may fetch
   BoardGameGeek or eBay. `sources` only widens the config (and the intake gains it); a `web`
   request's runs are unchanged. No core change.
+- **0.9.0 -- a fuller pass on pages the run could not open** (E9, the Claude in Chrome route,
+  rackbops-bot-plugins#125): a research run lists in its answer's optional `blocked` the pages it
+  needed and could not open. For a `web` request with a host store (`readSources`), the owner gets
+  the reviewed answer at once with a short "Couldn't open:" list; with an hour or more to wait, the
+  DM also says a fuller pass is queued, and the task waits (phase `awaiting-pages`) on a follow-up
+  at `sourcesExpiry` (14 days, or 10 minutes before a sooner deadline; now exported, with
+  `SOURCES_WAIT_DAYS` and `SOURCES_DEADLINE_MARGIN_MINUTES`). When the pages are in, a second
+  research run and a reviewer checking it as an update send an "Update to" DM of new and corrected
+  findings only, saved tagged `update`. No pages by the expiry, or a passed deadline: one line,
+  the first answer stands, no model call. Host changes: `ready` follows the contract in the types
+  README (under the task lock, only while awaiting; reschedule the once task to now, then delete
+  the queued follow-up row unless it fired or has its Job out), and pages are accepted only while
+  awaiting and frozen once the second pass starts. Without a store, for a `sent` request, or with
+  nothing blocked, a request runs as in 0.8.0. Core: `MAX_FOLLOW_UPS` rises from 5 to 9, so a
+  second pass that is never readied, with a retry in each phase, completes.
 
 ## Use
 

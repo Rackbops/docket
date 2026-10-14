@@ -158,7 +158,7 @@ three new cases cover the changes.
   - It waits until the asking run has finished (`isFinishing`), and on the execute lane it is
     budget-checked, charged and limited like any model run.
   - It is ignored together with `complete` and from `onReply`.
-  - Past `MAX_FOLLOW_UPS` (5) in a row the run writes an error event, the task completes, and
+  - Past `MAX_FOLLOW_UPS` (5; 9 from 0.9.0) in a row the run writes an error event, the task completes, and
     the owner and admins are told once. A snooze's run in a chain starts a new count.
 - `Outcome.findings` are stored when the outcome is applied, each with the task's owner and type.
   `Finding.key` is optional. `visibleFindings(store, actor, taskId, { since? })` serves them to

@@ -50,6 +50,48 @@ The tracker's task types, built on `@rackbops/docket-core`'s contract. Shipped s
   failed run. The intake lists the new `sources` option, which a host without a store should not
   offer.
 
+  **A fuller pass on blocked pages** (0.9.0): the research run may list in `blocked` (at most 6,
+  each `{site, url?, why}`, never shown in the answer) the pages it needed and could not open:
+  refused, a 403, a CAPTCHA, a sign-in wall. When the review passes, the research run's own draft
+  lists any, the request is a `web` one (a `sent` request already had the person's browser and runs
+  as in 0.8.0) and the host has a store (`readSources`), the owner gets one DM: the reviewed answer
+  and a "Couldn't open:" list. With at least an hour (`MIN_SOURCES_WAIT_MS`) before
+  `sourcesExpiry(now, deadline)` -- 14 days (`SOURCES_WAIT_DAYS`), or 10 minutes
+  (`SOURCES_DEADLINE_MARGIN_MINUTES`) before a sooner deadline -- the DM also asks the owner to have
+  Claude in Chrome gather pages for the request before the expiry, and the task waits in phase
+  `awaiting-pages` (state `pass`, `blocked`, `earlier`) on a follow-up due at the expiry; with less,
+  the task ends there. The findings are saved either way. The wait sends nothing, runs nothing and
+  charges nothing.
+
+  **The host's `ready`** for such a task, run under the task's lock like any edit:
+  1. Only while `researchState(task.state).phase === "awaiting-pages"`; otherwise answer
+     "started".
+  2. If the task's queued `followup:` row has fired (`hasFired`) or has its Job out
+     (`hasJobOut`), answer "started".
+  3. `reschedule` the once task to now (a `ScheduleError`, which a Job out raises, is "started").
+  4. Then delete the queued `followup:` row, only if `!hasFired(o) && !(await hasJobOut(store, o))`.
+     Core's `reschedule` cancels scheduled runs only, never a follow-up, so a row left in place
+     fires at the expiry too: a second pass still waiting on its first run then, or retrying, is
+     started a second time (one that has ended answers "already answered" and stops).
+
+  The host accepts pages for the request only while it is `awaiting-pages`, and freezes them once
+  the second pass's run starts: its research run and its reviewer each read the pages, and must
+  read the same ones.
+
+  The second pass's research run gets the pages and the earlier answer (escaped, between markers)
+  and answers with only new or corrected findings, under `SENT_DISALLOWED_TOOLS`. Its reviewer gets
+  the update, the earlier answer and the pages, and checks it as an update: each new claim is
+  supported by its source, a "Correction:" claim really corrects the earlier answer and is
+  supported, and nothing is repeated. The owner gets an "Update to <title>:" DM of those findings
+  (a claim the first answer already made, case and spacing aside, is dropped), or one line when
+  there are none; they are saved tagged `["research", verdict, "update"]` beside the first pass's.
+  With no pages by the expiry, past the deadline, on a rejected update or on a second failure, the
+  task ends with one line: the first answer stands. With no store, a `sent` request, or nothing
+  blocked, a request runs exactly as in 0.8.0; the answer schema gains the optional field (and with
+  it the reviewer's schema, which embeds it, for every request) and the research prompt one sentence
+  asking for it. A second pass that is never readied, with one retry in
+  every phase, is a chain of eight runs, inside core's `MAX_FOLLOW_UPS` (9 from 0.9.0).
+
 - `scout` (category 1, E9): execute lane, `calendar` every N days at the owner's hour (the host bounds N; the tracker
   plugin allows 1 to 30). One
   `claude -p` Job a run (WebSearch and WebFetch; 30 turns, 1.50 USD, 10 minutes, item 61 proposed)
