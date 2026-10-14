@@ -2,11 +2,15 @@ import {
   createTask,
   type Executor,
   FOLLOW_UP_PREFIX,
+  hasFired,
+  hasJobOut,
+  JobPendingError,
   type JobResult,
   type JobSpec,
   Lanes,
   MemoryStore,
   reschedule,
+  ScheduleError,
 } from "@rackbops/docket-core"
 import { describe, expect, it } from "vitest"
 
@@ -47,8 +51,8 @@ const BLOCKED_DRAFT = { ...DRAFT, blocked: BLOCKED }
 const UPDATE = {
   summary: "The BGG ranking puts Example Game first.",
   findings: [
-    // A claim the first answer made, word for word: neither shown nor saved again.
-    DRAFT.findings[0],
+    // A claim the first answer made, but for case and spacing: neither shown nor saved again.
+    { claim: "example game  won a 2026 DESIGN award", sources: ["https://example.org/award"] },
     { claim: "Example Game is rated 8.4 on BoardGameGeek.", sources: [BGG] },
   ],
   uncertain: [],
@@ -96,24 +100,35 @@ async function setup(executor: Executor, readSources?: ReadSources, config: Rese
   return { store, clock, notifier, lanes, task, larry }
 }
 
-/** The host's `ready`, a minute on: delete the queued follow-up, then move the once task to now. */
-async function ready(s: Awaited<ReturnType<typeof setup>>): Promise<void> {
+/**
+ * The host's `ready`, a minute on, as the README's contract says (the host runs it under the
+ * task's lock): only while the task waits for pages; the once task moved to now first; then the
+ * wait's queued follow-up deleted, never one that fired or has its Job out. Otherwise "started".
+ */
+async function ready(s: Awaited<ReturnType<typeof setup>>): Promise<string> {
   // The pages come in later than the first pass: a `once` at the same instant would be its run.
   s.clock.advance(60_000)
-  const queued = await s.store.listOccurrences({ taskId: s.task.id, status: "queued" })
-  for (const o of queued) {
-    if (o.dedupeKey.startsWith(FOLLOW_UP_PREFIX)) await s.store.deleteOccurrence(o.id)
-  }
   const task = await s.store.getTask(s.task.id)
   if (!task) throw new Error("no task")
-  await reschedule(
-    s.store,
-    task,
-    s.larry,
-    { kind: "once", at: s.clock.now().toISOString() },
-    s.larry.id,
-    s.clock.now(),
-  )
+  if (researchState(task.state).phase !== "awaiting-pages") return "started"
+  const waits = async () =>
+    (await s.store.listOccurrences({ taskId: s.task.id, status: "queued" })).filter((o) =>
+      o.dedupeKey.startsWith(FOLLOW_UP_PREFIX),
+    )
+  for (const o of await waits()) {
+    if (hasFired(o) || (await hasJobOut(s.store, o))) return "started"
+  }
+  try {
+    const at = s.clock.now()
+    await reschedule(s.store, task, s.larry, { kind: "once", at: at.toISOString() }, null, at)
+  } catch (err) {
+    if (err instanceof ScheduleError) return "started"
+    throw err
+  }
+  for (const o of await waits()) {
+    if (!hasFired(o) && !(await hasJobOut(s.store, o))) await s.store.deleteOccurrence(o.id)
+  }
+  return "ready"
 }
 
 describe("blocked pages in an answer", () => {
@@ -226,14 +241,44 @@ describe("a first pass that could not open a page", () => {
     expect(await s.store.listOccurrences({ taskId: s.task.id, status: "queued" })).toEqual([])
   })
 
-  it("does not wait when the deadline leaves no room", async () => {
+  it("does not wait when less than an hour is left, but still lists what it could not open", async () => {
+    for (const minutes of [5, 50, 69]) {
+      const { executor } = scripted(ok(BLOCKED_DRAFT), approve(DRAFT))
+      const deadline = new Date(new Date(T0).getTime() + minutes * 60_000).toISOString()
+      const s = await setup(executor, async () => PAGES, { ...WEB, deadline })
+      await s.lanes.tickExecute()
+      await s.lanes.tickExecute()
+      expect(s.notifier.sent).toHaveLength(1)
+      const text = s.notifier.sent[0]?.message.text ?? ""
+      expect(text).toContain(`Couldn't open:\n- boardgamegeek.com: 403 Forbidden <${BGG}>`)
+      expect(text).not.toContain("A fuller pass is queued")
+      expect((await s.store.getTask(s.task.id))?.status).toBe("done")
+      expect(await s.store.listOccurrences({ taskId: s.task.id, status: "queued" })).toEqual([])
+    }
+  })
+
+  it("waits when an hour or more is left", async () => {
     const { executor } = scripted(ok(BLOCKED_DRAFT), approve(DRAFT))
-    const deadline = new Date(new Date(T0).getTime() + 5 * 60_000).toISOString()
-    const s = await setup(executor, async () => [], { ...WEB, deadline })
+    const deadline = new Date(new Date(T0).getTime() + 70 * 60_000).toISOString()
+    const s = await setup(executor, async () => PAGES, { ...WEB, deadline })
     await s.lanes.tickExecute()
     await s.lanes.tickExecute()
-    expect(s.notifier.sent[0]?.message.text).not.toContain("Couldn't open")
+    expect(s.notifier.sent[0]?.message.text).toContain("A fuller pass is queued")
+    expect(researchState((await s.store.getTask(s.task.id))?.state).phase).toBe("awaiting-pages")
+  })
+
+  it("never waits on a request made on gathered pages: it runs as in 0.8.0", async () => {
+    const { executor } = scripted(ok(BLOCKED_DRAFT), approve(BLOCKED_DRAFT))
+    const s = await setup(executor, async () => PAGES, { ...WEB, sources: "sent" })
+    await s.lanes.tickExecute()
+    await s.lanes.tickExecute()
+    expect(s.notifier.sent).toHaveLength(1)
+    const text = s.notifier.sent[0]?.message.text ?? ""
+    expect(text).not.toContain("Couldn't open")
+    expect(text).not.toContain("A fuller pass")
+    expect(text).toContain(`Uncertain:\n- ${DRAFT.uncertain[0]}`)
     expect((await s.store.getTask(s.task.id))?.status).toBe("done")
+    expect(await s.store.listOccurrences({ taskId: s.task.id, status: "queued" })).toEqual([])
   })
 
   it("takes the research run's list, not the reviewer's", async () => {
@@ -278,7 +323,7 @@ describe("the second pass", () => {
     await s.lanes.tickExecute()
     await s.lanes.tickExecute()
     s.clock.advance(HOUR)
-    await ready(s)
+    expect(await ready(s)).toBe("ready")
     await s.lanes.tickExecute()
     await s.lanes.tickExecute()
     expect(specs).toHaveLength(4)
@@ -288,6 +333,11 @@ describe("the second pass", () => {
     expect(second?.prompt).toContain("Correction:")
     expect(second?.disallowedTools).toEqual(expect.arrayContaining(SENT_DISALLOWED_TOOLS))
     expect(check?.prompt).toContain("Board game rank, 2026")
+    expect(check?.prompt).toContain("You are reviewing an update to a research answer")
+    expect(check?.prompt).toContain("<<<EARLIER")
+    expect(check?.prompt).toContain('A claim starting "Correction:" really corrects')
+    expect(check?.prompt).toContain("Nothing is repeated from the earlier answer")
+    expect(check?.prompt).not.toContain("answers the question asked")
     expect(check?.disallowedTools).toEqual(expect.arrayContaining(SENT_DISALLOWED_TOOLS))
     expect(s.notifier.sent).toHaveLength(2)
     const update = s.notifier.sent[1]?.message.text ?? ""
@@ -304,13 +354,78 @@ describe("the second pass", () => {
     expect(await s.store.listOccurrences({ taskId: s.task.id, status: "queued" })).toEqual([])
   })
 
+  it("sends the reviewer's corrected update on a revise", async () => {
+    const corrected = {
+      summary: "The BGG ranking puts Example Game second.",
+      findings: [{ claim: "Correction: Example Game is ranked second on BGG.", sources: [BGG] }],
+      uncertain: [],
+    }
+    const revise = ok({
+      verdict: "revise",
+      problems: ["it is second, not first"],
+      answer: corrected,
+    })
+    const { executor } = scripted(ok(BLOCKED_DRAFT), approve(DRAFT), ok(UPDATE), revise)
+    const s = await setup(executor, async () => PAGES)
+    await s.lanes.tickExecute()
+    await s.lanes.tickExecute()
+    expect(await ready(s)).toBe("ready")
+    await s.lanes.tickExecute()
+    await s.lanes.tickExecute()
+    const text = s.notifier.sent[1]?.message.text ?? ""
+    expect(text).toContain("Update to Best of 2026:")
+    expect(text).toContain("Correction: Example Game is ranked second on BGG.")
+    expect(text).not.toContain("rated 8.4")
+    expect(text).toContain("Checked and corrected by a reviewer run (1 problem(s) fixed).")
+    const findings = await s.store.listFindings({ taskId: s.task.id })
+    expect(findings.map((f) => f.tags)).toEqual([
+      ["research", "approve"],
+      ["research", "revise", "update"],
+    ])
+  })
+
+  it("answers a second ready while the second pass runs with started, and runs it once", async () => {
+    const answers: (JobResult | "pending")[] = [
+      ok(BLOCKED_DRAFT),
+      approve(DRAFT),
+      "pending",
+      ok(UPDATE),
+      approve(UPDATE),
+    ]
+    const specs: JobSpec[] = []
+    const executor: Executor = {
+      run: async (spec) => {
+        specs.push(spec)
+        const next = answers.shift()
+        if (next === "pending") throw new JobPendingError("running")
+        if (!next) throw new Error("the test ran out of recorded results")
+        return next
+      },
+    }
+    const s = await setup(executor, async () => PAGES)
+    await s.lanes.tickExecute()
+    await s.lanes.tickExecute()
+    expect(await ready(s)).toBe("ready")
+    await s.lanes.tickExecute()
+    // The second pass's Job is out: a second ready changes nothing.
+    expect(await ready(s)).toBe("started")
+    for (let i = 0; i < 4; i++) await s.lanes.tickExecute()
+    // A re-poll of a Job out carries no spec: the second pass was submitted once, and reviewed once.
+    const second = specs.filter((p) => p?.prompt.includes("<<<EARLIER"))
+    expect(second.map((p) => p.jsonSchema === ANSWER_SCHEMA)).toEqual([true, false])
+    expect(s.notifier.sent).toHaveLength(2)
+    expect((await s.store.getTask(s.task.id))?.status).toBe("done")
+    // Past the wait: a ready that comes now is too late too.
+    expect(await ready(s)).toBe("started")
+  })
+
   it("says so in one line when the pages add nothing", async () => {
     const nothing = { summary: "Nothing changed.", findings: [], uncertain: [] }
     const { executor } = scripted(ok(BLOCKED_DRAFT), approve(DRAFT), ok(nothing), approve(nothing))
     const s = await setup(executor, async () => PAGES)
     await s.lanes.tickExecute()
     await s.lanes.tickExecute()
-    await ready(s)
+    expect(await ready(s)).toBe("ready")
     await s.lanes.tickExecute()
     await s.lanes.tickExecute()
     expect(s.notifier.sent[1]?.message.text).toBe(
@@ -324,11 +439,11 @@ describe("the second pass", () => {
     const s = await setup(executor, async () => PAGES)
     await s.lanes.tickExecute()
     await s.lanes.tickExecute()
-    await ready(s)
+    expect(await ready(s)).toBe("ready")
     await s.lanes.tickExecute()
     await s.lanes.tickExecute()
     expect(s.notifier.sent[1]?.message.text).toBe(
-      `Research ${s.task.id}: the update could not be checked, so the first answer stands.`,
+      "Research: Best of 2026 -- the update could not be checked, so the first answer stands.",
     )
     expect(await s.store.listFindings({ taskId: s.task.id })).toHaveLength(1)
     expect((await s.store.getTask(s.task.id))?.status).toBe("done")
@@ -344,7 +459,7 @@ describe("the second pass", () => {
     expect(specs).toHaveLength(2)
     expect(s.notifier.sent).toHaveLength(2)
     expect(s.notifier.sent[1]?.message.text).toBe(
-      `Research ${s.task.id}: no pages came in, so the first answer stands.`,
+      "Research: Best of 2026 -- no pages came in, so the first answer stands.",
     )
     expect(await s.store.listUsage()).toHaveLength(2)
     expect((await s.store.getTask(s.task.id))?.status).toBe("done")
@@ -365,7 +480,7 @@ describe("the second pass", () => {
     await s.lanes.tickExecute()
     await s.lanes.tickExecute()
     s.clock.advance(4 * HOUR)
-    await ready(s)
+    expect(await ready(s)).toBe("ready")
     await s.lanes.tickExecute()
     expect(specs).toHaveLength(2)
     expect(reads).toBe(0)
@@ -386,7 +501,7 @@ describe("the second pass", () => {
     const s = await setup(executor, async () => PAGES)
     await s.lanes.tickExecute()
     await s.lanes.tickExecute()
-    await ready(s)
+    expect(await ready(s)).toBe("ready")
     await s.lanes.tickExecute()
     await s.lanes.tickExecute()
     expect(researchState((await s.store.getTask(s.task.id))?.state)).toMatchObject({
@@ -397,9 +512,36 @@ describe("the second pass", () => {
     await s.lanes.tickExecute()
     expect(specs).toHaveLength(5)
     expect(s.notifier.sent[1]?.message.text).toBe(
-      `Research ${s.task.id}: the fuller pass could not finish (it took too long), so the first ` +
-        "answer stands.",
+      "Research: Best of 2026 -- the fuller pass could not finish (it took too long), so the " +
+        "first answer stands.",
     )
+  })
+})
+
+describe("the expiry path", () => {
+  it("pages sent in but no ready: one retry in every phase still completes", async () => {
+    const timeout: JobResult = { kind: "timeout", detail: "slow", durationMs: 1 }
+    const { executor, specs } = scripted(
+      timeout,
+      ok(BLOCKED_DRAFT),
+      timeout,
+      approve(DRAFT),
+      timeout,
+      ok(UPDATE),
+      timeout,
+      approve(UPDATE),
+    )
+    const s = await setup(executor, async () => PAGES)
+    for (let i = 0; i < 6; i++) await s.lanes.tickExecute()
+    expect(researchState((await s.store.getTask(s.task.id))?.state).phase).toBe("awaiting-pages")
+    s.clock.advance(SOURCES_WAIT_MS)
+    for (let i = 0; i < 8; i++) await s.lanes.tickExecute()
+    expect(specs).toHaveLength(8)
+    expect(s.notifier.sent.map((m) => m.message.text.split("\n")[0])).toEqual([
+      "Research: Best of 2026",
+      "Update to Best of 2026:",
+    ])
+    expect((await s.store.getTask(s.task.id))?.status).toBe("done")
   })
 })
 
@@ -466,7 +608,7 @@ describe("the depth chain", () => {
       s.clock.advance(HOUR)
       await s.lanes.tickExecute()
     }
-    await ready(s)
+    expect(await ready(s)).toBe("ready")
     for (let i = 0; i < 4; i++) {
       await s.lanes.tickExecute()
       await s.lanes.tickNotify()

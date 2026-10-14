@@ -249,7 +249,7 @@ describe("a follow-up run", () => {
     // Ended, not stranded active with nothing queued.
     expect((await store.getTask(task.id))?.status).toBe("done")
     expect(notifier.sent.filter((m) => m.userId === larry.id).map((m) => m.message.text)).toEqual([
-      expect.stringContaining("it asked for more than 5 runs in a row"),
+      expect.stringContaining(`it asked for more than ${MAX_FOLLOW_UPS} runs in a row`),
     ])
     // The title is the owner's text: cleaned, so it cannot ping anyone.
     const said = notifier.sent.map((m) => m.message.text).join("\n")
