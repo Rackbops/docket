@@ -333,7 +333,43 @@ describe("withBarredSites, the belt", () => {
   it("reads the draft's summary and uncertain lines too, so a rewording cannot hide it", () => {
     const reworded = { ...PLAIN, uncertain: ["No rating-based ranking was available."] }
     expect(withBarredSites(reworded, [])).toEqual([])
-    expect(withBarredSites(reworded, [], [T8.summary, ...T8.uncertain])).toEqual([bgg])
+    expect(withBarredSites(reworded, [], T8)).toEqual([bgg])
+  })
+
+  it("reads the draft's findings too, so moving an eBay-only claim to uncertain keeps it", () => {
+    const draft = {
+      ...PLAIN,
+      findings: [
+        { claim: "Sold prices are near $40.", sources: ["https://www.ebay.com/sch/i.html?_nkw=x"] },
+      ],
+    }
+    const moved = {
+      ...PLAIN,
+      uncertain: ["Search listings on eBay suggest sold prices near $40."],
+    }
+    expect(withBarredSites(moved, [])).toEqual([])
+    expect(withBarredSites(moved, [], draft)).toEqual([ebay])
+  })
+
+  it("starts no wait for a negation that is not about the site", () => {
+    for (const line of [
+      "The deluxe edition is not common on eBay; most sell for $40.",
+      "Prices do not vary much: eBay sold listings average $40.",
+      "eBay is the main resale market, and the base game is unavailable in stores.",
+      "BGG ranks it third, though the game is not in print anymore.",
+      "The game has a BoardGameGeek weight of 2.4, which is not heavy.",
+    ]) {
+      expect(withBarredSites(withSummary(line), []), line).toEqual([])
+    }
+    const users = { ...PLAIN, uncertain: ["BGG users do not agree on the expansion's value."] }
+    expect(withBarredSites(users, [])).toEqual([])
+  })
+
+  it("matches an entry's site name too, whatever host its URL is on", () => {
+    const archived = [
+      { site: "BoardGameGeek", url: `https://web.archive.org/web/2026/${BGG}`, why: "403" },
+    ]
+    expect(withBarredSites(T8, archived)).toEqual(archived)
   })
 
   it("adds eBay where it is named as unread, or a claim rests only on eBay", () => {
@@ -398,24 +434,44 @@ describe("withBarredSites, the belt", () => {
   })
 })
 
-describe("one entry per site", () => {
-  it("keys an entry by its URL's host, or its site's name, so the spellings merge", () => {
+describe("one entry per page", () => {
+  it("keys an entry by its page when it has a URL, by its site when not", () => {
     expect(blockedKey({ site: "BoardGameGeek", why: "" })).toBe("boardgamegeek.com")
+    expect(blockedKey({ site: "BGG", why: "" })).toBe("boardgamegeek.com")
     expect(blockedKey({ site: "boardgamegeek.com", why: "" })).toBe("boardgamegeek.com")
-    expect(blockedKey({ site: "x", url: BGG, why: "" })).toBe("boardgamegeek.com")
-    expect(blockedKey({ site: "www.Example.org", why: "" })).toBe("example")
-    expect(blockedKey({ site: "Example", why: "" })).toBe("example")
+    expect(blockedKey({ site: "eBay", why: "" })).toBe("ebay.com")
+    expect(blockedKey({ site: "ebay.co.uk", why: "" })).toBe("ebay.com")
+    expect(blockedKey({ site: "x", url: BGG, why: "" })).toBe("boardgamegeek.com/browse/boardgame")
+    expect(
+      blockedKey({ site: "x", url: "https://www.boardgamegeek.com/browse/boardgame/", why: "" }),
+    ).toBe("boardgamegeek.com/browse/boardgame")
+    expect(blockedKey({ site: "www.Example.org", why: "" })).toBe("example.org")
+    // Only the known aliases merge: two shops on two TLDs stay two sites.
+    expect(blockedKey({ site: "amazon.de", why: "" })).not.toBe(
+      blockedKey({ site: "amazon.co.uk", why: "" }),
+    )
+  })
+
+  it("merges a URL-less entry into one on its site, and keeps two pages on one site", () => {
+    const rank = { site: "boardgamegeek.com", url: BGG, why: "b" }
+    const game = { site: "BGG", url: "https://boardgamegeek.com/boardgame/1/example", why: "e" }
     expect(
       uniqueBlocked([
         { site: "BoardGameGeek", why: "a" },
-        { site: "boardgamegeek.com", url: BGG, why: "b" },
+        rank,
+        game,
         { site: "eBay", why: "c" },
         { site: "ebay.co.uk", why: "d" },
+        { ...rank, url: `${BGG}&page=2`, why: "same page" },
+        { site: "BGG", why: "after" },
       ]),
-    ).toEqual([
-      { site: "BoardGameGeek", why: "a" },
-      { site: "eBay", why: "c" },
-    ])
+    ).toEqual([rank, game, { site: "eBay", why: "c" }])
+    expect(
+      uniqueBlocked([
+        { site: "amazon.de", why: "" },
+        { site: "amazon.co.uk", why: "" },
+      ]),
+    ).toHaveLength(2)
   })
 })
 

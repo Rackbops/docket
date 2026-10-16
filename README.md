@@ -133,12 +133,17 @@ epic is Rackbops/Tooling#816.
   address (a search listing, never an opened page) to `uncertain`. Under the prompts, a belt
   (`withBarredSites`, over `BARRED_SITES`) adds `{site, why: "not opened by the research run"}`
   for a site a summary or uncertain sentence -- the outgoing answer's or the research run's own
-  draft's -- names as not read, and for eBay when a finding rests only on eBay addresses; a
-  passing mention adds nothing, and BoardGameGeek is left alone when a finding cites one of its
-  pages. `blocked` entries are kept one per site (`blockedKey`: the URL's host, or the site's
-  name). Stored states, `sent` requests and the 0.9.0 flows read and run as before. No core change
-  and no host code change; a host's own docs that say the research run cannot open BoardGameGeek
-  need the new wording.
+  draft's -- says was not read, in a shape tied to the site ("didn't check BoardGameGeek", "BGG
+  refused the request", "no BGG ratings"), and for eBay when a finding of either rests only on
+  eBay addresses; a passing mention, or a negation about something else ("not common on eBay"),
+  adds nothing, and BoardGameGeek is left alone when a finding cites one of its pages. `blocked`
+  keeps one entry per page (`blockedKey`: host and path, or the site's name for an entry with no
+  URL, which merges into any entry on its site). Stored states, `sent` requests and the 0.9.0
+  flows behave as before; the prompts where no wait can follow gain one sentence asking the model
+  to name a missing best source in `uncertain`. `researchJob` and `reviewJob` take a new
+  options argument (`{ canWait }`) that defaults to `canWait: false` when they are called
+  directly; the type's own `prepare` sets it. No core change and no host code change; a host's
+  own docs that say the research run cannot open BoardGameGeek need the new wording.
 
 ## Use
 

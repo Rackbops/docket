@@ -74,21 +74,47 @@ function namedIn(b: (typeof BARRED_SITES)[number]): RegExp {
   return new RegExp(`\\b(?:${b.names})\\b`, "i")
 }
 
-/**
- * A sentence that says a source was not read (with `’` read as `'`): a negated did, could, can,
- * was, were, is, has, have, had, do or does; not (been) checked, opened, read, accessed and the
- * like; without checking, opening or reading it; unable, unchecked, unread, unverified,
- * inaccessible, unavailable, refused, blocked, forbidden, a CAPTCHA or a 403.
- */
-const UNREAD =
-  /\b(?:(?:did|could|can|was|were|is|has|have|had|do|does) ?n[o']?t|unable|not been|not (?:check|open|read|access|consult|verif|review|look|load|reach)\w*|without (?:check|open|read|access|consult|load)ing|unchecked|unread|unverified|inaccessible|unavailable|refused|blocked|forbidden|captcha|403)\b/i
+/** Up to three words between a site and what is said of it ("the BGG ranking page was"). */
+const GAP = "(?:[\\w'-]+[,)]?\\s+){0,3}"
 
-/** "no <site> data", "no BGG ratings" and the like: the answer lacks what the site would give. */
-function noDataOf(b: (typeof BARRED_SITES)[number]): RegExp {
-  return new RegExp(
-    `\\bno (?:${b.names})(?:'s)? (?:data|ratings?|rankings?|ranks?|scores?|prices?|listings?|results?)\\b`,
-    "i",
-  )
+/** A verb for reading a source, in any of its forms. */
+const READ_VERB =
+  "(?:check|open|read|access|reach|load|consult|use|get|see|visit|fetch|look(?:\\s+at)?)" +
+  "(?:ed|ing|s)?"
+
+/** A negation before a reading verb: didn't, couldn't, haven't, unable to, not, without. */
+const NEG_BEFORE =
+  "(?:(?:did|could|can|have|has|had|do|does) ?n[o']?t|cannot|(?:was|were) ?n[o']?t able to|" +
+  "unable to|never|not|without)\\s+(?:be(?:en)?\\s+able\\s+to\\s+)?"
+
+/** What a source did, or was not, after its name: refused, blocked, 403, not opened. */
+const FAILED_AFTER =
+  "(?:refused|blocked|(?:was|were) blocked|returned (?:a |an )?(?:403|error)|403|forbidden|" +
+  "showed a captcha|captcha|required (?:a )?sign-?in|inaccessible|unavailable|unreachable|" +
+  "(?:could|can|did|was|were|is|are|has|have|had) ?n[o']?t (?:be(?:en)? )?(?:checked|opened|" +
+  "read|accessed|reached|loaded|load|open|consulted|used|available|reachable|accessible|" +
+  "looked at)|not (?:been )?(?:checked|opened|read|accessed|reached|loaded|consulted|" +
+  "available|reachable|accessible|looked at))\\b"
+
+/**
+ * The shapes in which a sentence says the site `b` was not read (0.10.0), with `’` read as `'`:
+ * a negated reading verb with the site as its object, a few words apart at most ("I didn't
+ * check BoardGameGeek", "without opening BGG", "unable to load the BGG page"); the site as the
+ * subject of a failure, a few words apart at most ("BGG refused the request", "the BoardGameGeek
+ * ranking was not checked", "eBay could not be opened"); or "no <site> data, ratings, rankings
+ * or results". A negation elsewhere in the sentence ("the game is not in print", "BGG users do
+ * not agree") is not one of them.
+ */
+function unreadShapes(b: (typeof BARRED_SITES)[number]): RegExp[] {
+  const site = `(?:${b.names})(?:'s)?[,)]?`
+  return [
+    new RegExp(`\\b${NEG_BEFORE}${READ_VERB}\\s+${GAP}${site}`, "i"),
+    new RegExp(`\\b${site}\\s+${GAP}${FAILED_AFTER}`, "i"),
+    new RegExp(
+      `\\bno (?:${b.names})(?:'s)? (?:data|ratings?|rankings?|ranks?|scores?|results?)\\b`,
+      "i",
+    ),
+  ]
 }
 
 /** The sentences of `text`, split at a stop, a semicolon or a line break; "e.g." and "i.e." are no stop. */
@@ -99,13 +125,10 @@ function sentences(text: string): string[] {
     .split(/(?<=[.!?;])\s+|\n/)
 }
 
-/** True when a sentence of `lines` names `b` as not read. */
+/** True when a sentence of `lines` says `b` was not read, in one of `unreadShapes`. */
 function saysUnread(b: (typeof BARRED_SITES)[number], lines: readonly string[]): boolean {
-  const named = namedIn(b)
-  const noData = noDataOf(b)
-  return lines
-    .flatMap(sentences)
-    .some((line) => noData.test(line) || (named.test(line) && UNREAD.test(line)))
+  const shapes = unreadShapes(b)
+  return lines.flatMap(sentences).some((line) => shapes.some((r) => r.test(line)))
 }
 
 function barredDomains(everywhereOnly = false): string[] {
@@ -142,35 +165,68 @@ function hostOf(url: string): string {
   }
 }
 
-/** A site name or host reduced to one key: a barred site's own, or its name without TLD. */
-function siteKey(text: string): string {
+/**
+ * A site name or host as one site: a barred site's own name for any of its aliases (BGG,
+ * BoardGameGeek, geekdo.com; eBay, ebay.co.uk), otherwise the text lower-cased without `www.`.
+ * Nothing else is merged: amazon.de and amazon.co.uk stay two sites.
+ */
+function siteOf(text: string): string {
   const t = text
     .trim()
     .toLowerCase()
     .replace(/^www\./, "")
   for (const b of BARRED_SITES) if (b.host.test(t) || namedIn(b).test(t)) return b.site
-  return t.replace(/\.[a-z]{2,}(\.[a-z]{2,})?$/, "").replace(/[^a-z0-9]/g, "")
+  return t
+}
+
+/** A URL as one page: its site (`siteOf` its host), then its path, with no query or end slash. */
+function pageOf(url: string): string {
+  try {
+    const u = new URL(url)
+    return `${siteOf(u.hostname)}${u.pathname.replace(/\/+$/, "")}`
+  } catch {
+    return ""
+  }
 }
 
 /**
- * The key one entry of `blocked` is told apart by (0.10.0): its URL's host when it has a URL, its
- * site's name otherwise, each reduced by `siteKey`, so "BoardGameGeek" and "boardgamegeek.com"
- * are one entry.
+ * The key one entry of `blocked` is told apart by (0.10.0): its page (`pageOf`) when it has a
+ * URL, so two pages on one site are two entries; its site (`siteOf`) when it has none.
  */
 export function blockedKey(entry: BlockedPage): string {
-  const host = entry.url ? hostOf(entry.url) : ""
-  return siteKey(host || entry.site)
+  return entry.url ? pageOf(entry.url) : siteOf(entry.site)
 }
 
-/** `entries` with each key (`blockedKey`) once, the first kept, at most `MAX_BLOCKED`. */
+/** The sites an entry is on: its site's name, and its URL's host, each through `siteOf`. */
+function sitesOf(entry: BlockedPage): Set<string> {
+  const out = new Set([siteOf(entry.site)])
+  if (entry.url) out.add(siteOf(hostOf(entry.url)))
+  return out
+}
+
+/**
+ * `entries` with one entry per page, at most `MAX_BLOCKED` (0.10.0). Two entries with one page
+ * (`blockedKey`) are one, the first kept. An entry with no URL merges into any entry on its site
+ * (`sitesOf`): after one, it is dropped; before one, the entry with the URL takes its place. So
+ * "BoardGameGeek" and a boardgamegeek.com page are one entry, and two BoardGameGeek pages are two.
+ */
 export function uniqueBlocked(entries: readonly BlockedPage[]): BlockedPage[] {
   const out: BlockedPage[] = []
-  const seen = new Set<string>()
   for (const e of entries) {
-    if (out.length >= MAX_BLOCKED) break
     const key = blockedKey(e)
-    if (seen.has(key)) continue
-    seen.add(key)
+    if (out.some((o) => o.url && blockedKey(o) === key)) continue
+    if (!e.url) {
+      const site = siteOf(e.site)
+      if (out.some((o) => sitesOf(o).has(site))) continue
+    } else {
+      const sites = sitesOf(e)
+      const bare = out.findIndex((o) => !o.url && sites.has(siteOf(o.site)))
+      if (bare >= 0) {
+        out[bare] = e
+        continue
+      }
+    }
+    if (out.length >= MAX_BLOCKED) break
     out.push(e)
   }
   return out
@@ -181,31 +237,37 @@ export const NOT_OPENED_WHY = "not opened by the research run"
 
 /**
  * The belt under the prompts (0.10.0): `blocked` with an entry `{site, why: NOT_OPENED_WHY}`, no
- * URL, added for each site of `BARRED_SITES` the answer leaves unread without listing it. A site
- * counts as unread when a sentence of the summary or an uncertain line -- the outgoing answer's,
- * or `said`, the research run's own draft's, so a reviewer's rewording cannot hide it -- names it
- * as not read ("I didn't check BoardGameGeek", "BGG refused the request", "no BGG ratings"). eBay,
- * which no run opens, also counts when a finding rests only on eBay addresses (a search listing,
- * never an opened page). A passing mention counts for neither. BoardGameGeek is left alone when a
- * finding of the outgoing answer cites one of its pages (a web first pass may open it); eBay has no
- * such exemption. An entry that already lists the site (`blockedKey`) stops it; past `MAX_BLOCKED`
- * nothing is added.
+ * URL, added for each site of `BARRED_SITES` the answer leaves unread without listing it. It reads
+ * the outgoing `answer` and the research run's own `draft`, so a reviewer's rewording or a claim
+ * moved to `uncertain` cannot hide it. A site counts as unread when a sentence of a summary or an
+ * uncertain line says so in one of `unreadShapes` ("I didn't check BoardGameGeek", "BGG refused
+ * the request", "no BGG ratings"); eBay, which no run opens, also when a finding of either rests
+ * only on eBay addresses (a search listing, never an opened page). A passing mention, or a
+ * negation that is not about the site, counts for neither. BoardGameGeek is left alone when a
+ * finding of the outgoing answer cites one of its pages (a web first pass may open it); eBay has
+ * no such exemption. An entry on the site, by its site's name or its URL's host (`sitesOf`: a
+ * "BoardGameGeek" entry with an archive.org URL counts), stops it; past `MAX_BLOCKED` nothing is
+ * added.
  */
 export function withBarredSites(
   answer: ResearchAnswer,
   blocked: readonly BlockedPage[],
-  said: readonly string[] = [],
+  draft?: ResearchAnswer | null,
 ): BlockedPage[] {
   const out = [...blocked]
-  const lines = [answer.summary, ...answer.uncertain, ...said]
+  const lines = [answer.summary, ...answer.uncertain]
+  if (draft) lines.push(draft.summary, ...draft.uncertain)
+  const findings = [...answer.findings, ...(draft?.findings ?? [])]
+  const cited = answer.findings.flatMap((f) => f.sources.map(hostOf))
   for (const b of BARRED_SITES) {
     if (out.length >= MAX_BLOCKED) break
-    const hosts = answer.findings.map((f) => f.sources.map(hostOf))
-    const onlyOn = hosts.some((h) => h.length > 0 && h.every((x) => b.host.test(x)))
+    const onlyOn = findings.some(
+      (f) => f.sources.length > 0 && f.sources.every((u) => b.host.test(hostOf(u))),
+    )
     const unread = saysUnread(b, lines) || (b.everywhere && onlyOn)
     if (!unread) continue
-    if (!b.everywhere && hosts.flat().some((h) => b.host.test(h))) continue
-    if (out.some((e) => blockedKey(e) === b.site)) continue
+    if (!b.everywhere && cited.some((h) => b.host.test(h))) continue
+    if (out.some((e) => sitesOf(e).has(b.site))) continue
     out.push({ site: b.site, why: NOT_OPENED_WHY })
   }
   return out

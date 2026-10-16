@@ -116,7 +116,8 @@ The tracker's task types, built on `@rackbops/docket-core`'s contract. Shipped s
   opens either site (`SENT_DISALLOWED_TOOLS`, now built from `BARRED_SITES`). Only fetches are
   denied: WebSearch has no domain filter, so a search can still list their pages.
 
-  The answer schema's `blocked` description now also covers the best source for a part that the
+  `researchJob` and `reviewJob` take `ResearchJobOptions` as a new last argument; called directly
+  they default to `canWait: false`. The answer schema's `blocked` description now also covers the best source for a part that the
   run could not or may not open. What the run does with a best source it could not open depends on whether a fuller pass can
   follow (`ResearchJobOptions.canWait`, which `prepare` sets for a `web` first pass whose host has
   `readSources`):
@@ -133,18 +134,27 @@ The tracker's task types, built on `@rackbops/docket-core`'s contract. Shipped s
     page) to `uncertain`.
 
   The wait's list is the research run's own, then on a revise any the reviewer added (an approve
-  sends the stored draft, so it adds none; no reviewer drops one), one entry per site
-  (`uniqueBlocked`, keyed by `blockedKey`: the URL's host, or the site's name, so "BoardGameGeek"
-  and "boardgamegeek.com" merge), then the belt's: `withBarredSites` adds `{site,
+  sends the stored draft, so it adds none; no reviewer drops one), one entry per page
+  (`uniqueBlocked`, keyed by `blockedKey`: host and path, without query or end slash, for an entry
+  with a URL; the site's name for one without, which merges into any entry on its site, so
+  "BoardGameGeek" and a boardgamegeek.com page are one entry and two BoardGameGeek pages are two;
+  only the known aliases merge -- BGG/BoardGameGeek/geekdo.com and eBay/ebay.* -- so amazon.de and
+  amazon.co.uk stay two), then the belt's: `withBarredSites` adds `{site,
   why: NOT_OPENED_WHY}` (no URL) for a site of `BARRED_SITES` that a sentence of the summary or an
   uncertain line names as not read -- the outgoing answer's, or the research run's own draft's, so
   a reviewer that rewords "I didn't check BoardGameGeek" into "No rating-based ranking was
-  available" still leaves the wait. "Not read" is a negated did/could/can/was/is/has/have/had
-  (straight or curly apostrophe), "not (been) checked/opened/read", "without checking/opening/
-  reading", "unable", "refused", "blocked", "unavailable", "403", "CAPTCHA" and the like, or "no
-  <site> data/ratings/rankings"; "e.g." and "i.e." do not end a sentence. eBay also counts when a
-  finding rests only on eBay addresses. A passing mention counts for neither, so a question that
-  only mentions eBay starts no 14-day wait. BoardGameGeek is left alone when a finding of the
+  available" still leaves the wait. "Not read" must be tied to the site (straight or curly
+  apostrophe): a negated reading verb with the site as its object, at most three words apart
+  ("didn't check BoardGameGeek", "unable to load the BGG page", "without opening BGG"); the site
+  as the subject of a failure, at most three words apart ("BGG refused the request", "the
+  BoardGameGeek ranking was not checked", "eBay could not be opened", "returned 403", "required
+  sign-in"); or "no <site> data/ratings/rankings/results". "e.g." and "i.e." do not end a
+  sentence. A negation about something else does not count: "not common on eBay", "the game is
+  not in print", "BGG users do not agree". eBay also counts when a finding of the outgoing answer
+  or of the draft rests only on eBay addresses, so a reviewer that moves such a claim to
+  `uncertain`, as told, keeps the wait. A passing mention counts for neither, so a question that
+  only mentions eBay starts no 14-day wait. An entry on the site by name or by URL host stops the
+  belt (a "BoardGameGeek" entry with an archive.org URL counts). BoardGameGeek is left alone when a finding of the
   outgoing answer cites one of its pages; eBay, never opened, has no such exemption. At most 6 in
   all. Nothing the model wrote is stripped from the DM; the "Couldn't open:" list and the queued
   line say what was not opened.

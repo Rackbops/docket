@@ -707,9 +707,9 @@ function afterReview(
 /**
  * The pages the first pass waits for (0.10.0): the research run's own list, then any the reviewer
  * added on a revise (a reviewer cannot stop a wait, and on approve, where the stored draft is what
- * goes out, it cannot start one either), then the belt's (`withBarredSites`), which also reads the
- * draft's summary and uncertain lines, so a reviewer that rewords "I didn't check BoardGameGeek"
- * away still leaves the wait. Each entry once by `blockedKey`, at most `MAX_BLOCKED`.
+ * goes out, it cannot start one either), one entry per page (`uniqueBlocked`), then the belt's
+ * (`withBarredSites`), which also reads the draft, so a reviewer that rewords "I didn't check
+ * BoardGameGeek" away, or moves an eBay-only claim to `uncertain`, still leaves the wait.
  */
 function blockedAfterReview(
   state: ResearchState,
@@ -718,8 +718,7 @@ function blockedAfterReview(
 ): BlockedPage[] {
   const own = state.draft?.blocked ?? []
   const added = review.verdict === "revise" ? (review.answer?.blocked ?? []) : []
-  const said = state.draft ? [state.draft.summary, ...state.draft.uncertain] : []
-  return withBarredSites(answer, uniqueBlocked([...own, ...added]), said)
+  return withBarredSites(answer, uniqueBlocked([...own, ...added]), state.draft)
 }
 
 /**
