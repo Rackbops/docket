@@ -74,8 +74,9 @@ export const ANSWER_SCHEMA = {
     blocked: {
       type: "array",
       description:
-        "Pages you needed but could not open (refused, 403, CAPTCHA, sign-in wall); leave it " +
-        "out or empty when there were none.",
+        "Pages you needed but could not open (refused, 403, CAPTCHA, sign-in wall), and the " +
+        "best source for a part that you could not or may not open; leave it out or empty " +
+        "when there were none.",
       items: {
         type: "object",
         properties: {

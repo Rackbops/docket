@@ -103,6 +103,47 @@ epic is Rackbops/Tooling#816.
   awaiting and frozen once the second pass starts. Without a store, for a `sent` request, or with
   nothing blocked, a request runs as in 0.8.0. Core: `MAX_FOLLOW_UPS` rises from 5 to 9, so a
   second pass that is never readied, with a retry in each phase, completes.
+- **0.10.0 -- research answers every part of the question, from the best source** (from Rod's
+  feedback on a live answer to "the best board game released in 2026, in each of the major categories"): before
+  searching, the research run splits the question into the parts it needs answered, settling a
+  part another depends on first (the major categories, then the best in each), answers every part
+  and names in `uncertain` any it could not settle. The reviewer, and the second pass's update
+  reviewer, work out the same parts first, including a list the question takes for granted, and
+  never approve an answer that silently skips one: they revise it from the sources or reject it.
+  The split is prompt-only: the answer schema and the DM are unchanged.
+
+  The same release makes the run **rest on the best source** (Rod's feedback on an answer that
+  said "I didn't check BoardGameGeek"): each part's reference site (BoardGameGeek for board games,
+  eBay for listings and prices) is named first. A `web` first pass and its reviewer open
+  BoardGameGeek like any site, an ordinary read (their tools never denied it; the prompt now says
+  to try it, and what to do when it refuses). eBay is never opened by any run (eBay's User
+  Agreement, section 3 (automated access)): a web first pass and its reviewer now deny its fetches
+  too (`WEB_DISALLOWED_TOOLS`), where before nothing in a web run's tools or prompt did. Only
+  fetches are denied: WebSearch has no domain filter, so a search can still list eBay's pages.
+  Runs on gathered pages (a `sent` request, a second pass) never open BoardGameGeek or eBay, as in
+  0.9.0.
+
+  Where a fuller pass can follow -- a `web` first pass whose host can read gathered pages -- a
+  best source the run could not or may not open goes in `blocked` (its URL only when that is the
+  page's real address, never a guessed one), never as a "didn't check" line, and the first pass's
+  reviewer revises an answer that leans on secondary sources without it, adding it there; on a
+  revise, its entries join the research run's (which it cannot drop) and can start the wait.
+  Everywhere else `blocked` is never shown, so the run and the reviewer name the missing source in
+  one short `uncertain` line instead. The web reviewer moves a claim resting only on an eBay
+  address (a search listing, never an opened page) to `uncertain`. Under the prompts, a belt
+  (`withBarredSites`, over `BARRED_SITES`) adds `{site, why: "not opened by the research run"}`
+  for a site a summary or uncertain sentence -- the outgoing answer's or the research run's own
+  draft's -- says was not read, in a shape tied to the site ("didn't check BoardGameGeek", "BGG
+  refused the request", "no BGG ratings"), and for eBay when a finding of either rests only on
+  eBay addresses; a passing mention, or a negation about something else ("not common on eBay"),
+  adds nothing, and BoardGameGeek is left alone when a finding cites one of its pages. `blocked`
+  keeps one entry per page (`blockedKey`: host and path, or the site's name for an entry with no
+  URL, which merges into any entry on its site). Stored states, `sent` requests and the 0.9.0
+  flows behave as before; the prompts where no wait can follow gain one sentence asking the model
+  to name a missing best source in `uncertain`. `researchJob` and `reviewJob` take a new
+  options argument (`{ canWait }`) that defaults to `canWait: false` when they are called
+  directly; the type's own `prepare` sets it. No core change and no host code change; a host's
+  own docs that say the research run cannot open BoardGameGeek need the new wording.
 
 ## Use
 

@@ -92,6 +92,73 @@ The tracker's task types, built on `@rackbops/docket-core`'s contract. Shipped s
   asking for it. A second pass that is never readied, with one retry in
   every phase, is a chain of eight runs, inside core's `MAX_FOLLOW_UPS` (9 from 0.9.0).
 
+  **Every part of the question** (0.10.0): before searching, the research run splits the question
+  into the parts it needs answered, including any list the question takes for granted, and
+  settles a part another depends on first: "the best game of 2026 in each major category" is the
+  major categories, then the best in each. It answers every part, in the summary and the findings,
+  and names in `uncertain` any part it could not settle and why. The reviewer works out the same
+  parts before its other checks, and never approves an answer that silently skips one: `revise`
+  (fill the part from the sources, or name it in `uncertain` when they cannot settle it) or
+  `reject`. The second pass asks the same of an update: a part the earlier answer left unsettled
+  that the pages settle is a new finding, and an update that skips it is revised or rejected. The
+  split is prompt-only, with no `parts` field: the summary and the findings already carry each
+  part's answer, a separate list would repeat them inside the DM's 1,900 characters, and each of
+  its lines would be a claim with no source of its own. So the schemas (but for the wider
+  `blocked` description, below), the DM, stored states and the 0.9.0 flows are as they were.
+
+  **The best source** (0.10.0): before searching, the research run names each part's reference
+  site -- BoardGameGeek for board games, eBay for listings and sold prices, otherwise the maker,
+  the standards body or the official record -- and rests the answer on it. A `web` first pass and
+  its reviewer open BoardGameGeek like any site (an ordinary read, nothing to get round a
+  refusal). eBay is never opened by any run (eBay's User Agreement, section 3 (automated access)):
+  a web first pass and its reviewer deny its fetches (`WEB_DISALLOWED_TOOLS`, new; before 0.10.0 a
+  web run had no eBay denial), and a run on gathered pages (a `sent` request, a second pass) never
+  opens either site (`SENT_DISALLOWED_TOOLS`, now built from `BARRED_SITES`). Only fetches are
+  denied: WebSearch has no domain filter, so a search can still list their pages.
+
+  `researchJob` and `reviewJob` take `ResearchJobOptions` as a new last argument; called directly
+  they default to `canWait: false`. The answer schema's `blocked` description now also covers the best source for a part that the
+  run could not or may not open. What the run does with a best source it could not open depends on whether a fuller pass can
+  follow (`ResearchJobOptions.canWait`, which `prepare` sets for a `web` first pass whose host has
+  `readSources`):
+  - **It can:** the source goes in `blocked` -- a refused page (a 403, a CAPTCHA or challenge
+    page, an empty or blocked body, a sign-in wall) or eBay -- with its URL only when that is the
+    page's real address (such as BoardGameGeek's ranking or browse page), never a guessed one, and
+    never as "I didn't check" in the summary or `uncertain`. The reviewer revises an answer that
+    leans on secondary sources while the best source is neither cited nor in `blocked`, adding it
+    there, and moves a "didn't check" line to `blocked`.
+  - **It cannot** (no store, a `sent` request, a second pass): `blocked` is never shown, so the run
+    names the missing source in one short `uncertain` line ("BoardGameGeek was not among the pages
+    read"), and a web reviewer revises an answer to add that line.
+  - A web reviewer moves a claim resting only on an eBay address (a search listing, never an opened
+    page) to `uncertain`.
+
+  The wait's list is the research run's own, then on a revise any the reviewer added (an approve
+  sends the stored draft, so it adds none; no reviewer drops one), one entry per page
+  (`uniqueBlocked`, keyed by `blockedKey`: host and path, without query or end slash, for an entry
+  with a URL; the site's name for one without, which merges into any entry on its site, so
+  "BoardGameGeek" and a boardgamegeek.com page are one entry and two BoardGameGeek pages are two;
+  only the known aliases merge -- BGG/BoardGameGeek/geekdo.com and eBay/ebay.* -- so amazon.de and
+  amazon.co.uk stay two), then the belt's: `withBarredSites` adds `{site,
+  why: NOT_OPENED_WHY}` (no URL) for a site of `BARRED_SITES` that a sentence of the summary or an
+  uncertain line names as not read -- the outgoing answer's, or the research run's own draft's, so
+  a reviewer that rewords "I didn't check BoardGameGeek" into "No rating-based ranking was
+  available" still leaves the wait. "Not read" must be tied to the site (straight or curly
+  apostrophe): a negated reading verb with the site as its object, at most three words apart
+  ("didn't check BoardGameGeek", "unable to load the BGG page", "without opening BGG"); the site
+  as the subject of a failure, at most three words apart ("BGG refused the request", "the
+  BoardGameGeek ranking was not checked", "eBay could not be opened", "returned 403", "required
+  sign-in"); or "no <site> data/ratings/rankings/results". "e.g." and "i.e." do not end a
+  sentence. A negation about something else does not count: "not common on eBay", "the game is
+  not in print", "BGG users do not agree". eBay also counts when a finding of the outgoing answer
+  or of the draft rests only on eBay addresses, so a reviewer that moves such a claim to
+  `uncertain`, as told, keeps the wait. A passing mention counts for neither, so a question that
+  only mentions eBay starts no 14-day wait. An entry on the site by name or by URL host stops the
+  belt (a "BoardGameGeek" entry with an archive.org URL counts). BoardGameGeek is left alone when a finding of the
+  outgoing answer cites one of its pages; eBay, never opened, has no such exemption. At most 6 in
+  all. Nothing the model wrote is stripped from the DM; the "Couldn't open:" list and the queued
+  line say what was not opened.
+
 - `scout` (category 1, E9): execute lane, `calendar` every N days at the owner's hour (the host bounds N; the tracker
   plugin allows 1 to 30). One
   `claude -p` Job a run (WebSearch and WebFetch; 30 turns, 1.50 USD, 10 minutes, item 61 proposed)
