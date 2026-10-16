@@ -75,24 +75,28 @@ function namedIn(b: (typeof BARRED_SITES)[number]): RegExp {
 }
 
 /** Up to three words between a site and what is said of it ("the BGG ranking page was"). */
-const GAP = "(?:[\\w'-]+[,)]?\\s+){0,3}"
+const GAP = "(?:[\\w'-]+[,):]?\\s+){0,3}"
 
-/** A verb for reading a source, in any of its forms. */
+/**
+ * A verb for reading a source, in any of its forms. "use" and "see" are left out: "I didn't use
+ * the BGG weight" and "I didn't see anything on BGG suggesting a reprint" are not unread pages.
+ */
 const READ_VERB =
-  "(?:check|open|read|access|reach|load|consult|use|get|see|visit|fetch|look(?:\\s+at)?)" +
-  "(?:ed|ing|s)?"
+  "(?:(?:check|open|read|access|reach|load|consult|get|visit|fetch|look(?:\\s+at)?)" +
+  "(?:ed|ing|s)?|verif(?:y|ies|ied|ying)|retriev(?:e|es|ed|ing))"
 
 /** A negation before a reading verb: didn't, couldn't, haven't, unable to, not, without. */
 const NEG_BEFORE =
-  "(?:(?:did|could|can|have|has|had|do|does) ?n[o']?t|cannot|(?:was|were) ?n[o']?t able to|" +
+  "(?:(?:did|could|can|would|should|have|has|had|do|does) ?n[o']?t|cannot|(?:was|were) ?n[o']?t able to|" +
   "unable to|never|not|without)\\s+(?:be(?:en)?\\s+able\\s+to\\s+)?"
 
 /** What a source did, or was not, after its name: refused, blocked, 403, not opened. */
 const FAILED_AFTER =
   "(?:refused|blocked|(?:was|were) blocked|returned (?:a |an )?(?:403|error)|403|forbidden|" +
   "showed a captcha|captcha|required (?:a )?sign-?in|inaccessible|unavailable|unreachable|" +
-  "(?:could|can|did|was|were|is|are|has|have|had) ?n[o']?t (?:be(?:en)? )?(?:checked|opened|" +
-  "read|accessed|reached|loaded|load|open|consulted|used|available|reachable|accessible|" +
+  "failed to (?:load|open)|timed out|(?:access )?(?:was )?denied|" +
+  "(?:could|can|did|would|was|were|is|are|has|have|had) ?n[o']?t (?:be(?:en)? )?" +
+  "(?:checked|opened|read|accessed|reached|loaded|load|open|consulted|used|available|reachable|accessible|" +
   "looked at)|not (?:been )?(?:checked|opened|read|accessed|reached|loaded|consulted|" +
   "available|reachable|accessible|looked at))\\b"
 
@@ -106,7 +110,7 @@ const FAILED_AFTER =
  * not agree") is not one of them.
  */
 function unreadShapes(b: (typeof BARRED_SITES)[number]): RegExp[] {
-  const site = `(?:${b.names})(?:'s)?[,)]?`
+  const site = `(?:${b.names})(?:'s)?[,):]?`
   return [
     new RegExp(`\\b${NEG_BEFORE}${READ_VERB}\\s+${GAP}${site}`, "i"),
     new RegExp(`\\b${site}\\s+${GAP}${FAILED_AFTER}`, "i"),

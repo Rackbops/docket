@@ -291,6 +291,13 @@ describe("withBarredSites, the belt", () => {
       // "e.g." is no stop: the sentence still names BGG with its marker.
       "Reference sites, e.g. BoardGameGeek, were not checked.",
       "Reference sites (i.e. BGG) could not be opened.",
+      "I could not verify the BGG rating.",
+      "I couldn't retrieve the BoardGameGeek ranking.",
+      "BoardGameGeek failed to load.",
+      "The BGG page timed out.",
+      "BGG access was denied.",
+      "BoardGameGeek wouldn't load.",
+      "BGG: not checked.",
     ]) {
       expect(withBarredSites(withSummary(summary), []), summary).toEqual([bgg])
     }
@@ -303,6 +310,8 @@ describe("withBarredSites, the belt", () => {
       "BoardGameGeek ranks it first; the publisher's store was unavailable.",
       "BoardGameGeek has no data errors here.",
       "No board game is better; BGG agrees.",
+      "I didn't use the BGG weight in the ranking.",
+      "I didn't see anything on BGG suggesting a reprint.",
     ]) {
       expect(withBarredSites(withSummary(summary), []), summary).toEqual([])
     }
