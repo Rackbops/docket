@@ -589,14 +589,22 @@ describe("research state", () => {
   })
 
   it("the web research prompt still ends on the blocked sentence", () => {
-    const prompt = researchJob(WEB).prompt
+    const prompt = researchJob(WEB, undefined, undefined, { canWait: true }).prompt
     const sentence =
       "\nIf a page you needed would not open (refused, a 403, a CAPTCHA, a sign-in wall), list " +
       "it in `blocked` with its site, its URL if you have one, and why."
     expect(prompt.endsWith(sentence)).toBe(true)
+    // With no fuller pass to follow (0.10.0), `blocked` is not shown, so it is named in `uncertain`.
+    expect(
+      researchJob(WEB).prompt.endsWith(
+        `${sentence} Name it in \`uncertain\` too: \`blocked\` is not shown.`,
+      ),
+    ).toBe(true)
     expect(prompt).not.toContain("<<<EARLIER")
     // From 0.10.0 the first pass's reviewer checks the best source is cited or in `blocked`.
-    expect(reviewJob(WEB, DRAFT).prompt).toContain("neither among its findings' sources nor in")
+    expect(reviewJob(WEB, DRAFT, undefined, undefined, { canWait: true }).prompt).toContain(
+      "neither among its findings' sources nor in `blocked`",
+    )
   })
 })
 

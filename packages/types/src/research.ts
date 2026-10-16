@@ -16,7 +16,6 @@ import {
   clean,
   fitLines,
   fitMessage,
-  MAX_BLOCKED,
   parseAnswer,
   parseBlocked,
   parseReview,
@@ -33,6 +32,7 @@ import {
   type ReadSources,
   SENT_DISALLOWED_TOOLS,
   sourcesExpiry,
+  uniqueBlocked,
   WEB_DISALLOWED_TOOLS,
   withBarredSites,
 } from "./research-sources.js"
@@ -82,10 +82,11 @@ import {
  *
  * **The best source** (0.10.0): the research run names each part's reference site first
  * (BoardGameGeek for board games, eBay for listings and prices). A web first pass and its reviewer
- * open BoardGameGeek like any site and list a page that refuses them in `blocked`; eBay no run
- * opens (`WEB_DISALLOWED_TOOLS`; eBay's User Agreement, section 3 (automated access)). The first
- * pass's reviewer revises an answer that leans on secondary sources without the best one, adding
- * it to `blocked`, and the belt (`withBarredSites`) lists a barred site the answer names as unread.
+ * open BoardGameGeek like any site; eBay no run opens (`WEB_DISALLOWED_TOOLS`; eBay's User
+ * Agreement, section 3 (automated access)). Where a fuller pass can follow (`canWait`: a web first
+ * pass with `readSources`), a best source not opened goes in `blocked`, the reviewer adds one the
+ * answer leans around, and the belt (`withBarredSites`) adds a barred site the answer or its draft
+ * names as unread; elsewhere `blocked` is never shown, so the runs name it in `uncertain`.
  *
  * Failures (a usage limit never reaches `finish`: the dispatcher requeues the run):
  *
@@ -282,7 +283,9 @@ export function researchJob(
   config: ResearchConfig,
   pages?: readonly GatheredPage[],
   earlier?: ResearchAnswer,
+  options: ResearchJobOptions = {},
 ): JobSpec {
+  const canWait = options.canWait === true && pages === undefined && earlier === undefined
   const sent = pages !== undefined
   const prompt = [
     "You are researching a one-off question for a person, who will read your answer as a " +
@@ -302,7 +305,7 @@ export function researchJob(
       : []),
     ...partsLines(earlier !== undefined),
     "",
-    ...bestSourceLines(sent),
+    ...bestSourceLines(sent, canWait),
     "",
     "Use web search and fetch pages to check facts. Prefer primary sources (manufacturers, " +
       "government, utilities, standards bodies). Every claim that a reader might act on needs a " +
@@ -312,7 +315,9 @@ export function researchJob(
       "`summary` (the answer in at most 150 words), `findings` (each claim with the URLs you " +
       "opened for it) and `uncertain` (where sources disagree, or what you could not confirm).",
     "If a page you needed would not open (refused, a 403, a CAPTCHA, a sign-in wall), list it in " +
-      "`blocked` with its site, its URL if you have one, and why.",
+      "`blocked` with its site, its URL if you have one, and why." +
+      // `blocked` is shown only where a fuller pass can follow (0.10.0).
+      (canWait ? "" : " Name it in `uncertain` too: `blocked` is not shown."),
     ...(sent ? ["A gathered page counts as opened: cite its `url`."] : []),
     ...(earlier
       ? [
@@ -362,14 +367,26 @@ function partsLines(second: boolean): string[] {
 }
 
 /**
- * The research run's best source (0.10.0, Rod's feedback on "I didn't check BoardGameGeek"): each
- * part has a source its field treats as the reference, and the answer rests on it or says, in
- * `blocked`, that the run could not open it, so the person's browser can gather it for a fuller
- * pass. A first pass on the web tries BoardGameGeek like any site (Rod, 2026-10-16) and lists a
- * page that refuses it; eBay it never tries. A run on gathered pages (`pages`: a `sent` request or
- * a second pass) keeps both barred (`SENT_DISALLOWED_TOOLS`), and a gathered page counts as opened.
+ * What a prompt builder needs to know beyond the request (0.10.0). `canWait`: a fuller pass can
+ * follow this answer -- a `web` first pass whose host can read gathered pages -- so a best source
+ * the run could not open goes in `blocked`, which then starts the wait. Anywhere else `blocked` is
+ * never shown, so the run names the missing source in one short `uncertain` line instead.
+ * Ignored on gathered pages and on a second pass, which never wait.
  */
-function bestSourceLines(pages: boolean): string[] {
+export interface ResearchJobOptions {
+  canWait?: boolean
+}
+
+/**
+ * The research run's best source (0.10.0, Rod's feedback on "I didn't check BoardGameGeek"): each
+ * part has a source its field treats as the reference, and the answer rests on it or says that
+ * the run could not open it: in `blocked` when a fuller pass can follow (`canWait`), so the
+ * person's browser can gather it, otherwise in one short `uncertain` line. A first pass on the
+ * web tries BoardGameGeek like any site (Rod, 2026-10-16); eBay no run opens. A run on gathered
+ * pages (`pages`: a `sent` request or a second pass) opens neither (`SENT_DISALLOWED_TOOLS`), and
+ * a gathered page counts as opened.
+ */
+function bestSourceLines(pages: boolean, canWait: boolean): string[] {
   return [
     "For each part, decide first which source is the best one for it: the site people in that " +
       "field treat as the reference (for board games, BoardGameGeek; for listings and sold " +
@@ -383,11 +400,18 @@ function bestSourceLines(pages: boolean): string[] {
         "refusal. eBay is not opened from this run: do not try it. When the best source is " +
         "eBay, or its page refused you (BoardGameGeek or any other: a 403, a CAPTCHA or " +
         "challenge page, an empty or blocked body, a sign-in wall)") +
-      ", list it in `blocked` with its site, the page's URL when you can work one out (such as " +
-      "BoardGameGeek's ranking or browse page for the year), and why; then answer from the best " +
-      "sources you could open. Never write in `summary` or `uncertain` that you \"didn't " +
-      "check\" it: `blocked` is where that goes, and the person's own browser can gather it for " +
-      "a fuller pass.",
+      (canWait
+        ? ", list it in `blocked` with its site, its URL only when that is the page's real " +
+          "address (such as BoardGameGeek's ranking or browse page), never a guessed one, and " +
+          "why; then answer from the best sources you could open. Never write in `summary` or " +
+          '`uncertain` that you "didn\'t check" it: `blocked` is where that goes, and the ' +
+          "person's own browser can gather it for a fuller pass."
+        : ", answer from the best sources you could open and name the missing source in one " +
+          "short `uncertain` line, such as " +
+          (pages
+            ? '"BoardGameGeek was not among the pages read"'
+            : '"BoardGameGeek refused the request, so its ranking is not used"') +
+          ": no fuller pass follows this answer, so that line is how the person learns of it."),
   ]
 }
 
@@ -400,8 +424,10 @@ export function reviewJob(
   draft: ResearchAnswer,
   pages?: readonly GatheredPage[],
   earlier?: ResearchAnswer,
+  options: ResearchJobOptions = {},
 ): JobSpec {
   const sent = pages !== undefined
+  const canWait = options.canWait === true && !sent && earlier === undefined
   const prompt = [
     earlier
       ? "You are reviewing an update to a research answer before it is sent to a person as a " +
@@ -432,7 +458,7 @@ export function reviewJob(
         ]
       : []),
     ...(earlier ? updateChecks() : answerChecks()),
-    ...(earlier || sent ? [] : bestSourceChecks()),
+    ...(earlier || sent ? [] : bestSourceChecks(canWait)),
     "",
     "Then give a verdict: `approve` if the draft stands as is and covers every part (return it " +
       "unchanged in `answer`); `revise` if it stands once corrected (return the corrected " +
@@ -471,24 +497,35 @@ function answerChecks(): string[] {
 }
 
 /**
- * The reviewer's best-source check of a first pass on the web (0.10.0), which may open
- * BoardGameGeek like the research run: an answer that leans on secondary sources while the best
- * one is neither cited nor in `blocked` is revised to list it, so the person's browser can gather
- * it. Not asked on gathered pages (no fuller pass follows) nor of an
- * update (the pages are the fuller pass).
+ * The reviewer's best-source checks of a first pass on the web (0.10.0), which may open
+ * BoardGameGeek like the research run. An answer that leans on secondary sources while the best
+ * one is neither cited nor said to be missing is revised: with `canWait`, to list it in `blocked`,
+ * so the person's browser can gather it; otherwise to name it in one short `uncertain` line, since
+ * `blocked` is never shown there. A claim resting only on an eBay address came from a search
+ * listing, never an opened page (no run opens eBay), so it moves to `uncertain`. Not asked on
+ * gathered pages (their own checks cover BGG and eBay) nor of an update.
  */
-function bestSourceChecks(): string[] {
+function bestSourceChecks(canWait: boolean): string[] {
   return [
     "- Name the best source for each part: the site its field treats as the reference (for " +
       "board games, BoardGameGeek; for listings and sold prices, eBay). If the answer leans on " +
-      "secondary sources while that source is neither among its findings' sources nor in " +
-      "`blocked`, the verdict is `revise`: add it to `blocked` (its site, the page's URL when " +
-      "you can work one out, and why) and keep the answer from the sources it has.",
-    "- You may open BoardGameGeek like any site. eBay is not opened from these runs, and a page " +
-      "that refused is not read: a claim must " +
-      "not say a source was checked unless a finding cites it. A line saying a source was not " +
-      'checked ("I didn\'t check BoardGameGeek") is no answer: move it to `blocked` on a ' +
-      "`revise`.",
+      "secondary sources while that source is neither among its findings' sources nor " +
+      (canWait
+        ? "in `blocked`, the verdict is `revise`: add it to `blocked` (its site, its URL only " +
+          "when that is the page's real address, such as BoardGameGeek's ranking or browse " +
+          "page, never a guessed one, and why) and keep the answer from the sources it has."
+        : "named in `uncertain`, the verdict is `revise`: add one short `uncertain` line naming " +
+          "it, and keep the answer from the sources it has."),
+    "- You may open BoardGameGeek like any site. eBay is never opened by these runs: a claim " +
+      "resting only on an eBay address came from a search listing, not a page anyone opened, " +
+      "so move it to `uncertain`.",
+    ...(canWait
+      ? [
+          "- A page that refused is not read, so a claim must not say a source was checked " +
+            "unless a finding cites it. A line saying a source was not checked (\"I didn't " +
+            'check BoardGameGeek") is no answer: move it to `blocked` on a `revise`.',
+        ]
+      : []),
   ]
 }
 
@@ -670,9 +707,9 @@ function afterReview(
 /**
  * The pages the first pass waits for (0.10.0): the research run's own list, then any the reviewer
  * added on a revise (a reviewer cannot stop a wait, and on approve, where the stored draft is what
- * goes out, it cannot start one either), then the belt's (`withBarredSites`): a barred site the
- * answer names that no finding cites and no entry lists. At most `MAX_BLOCKED`, each site and URL
- * once.
+ * goes out, it cannot start one either), then the belt's (`withBarredSites`), which also reads the
+ * draft's summary and uncertain lines, so a reviewer that rewords "I didn't check BoardGameGeek"
+ * away still leaves the wait. Each entry once by `blockedKey`, at most `MAX_BLOCKED`.
  */
 function blockedAfterReview(
   state: ResearchState,
@@ -681,15 +718,8 @@ function blockedAfterReview(
 ): BlockedPage[] {
   const own = state.draft?.blocked ?? []
   const added = review.verdict === "revise" ? (review.answer?.blocked ?? []) : []
-  const out: BlockedPage[] = []
-  const seen = new Set<string>()
-  for (const b of [...own, ...added]) {
-    const key = `${b.site.toLowerCase()} ${b.url ?? ""}`
-    if (seen.has(key) || out.length >= MAX_BLOCKED) continue
-    seen.add(key)
-    out.push(b)
-  }
-  return withBarredSites(answer, out)
+  const said = state.draft ? [state.draft.summary, ...state.draft.uncertain] : []
+  return withBarredSites(answer, uniqueBlocked([...own, ...added]), said)
 }
 
 /**
@@ -917,8 +947,12 @@ export function researchType(options: ResearchOptions = {}): TaskType<ResearchCo
         return { outcome: { summary: "already answered", complete: true } }
       if (state.phase === "awaiting-pages") return morePages(ctx, state)
       const sent = usesSentSources(ctx.config)
+      // A web first pass whose host can read gathered pages: a fuller pass can follow it.
+      const canWait = readSources !== undefined && !sent
       if (state.phase === "review" && state.draft) {
-        if (!sent && state.pass !== 2) return reviewJob(ctx.config, state.draft)
+        if (!sent && state.pass !== 2) {
+          return reviewJob(ctx.config, state.draft, undefined, undefined, { canWait })
+        }
         const got = await pagesFor(ctx, state)
         if ("outcome" in got) return got
         const earlier = state.pass === 2 ? state.earlier : undefined
@@ -926,7 +960,7 @@ export function researchType(options: ResearchOptions = {}): TaskType<ResearchCo
       }
       const deadline = deadlineOf(ctx.config)
       if (deadline && ctx.now > deadline) return { outcome: missed(ctx, deadline) }
-      if (!sent) return researchJob(ctx.config)
+      if (!sent) return researchJob(ctx.config, undefined, undefined, { canWait })
       const got = await pagesFor(ctx, state)
       return "outcome" in got ? got : researchJob(ctx.config, got.pages)
     },

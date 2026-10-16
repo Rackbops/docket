@@ -67,6 +67,7 @@ export {
   REVIEW_MAX_TURNS,
   REVIEW_TIMEOUT_MS,
   type ResearchConfig,
+  type ResearchJobOptions,
   type ResearchOptions,
   type ResearchPhase,
   type ResearchState,
@@ -100,6 +101,7 @@ export {
 } from "./research-answer.js"
 export {
   BARRED_SITES,
+  blockedKey,
   type GatheredPage,
   gatheredPages,
   MAX_GATHERED_CHARS,
@@ -117,6 +119,7 @@ export {
   SOURCES_WAIT_DAYS,
   SOURCES_WAIT_MS,
   sourcesExpiry,
+  uniqueBlocked,
   WEB_DISALLOWED_TOOLS,
   withBarredSites,
 } from "./research-sources.js"

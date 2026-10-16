@@ -116,22 +116,29 @@ epic is Rackbops/Tooling#816.
   said "I didn't check BoardGameGeek"): each part's reference site (BoardGameGeek for board games,
   eBay for listings and prices) is named first. A `web` first pass and its reviewer open
   BoardGameGeek like any site, an ordinary read (their tools never denied it; the prompt now says
-  to try it, and says what to do when it refuses); a page that refuses (a 403, a CAPTCHA or
-  challenge page, an empty or blocked body) goes in `blocked` with its URL and why, never as a
-  "didn't check" line, so the person's browser (Claude in Chrome) can gather it for the fuller
-  pass. eBay stays barred for every run (eBay's User Agreement, section 3 (automated access)): a
-  web first pass and its reviewer now deny it at the tool level too (`WEB_DISALLOWED_TOOLS`), where
-  before nothing in a web run's tools or prompt did. Runs on gathered pages (a `sent`
-  request, a second pass) keep both BoardGameGeek and eBay barred, as in 0.9.0.
-  The first pass's reviewer revises an answer that leans on secondary sources while the best
-  source is neither cited nor in `blocked`, adding it there; on a revise, the entries it adds join
-  the research run's (which it cannot drop) and can start the wait. Under the prompts, a belt
+  to try it, and what to do when it refuses). eBay is never opened by any run (eBay's User
+  Agreement, section 3 (automated access)): a web first pass and its reviewer now deny its fetches
+  too (`WEB_DISALLOWED_TOOLS`), where before nothing in a web run's tools or prompt did. Only
+  fetches are denied: WebSearch has no domain filter, so a search can still list eBay's pages.
+  Runs on gathered pages (a `sent` request, a second pass) never open BoardGameGeek or eBay, as in
+  0.9.0.
+
+  Where a fuller pass can follow -- a `web` first pass whose host can read gathered pages -- a
+  best source the run could not or may not open goes in `blocked` (its URL only when that is the
+  page's real address, never a guessed one), never as a "didn't check" line, and the first pass's
+  reviewer revises an answer that leans on secondary sources without it, adding it there; on a
+  revise, its entries join the research run's (which it cannot drop) and can start the wait.
+  Everywhere else `blocked` is never shown, so the run and the reviewer name the missing source in
+  one short `uncertain` line instead. The web reviewer moves a claim resting only on an eBay
+  address (a search listing, never an opened page) to `uncertain`. Under the prompts, a belt
   (`withBarredSites`, over `BARRED_SITES`) adds `{site, why: "not opened by the research run"}`
-  for eBay wherever the answer names it, and for BoardGameGeek where a summary or uncertain
-  sentence names it as not read, unless a finding cites the site or an entry lists it. Stored
-  states, `sent` requests and the 0.9.0 flows read and run as before. No core change and no host
-  code change; a host's own docs that say the research run cannot open BoardGameGeek need the
-  new wording.
+  for a site a summary or uncertain sentence -- the outgoing answer's or the research run's own
+  draft's -- names as not read, and for eBay when a finding rests only on eBay addresses; a
+  passing mention adds nothing, and BoardGameGeek is left alone when a finding cites one of its
+  pages. `blocked` entries are kept one per site (`blockedKey`: the URL's host, or the site's
+  name). Stored states, `sent` requests and the 0.9.0 flows read and run as before. No core change
+  and no host code change; a host's own docs that say the research run cannot open BoardGameGeek
+  need the new wording.
 
 ## Use
 
