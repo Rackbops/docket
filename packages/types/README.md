@@ -92,6 +92,20 @@ The tracker's task types, built on `@rackbops/docket-core`'s contract. Shipped s
   asking for it. A second pass that is never readied, with one retry in
   every phase, is a chain of eight runs, inside core's `MAX_FOLLOW_UPS` (9 from 0.9.0).
 
+  **Every part of the question** (0.10.0): before searching, the research run splits the question
+  into the parts it needs answered, including any list the question takes for granted, and
+  settles a part another depends on first: "the best game of 2026 in each major category" is the
+  major categories, then the best in each. It answers every part, in the summary and the findings,
+  and names in `uncertain` any part it could not settle and why. The reviewer works out the same
+  parts before its other checks, and never approves an answer that silently skips one: `revise`
+  (fill the part from the sources, or name it in `uncertain` when they cannot settle it) or
+  `reject`. The second pass asks the same of an update: a part the earlier answer left unsettled
+  that the pages settle is a new finding, and an update that skips it is revised or rejected. The
+  split is prompt-only, with no `parts` field: the summary and the findings already carry each
+  part's answer, a separate list would repeat them inside the DM's 1,900 characters, and each of
+  its lines would be a claim with no source of its own. So the schemas, the DM, stored states and
+  the 0.9.0 flows are as they were.
+
 - `scout` (category 1, E9): execute lane, `calendar` every N days at the owner's hour (the host bounds N; the tracker
   plugin allows 1 to 30). One
   `claude -p` Job a run (WebSearch and WebFetch; 30 turns, 1.50 USD, 10 minutes, item 61 proposed)

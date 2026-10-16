@@ -72,6 +72,11 @@ import {
  * `update` beside the first pass's. With no pages, past the deadline, or on a second-pass failure,
  * the task ends with one short line: the first answer stands, uncharged when no run was made.
  *
+ * **Every part of the question** (0.10.0): the research run splits the question into the parts it
+ * needs answered before it searches, a part another depends on first, and answers each or names it
+ * in `uncertain`; both reviewers never approve an answer that silently skips one (`partsLines`,
+ * `answerChecks`, `updateChecks`). Prompt only: the schemas and the DM are as they were.
+ *
  * Failures (a usage limit never reaches `finish`: the dispatcher requeues the run):
  *
  * - `schema_miss`, a malformed answer, `timeout`, `error`: retried once in the same phase, at once.
@@ -282,6 +287,8 @@ export function researchJob(
           "",
         ]
       : []),
+    ...partsLines(earlier !== undefined),
+    "",
     "Use web search and fetch pages to check facts. Prefer primary sources (manufacturers, " +
       "government, utilities, standards bodies). Every claim that a reader might act on needs a " +
       "source you actually opened. Say plainly where sources disagree or where you are unsure.",
@@ -312,6 +319,31 @@ export function researchJob(
     maxBudgetUsd: RESEARCH_MAX_BUDGET_USD,
     timeoutMs: RESEARCH_TIMEOUT_MS,
   }
+}
+
+/**
+ * The research run's split of the question into parts (0.10.0): a question can imply more than one
+ * thing to find out, and one part can depend on another ("the best in each major category" needs
+ * the categories first). The answer covers every part, or says in `uncertain` which it could not
+ * settle. Prompt only: the summary and findings carry each part's answer, so the schema is as it
+ * was. On a second pass, a part the earlier answer left unsettled is what the pages may fill.
+ */
+function partsLines(second: boolean): string[] {
+  return [
+    "Before you search, split the question into the parts it needs answered, including any " +
+      'list the question takes for granted. A part can depend on another: for "the best game ' +
+      'of the year in each major category", first establish what the major categories are, ' +
+      "then find the best in each. Settle the parts in that order, and answer every one: the " +
+      "summary answers each part, and the findings carry the claims behind each. A part you " +
+      "could not settle goes in `uncertain`, naming the part and why; never leave a part out " +
+      "silently.",
+    ...(second
+      ? [
+          "A part the earlier answer left unsettled (in its `uncertain`, or not at all) that the " +
+            "pages settle is a new finding.",
+        ]
+      : []),
+  ]
 }
 
 /**
@@ -356,9 +388,9 @@ export function reviewJob(
       : []),
     ...(earlier ? updateChecks() : answerChecks()),
     "",
-    "Then give a verdict: `approve` if the draft stands as is (return it unchanged in " +
-      "`answer`); `revise` if it stands once corrected (return the corrected answer in " +
-      "`answer`); `reject` if editing cannot fix it. List each problem you found in " +
+    "Then give a verdict: `approve` if the draft stands as is and covers every part (return it " +
+      "unchanged in `answer`); `revise` if it stands once corrected (return the corrected " +
+      "answer in `answer`); `reject` if editing cannot fix it. List each problem you found in " +
       "`problems`, one line each.",
   ].join("\n")
   return {
@@ -372,9 +404,18 @@ export function reviewJob(
   }
 }
 
-/** The reviewer's checks of a full answer: the spike's, unchanged. */
+/**
+ * The reviewer's checks of a full answer: the spike's, after the parts check (0.10.0), which
+ * comes first so the rest is checked against what the question asked.
+ */
 function answerChecks(): string[] {
   return [
+    "- First work out the parts the question implies, including any list it takes for granted: " +
+      '"the best in each of the major categories" means naming the major categories, then ' +
+      "answering for each one. The answer covers every part, in the summary or the findings, " +
+      "or names it in `uncertain` with why it could not be settled. An answer that silently " +
+      "skips a part is never approved: `revise` it, filling the part from the sources (or " +
+      "naming it in `uncertain` when they cannot settle it), or `reject` it.",
     "- Open the sources behind every claim a reader might act on, and confirm each one says what " +
       "the claim says. A claim its sources do not support is corrected, moved to `uncertain`, or " +
       "removed.",
@@ -384,13 +425,18 @@ function answerChecks(): string[] {
 }
 
 /**
- * The reviewer's checks of a second pass (0.9.0): the draft is an update to the earlier answer,
- * so it should hold only new findings and corrections.
+ * The reviewer's checks of a second pass (0.9.0; the parts check 0.10.0): the draft is an update
+ * to the earlier answer, so it should hold only new findings and corrections.
  */
 function updateChecks(): string[] {
   return [
     "- The draft is an update to the earlier answer: it should hold only new findings and " +
       "corrections to the earlier answer.",
+    "- Work out the parts the question implies, as for a full answer, including any list it " +
+      "takes for granted. Where the earlier answer left a part unsettled (in its `uncertain`, " +
+      "or not at all) and the pages settle it, the update fills it. An update that silently " +
+      "skips such a part is never approved: `revise` it, filling the part from the pages, or " +
+      "`reject` it.",
     "- Each new claim is supported by the source it cites. A claim its source does not support " +
       "is corrected, moved to `uncertain`, or removed.",
     '- A claim starting "Correction:" really corrects a claim the earlier answer made, and its ' +

@@ -103,6 +103,15 @@ epic is Rackbops/Tooling#816.
   awaiting and frozen once the second pass starts. Without a store, for a `sent` request, or with
   nothing blocked, a request runs as in 0.8.0. Core: `MAX_FOLLOW_UPS` rises from 5 to 9, so a
   second pass that is never readied, with a retry in each phase, completes.
+- **0.10.0 -- research answers every part of the question** (from Rod's feedback on a live
+  answer to "the best board game released in 2026, in each of the major categories"): before
+  searching, the research run splits the question into the parts it needs answered, settling a
+  part another depends on first (the major categories, then the best in each), answers every part
+  and names in `uncertain` any it could not settle. The reviewer, and the second pass's update
+  reviewer, work out the same parts first, including a list the question takes for granted, and
+  never approve an answer that silently skips one: they revise it from the sources or reject it.
+  Prompt-only: the answer schema, the DM, stored states and the 0.9.0 flows are unchanged. No core
+  change and no host change.
 
 ## Use
 
