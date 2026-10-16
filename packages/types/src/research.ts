@@ -16,6 +16,7 @@ import {
   clean,
   fitLines,
   fitMessage,
+  MAX_BLOCKED,
   parseAnswer,
   parseBlocked,
   parseReview,
@@ -32,6 +33,8 @@ import {
   type ReadSources,
   SENT_DISALLOWED_TOOLS,
   sourcesExpiry,
+  WEB_DISALLOWED_TOOLS,
+  withBarredSites,
 } from "./research-sources.js"
 
 /**
@@ -58,7 +61,7 @@ import {
  * and tells the owner so, and so does a host that cannot read them.
  *
  * **A second pass on pages the run could not open** (0.9.0): a research run lists in `blocked` the
- * pages it needed and could not open (BoardGameGeek refuses the runner; eBay is never opened). When
+ * pages it needed and could not open (a BoardGameGeek page that refused it; eBay, never opened). When
  * the reviewed answer passes, the research run's own draft lists any, the request is a `web` one,
  * and the host can read gathered pages (`readSources`), the owner gets the answer now with a short
  * "Couldn't open:" list. With at least `MIN_SOURCES_WAIT_MS` (an hour) before `sourcesExpiry` (14
@@ -76,6 +79,13 @@ import {
  * needs answered before it searches, a part another depends on first, and answers each or names it
  * in `uncertain`; both reviewers never approve an answer that silently skips one (`partsLines`,
  * `answerChecks`, `updateChecks`). Prompt only: the schemas and the DM are as they were.
+ *
+ * **The best source** (0.10.0): the research run names each part's reference site first
+ * (BoardGameGeek for board games, eBay for listings and prices). A web first pass and its reviewer
+ * open BoardGameGeek like any site and list a page that refuses them in `blocked`; eBay no run
+ * opens (`WEB_DISALLOWED_TOOLS`; eBay's User Agreement, section 3 (automated access)). The first
+ * pass's reviewer revises an answer that leans on secondary sources without the best one, adding
+ * it to `blocked`, and the belt (`withBarredSites`) lists a barred site the answer names as unread.
  *
  * Failures (a usage limit never reaches `finish`: the dispatcher requeues the run):
  *
@@ -254,9 +264,12 @@ function earlierBlock(earlier: ResearchAnswer): string[] {
   ]
 }
 
-/** The runs' tool denials: the defaults, and BGG and eBay for a request on gathered pages. */
+/**
+ * The runs' tool denials: the defaults, and BGG and eBay for a run on gathered pages; eBay alone
+ * for a web first pass (0.10.0), which opens BoardGameGeek like any site.
+ */
 function disallowed(sent: boolean): string[] {
-  return [...DEFAULT_DISALLOWED_TOOLS, ...(sent ? SENT_DISALLOWED_TOOLS : [])]
+  return [...DEFAULT_DISALLOWED_TOOLS, ...(sent ? SENT_DISALLOWED_TOOLS : WEB_DISALLOWED_TOOLS)]
 }
 
 /**
@@ -288,6 +301,8 @@ export function researchJob(
         ]
       : []),
     ...partsLines(earlier !== undefined),
+    "",
+    ...bestSourceLines(sent),
     "",
     "Use web search and fetch pages to check facts. Prefer primary sources (manufacturers, " +
       "government, utilities, standards bodies). Every claim that a reader might act on needs a " +
@@ -347,6 +362,36 @@ function partsLines(second: boolean): string[] {
 }
 
 /**
+ * The research run's best source (0.10.0, Rod's feedback on "I didn't check BoardGameGeek"): each
+ * part has a source its field treats as the reference, and the answer rests on it or says, in
+ * `blocked`, that the run could not open it, so the person's browser can gather it for a fuller
+ * pass. A first pass on the web tries BoardGameGeek like any site (Rod, 2026-10-16) and lists a
+ * page that refuses it; eBay it never tries. A run on gathered pages (`pages`: a `sent` request or
+ * a second pass) keeps both barred (`SENT_DISALLOWED_TOOLS`), and a gathered page counts as opened.
+ */
+function bestSourceLines(pages: boolean): string[] {
+  return [
+    "For each part, decide first which source is the best one for it: the site people in that " +
+      "field treat as the reference (for board games, BoardGameGeek; for listings and sold " +
+      "prices, eBay; otherwise the maker, the standards body or the official record). The " +
+      "answer should rest on it.",
+    (pages
+      ? "BoardGameGeek and eBay are not opened from this run: do not try. When the best source " +
+        "is one of them and no gathered page is from it, or a page refused you (a 403, a " +
+        "CAPTCHA or challenge page, an empty or blocked body, a sign-in wall)"
+      : "Open BoardGameGeek like any other site: an ordinary read, with nothing to get round a " +
+        "refusal. eBay is not opened from this run: do not try it. When the best source is " +
+        "eBay, or its page refused you (BoardGameGeek or any other: a 403, a CAPTCHA or " +
+        "challenge page, an empty or blocked body, a sign-in wall)") +
+      ", list it in `blocked` with its site, the page's URL when you can work one out (such as " +
+      "BoardGameGeek's ranking or browse page for the year), and why; then answer from the best " +
+      "sources you could open. Never write in `summary` or `uncertain` that you \"didn't " +
+      "check\" it: `blocked` is where that goes, and the person's own browser can gather it for " +
+      "a fuller pass.",
+  ]
+}
+
+/**
  * The reviewer run: the question, and the draft as escaped JSON between markers; with `pages`
  * (`sources: "sent"`), the same gathered pages the research run had, to check its claims against.
  */
@@ -387,6 +432,7 @@ export function reviewJob(
         ]
       : []),
     ...(earlier ? updateChecks() : answerChecks()),
+    ...(earlier || sent ? [] : bestSourceChecks()),
     "",
     "Then give a verdict: `approve` if the draft stands as is and covers every part (return it " +
       "unchanged in `answer`); `revise` if it stands once corrected (return the corrected " +
@@ -421,6 +467,28 @@ function answerChecks(): string[] {
       "removed.",
     "- The summary says nothing the findings do not support, and answers the question asked.",
     "- Where sources disagree, the answer says so.",
+  ]
+}
+
+/**
+ * The reviewer's best-source check of a first pass on the web (0.10.0), which may open
+ * BoardGameGeek like the research run: an answer that leans on secondary sources while the best
+ * one is neither cited nor in `blocked` is revised to list it, so the person's browser can gather
+ * it. Not asked on gathered pages (no fuller pass follows) nor of an
+ * update (the pages are the fuller pass).
+ */
+function bestSourceChecks(): string[] {
+  return [
+    "- Name the best source for each part: the site its field treats as the reference (for " +
+      "board games, BoardGameGeek; for listings and sold prices, eBay). If the answer leans on " +
+      "secondary sources while that source is neither among its findings' sources nor in " +
+      "`blocked`, the verdict is `revise`: add it to `blocked` (its site, the page's URL when " +
+      "you can work one out, and why) and keep the answer from the sources it has.",
+    "- You may open BoardGameGeek like any site. eBay is not opened from these runs, and a page " +
+      "that refused is not read: a claim must " +
+      "not say a source was checked unless a finding cites it. A line saying a source was not " +
+      'checked ("I didn\'t check BoardGameGeek") is no answer: move it to `blocked` on a ' +
+      "`revise`.",
   ]
 }
 
@@ -559,8 +627,7 @@ function afterReview(
     ...(f.sources[0] ? { source: f.sources[0] } : {}),
     tags: ["research", review.verdict],
   }))
-  // The research run's own list: a reviewer cannot start a wait, nor stop one, by what it returns.
-  const blocked = canWait ? (state.draft?.blocked ?? []) : []
+  const blocked = canWait ? blockedAfterReview(state, review, answer) : []
   if (blocked.length > 0) {
     const until = sourcesExpiry(ctx.now, deadlineOf(ctx.config)).at
     if (until.getTime() - ctx.now.getTime() >= MIN_SOURCES_WAIT_MS) {
@@ -598,6 +665,31 @@ function afterReview(
     complete: true,
     summary: `${verdict}: ${n} finding(s)`,
   }
+}
+
+/**
+ * The pages the first pass waits for (0.10.0): the research run's own list, then any the reviewer
+ * added on a revise (a reviewer cannot stop a wait, and on approve, where the stored draft is what
+ * goes out, it cannot start one either), then the belt's (`withBarredSites`): a barred site the
+ * answer names that no finding cites and no entry lists. At most `MAX_BLOCKED`, each site and URL
+ * once.
+ */
+function blockedAfterReview(
+  state: ResearchState,
+  review: Review,
+  answer: ResearchAnswer,
+): BlockedPage[] {
+  const own = state.draft?.blocked ?? []
+  const added = review.verdict === "revise" ? (review.answer?.blocked ?? []) : []
+  const out: BlockedPage[] = []
+  const seen = new Set<string>()
+  for (const b of [...own, ...added]) {
+    const key = `${b.site.toLowerCase()} ${b.url ?? ""}`
+    if (seen.has(key) || out.length >= MAX_BLOCKED) continue
+    seen.add(key)
+    out.push(b)
+  }
+  return withBarredSites(answer, out)
 }
 
 /**

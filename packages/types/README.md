@@ -106,6 +106,30 @@ The tracker's task types, built on `@rackbops/docket-core`'s contract. Shipped s
   its lines would be a claim with no source of its own. So the schemas, the DM, stored states and
   the 0.9.0 flows are as they were.
 
+  **The best source** (0.10.0): before searching, the research run names each part's reference
+  site -- BoardGameGeek for board games, eBay for listings and sold prices, otherwise the maker,
+  the standards body or the official record -- and rests the answer on it. A `web` first pass and
+  its reviewer open BoardGameGeek like any site (an ordinary read, nothing to get round a
+  refusal); a page that refuses -- a 403, a CAPTCHA or challenge page, an empty or blocked body, a
+  sign-in wall -- goes in `blocked` with its URL when the run can work one out (such as the year's
+  ranking page) and why, never as "I didn't check" in the summary or `uncertain`. eBay is opened
+  by no run (eBay's User Agreement, section 3 (automated access)): a web first pass and its
+  reviewer deny it at the tool level (`WEB_DISALLOWED_TOOLS`, new; before 0.10.0 a web run had no
+  eBay denial), and a run on gathered pages (a
+  `sent` request, a second pass) keeps both barred (`SENT_DISALLOWED_TOOLS`, now built from
+  `BARRED_SITES`). The first pass's reviewer, on the web, revises an answer that leans on
+  secondary sources while the best source is neither among its findings' sources nor in
+  `blocked`, adding it there. The wait's list is the research run's own, then on a revise any the
+  reviewer added (an approve sends the stored draft, so it adds none; no reviewer drops one), then
+  the belt's: `withBarredSites` adds `{site, why: NOT_OPENED_WHY}` (no URL) for eBay wherever the
+  summary, a claim or an uncertain line names it, and for BoardGameGeek only where a sentence of
+  the summary or an uncertain line names it as not read ("didn't check", "could not be opened",
+  "refused", "403" and the like), unless a finding cites a page of the site or an entry already
+  lists it by site or URL host; at most 6 in all. A claim that merely mentions BoardGameGeek, or
+  a run that read it without citing it, adds nothing: the narrow rule keeps the belt from queueing
+  a fuller pass for a site the run did read. Nothing the model wrote is stripped from the DM; the
+  "Couldn't open:" list and the queued line say what was not opened.
+
 - `scout` (category 1, E9): execute lane, `calendar` every N days at the owner's hour (the host bounds N; the tracker
   plugin allows 1 to 30). One
   `claude -p` Job a run (WebSearch and WebFetch; 30 turns, 1.50 USD, 10 minutes, item 61 proposed)

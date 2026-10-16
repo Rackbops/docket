@@ -103,15 +103,35 @@ epic is Rackbops/Tooling#816.
   awaiting and frozen once the second pass starts. Without a store, for a `sent` request, or with
   nothing blocked, a request runs as in 0.8.0. Core: `MAX_FOLLOW_UPS` rises from 5 to 9, so a
   second pass that is never readied, with a retry in each phase, completes.
-- **0.10.0 -- research answers every part of the question** (from Rod's feedback on a live
-  answer to "the best board game released in 2026, in each of the major categories"): before
+- **0.10.0 -- research answers every part of the question, from the best source** (from Rod's
+  feedback on a live answer to "the best board game released in 2026, in each of the major categories"): before
   searching, the research run splits the question into the parts it needs answered, settling a
   part another depends on first (the major categories, then the best in each), answers every part
   and names in `uncertain` any it could not settle. The reviewer, and the second pass's update
   reviewer, work out the same parts first, including a list the question takes for granted, and
   never approve an answer that silently skips one: they revise it from the sources or reject it.
-  Prompt-only: the answer schema, the DM, stored states and the 0.9.0 flows are unchanged. No core
-  change and no host change.
+  The split is prompt-only: the answer schema and the DM are unchanged.
+
+  The same release makes the run **rest on the best source** (Rod's feedback on an answer that
+  said "I didn't check BoardGameGeek"): each part's reference site (BoardGameGeek for board games,
+  eBay for listings and prices) is named first. A `web` first pass and its reviewer open
+  BoardGameGeek like any site, an ordinary read (their tools never denied it; the prompt now says
+  to try it, and says what to do when it refuses); a page that refuses (a 403, a CAPTCHA or
+  challenge page, an empty or blocked body) goes in `blocked` with its URL and why, never as a
+  "didn't check" line, so the person's browser (Claude in Chrome) can gather it for the fuller
+  pass. eBay stays barred for every run (eBay's User Agreement, section 3 (automated access)): a
+  web first pass and its reviewer now deny it at the tool level too (`WEB_DISALLOWED_TOOLS`), where
+  before nothing in a web run's tools or prompt did. Runs on gathered pages (a `sent`
+  request, a second pass) keep both BoardGameGeek and eBay barred, as in 0.9.0.
+  The first pass's reviewer revises an answer that leans on secondary sources while the best
+  source is neither cited nor in `blocked`, adding it there; on a revise, the entries it adds join
+  the research run's (which it cannot drop) and can start the wait. Under the prompts, a belt
+  (`withBarredSites`, over `BARRED_SITES`) adds `{site, why: "not opened by the research run"}`
+  for eBay wherever the answer names it, and for BoardGameGeek where a summary or uncertain
+  sentence names it as not read, unless a finding cites the site or an entry lists it. Stored
+  states, `sent` requests and the 0.9.0 flows read and run as before. No core change and no host
+  code change; a host's own docs that say the research run cannot open BoardGameGeek need the
+  new wording.
 
 ## Use
 

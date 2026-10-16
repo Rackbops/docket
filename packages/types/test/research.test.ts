@@ -33,6 +33,7 @@ import {
   reviewJob,
   safeUrl,
   TASK_TYPES,
+  WEB_DISALLOWED_TOOLS,
   ZWSP,
 } from "../src/index.js"
 import { actor, FakeClock, FakeNotifier, T0 } from "./helpers.js"
@@ -198,7 +199,8 @@ describe("the research type", () => {
       maxTurns: RESEARCH_MAX_TURNS,
       maxBudgetUsd: RESEARCH_MAX_BUDGET_USD,
       allowedTools: [...DEFAULT_ALLOWED_TOOLS],
-      disallowedTools: [...DEFAULT_DISALLOWED_TOOLS],
+      // eBay barred for every run (0.10.0).
+      disallowedTools: [...DEFAULT_DISALLOWED_TOOLS, ...WEB_DISALLOWED_TOOLS],
     })
     expect([RESEARCH_MAX_TURNS, RESEARCH_MAX_BUDGET_USD]).toEqual([15, 1])
     expect(spec.model).toBeUndefined()

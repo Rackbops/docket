@@ -99,6 +99,7 @@ export {
   ZWSP,
 } from "./research-answer.js"
 export {
+  BARRED_SITES,
   type GatheredPage,
   gatheredPages,
   MAX_GATHERED_CHARS,
@@ -106,6 +107,7 @@ export {
   MAX_PAGE_CHARS,
   MAX_PAGE_TITLE_CHARS,
   MIN_PAGE_CHARS,
+  NOT_OPENED_WHY,
   pagesBlock,
   pagesJson,
   type ReadSources,
@@ -115,6 +117,8 @@ export {
   SOURCES_WAIT_DAYS,
   SOURCES_WAIT_MS,
   sourcesExpiry,
+  WEB_DISALLOWED_TOOLS,
+  withBarredSites,
 } from "./research-sources.js"
 export {
   itemKey,

@@ -1,10 +1,11 @@
 import { clean } from "@rackbops/docket-core"
-import { safeUrl } from "./research-answer.js"
+import { type BlockedPage, MAX_BLOCKED, type ResearchAnswer, safeUrl } from "./research-answer.js"
 
 /**
  * Pages gathered for a research request by the person's own browser (rackbops-bot-plugins#125,
- * E9): the research half of the Claude in Chrome route. BoardGameGeek refuses the runner's reads
- * and declined API access, and eBay is never opened by the tracker (Rod, 2026-10-05), so a request
+ * E9): the research half of the Claude in Chrome route. BoardGameGeek often refuses the runner's
+ * reads and declined API access, and eBay is never opened by the tracker (Rod, 2026-10-05; eBay's
+ * User Agreement, section 3 (automated access)), so a request
  * made with `sources: "sent"` waits until the person's browser -- Claude in Chrome, when they ask
  * it to -- has read pages for it and the host has stored them. The research run and its reviewer
  * then work from those pages' text, quoted into their prompts as data; neither run may fetch
@@ -34,8 +35,64 @@ export const MAX_PAGE_CHARS = 12_000
 export const MAX_GATHERED_CHARS = 100_000
 
 /**
- * What a run on gathered pages may not fetch: BoardGameGeek, which refuses the runner, and eBay,
- * which the tracker never opens. Claude Code permission rules (code.claude.com/docs/en/permissions,
+ * The sites a run on gathered pages does not open (0.10.0, one list for the tool denials and the
+ * belt): BoardGameGeek, whose pages there come from the person's browser, and eBay, which the
+ * tracker never opens (eBay's User Agreement, section 3 (automated access)). A first pass on the web opens BoardGameGeek like any site (Rod,
+ * 2026-10-16) and lists a refused page in `blocked`; it never opens eBay. Each is the best source
+ * for its field (board games; listings and prices). `domains` are the permission-rule hosts (each
+ * also as `*.host`); `host` tells a URL's hostname on the site; `named` tells the site named in
+ * text. `belt` is when `withBarredSites` adds the site: `named`, wherever the answer names it (a
+ * site no run opens); `unread`, only where a summary or uncertain sentence names it as not read.
+ */
+export const BARRED_SITES: readonly {
+  site: string
+  domains: readonly string[]
+  host: RegExp
+  named: RegExp
+  belt: "named" | "unread"
+  /** Barred on a web first pass too: eBay, opened by no research run. */
+  everywhere: boolean
+}[] = [
+  {
+    site: "boardgamegeek.com",
+    domains: ["boardgamegeek.com", "geekdo.com"],
+    host: /(^|\.)(boardgamegeek|geekdo)\.com$/i,
+    named: /\b(board\s?game\s?geek|bgg|geekdo)\b/i,
+    belt: "unread",
+    everywhere: false,
+  },
+  {
+    site: "ebay.com",
+    domains: ["ebay.*", "ebay.co.*", "ebay.com.*"],
+    host: /(^|\.)ebay(\.[a-z]{2,3}){1,2}$/i,
+    named: /\bebay\b/i,
+    belt: "named",
+    everywhere: true,
+  },
+]
+
+/**
+ * A sentence that says a source was not read: not checked, opened, read, accessed, consulted or
+ * verified, could not or was unable to, refused, blocked, or unavailable.
+ */
+const UNREAD =
+  /\b(did ?n[o']?t|could ?n[o']?t|can ?n[o']?t|can't|was ?n[o']?t|were ?n[o']?t|unable|not (?:been )?(?:check|open|read|access|consult|verif|review|look)\w*|unchecked|unread|unverified|inaccessible|unavailable|refused|blocked|forbidden|captcha|403)\b/i
+
+/** The sentences of `text`, split at a stop, a semicolon or a line break. */
+function sentences(text: string): string[] {
+  return text.split(/(?<=[.!?;])\s+|\n/)
+}
+
+function barredDomains(everywhereOnly = false): string[] {
+  return BARRED_SITES.filter((b) => !everywhereOnly || b.everywhere).flatMap((b) =>
+    b.domains.flatMap((d) => [d, `*.${d}`]),
+  )
+}
+
+/**
+ * What a run on gathered pages may not fetch: BoardGameGeek, whose pages there come from the
+ * person's browser, and eBay, which the tracker never opens (eBay's User Agreement, section 3
+ * (automated access)). Claude Code permission rules (code.claude.com/docs/en/permissions,
  * read 2026-10-13): `domain:host` matches that host only, `domain:*.host` any subdomain at any
  * depth, and a `*` elsewhere one label, so `ebay.*` is `ebay.fr` and `ebay.co.*` is `ebay.co.uk`.
  * Whether `*.ebay.*` (a leading and a later `*`) is accepted is inferred from that wording. Deny
@@ -43,18 +100,60 @@ export const MAX_GATHERED_CHARS = 100_000
  * still list their pages; the run cannot open them there (a cache or proxy site could still serve
  * them: not covered).
  */
-export const SENT_DISALLOWED_TOOLS = [
-  "boardgamegeek.com",
-  "*.boardgamegeek.com",
-  "geekdo.com",
-  "*.geekdo.com",
-  "ebay.*",
-  "*.ebay.*",
-  "ebay.co.*",
-  "*.ebay.co.*",
-  "ebay.com.*",
-  "*.ebay.com.*",
-].map((host) => `WebFetch(domain:${host})`)
+export const SENT_DISALLOWED_TOOLS = barredDomains().map((host) => `WebFetch(domain:${host})`)
+
+/**
+ * What a web first pass, and its reviewer, may not fetch (0.10.0): eBay only (eBay's User
+ * Agreement, section 3 (automated access)). BoardGameGeek they open like any site, and list a page
+ * that refuses them in `blocked`.
+ */
+export const WEB_DISALLOWED_TOOLS = barredDomains(true).map((host) => `WebFetch(domain:${host})`)
+
+function hostOf(url: string): string {
+  try {
+    return new URL(url).hostname
+  } catch {
+    return ""
+  }
+}
+
+/** What the belt says of a barred site the answer names but no run opened or listed. */
+export const NOT_OPENED_WHY = "not opened by the research run"
+
+/**
+ * The belt under the prompts (0.10.0): `blocked` with an entry `{site, why: NOT_OPENED_WHY}`, no
+ * URL, added for each site of `BARRED_SITES` the answer leaves unread without saying so in
+ * `blocked`. eBay (`belt: "named"`, opened by no run) counts when the summary, a claim or an
+ * uncertain line names it at all. BoardGameGeek (`belt: "unread"`, opened by a web first pass)
+ * counts only when a sentence of the summary or an uncertain line names it as not read ("I didn't
+ * check BoardGameGeek", "BGG refused the request"): a claim that only mentions it, or a summary
+ * that cites its ranking, is left alone. Either way a site is left alone when a finding cites one
+ * of its pages (a refused page is no finding) or an entry already lists it, by its site's text or
+ * its URL's host. Entries past `MAX_BLOCKED` are not added.
+ */
+export function withBarredSites(
+  answer: ResearchAnswer,
+  blocked: readonly BlockedPage[],
+): BlockedPage[] {
+  const out = [...blocked]
+  const said = [answer.summary, ...answer.uncertain]
+  const all = [...said, ...answer.findings.map((f) => f.claim)].join("\n")
+  const cited = answer.findings.flatMap((f) => f.sources.map(hostOf))
+  for (const b of BARRED_SITES) {
+    if (out.length >= MAX_BLOCKED) break
+    const counts =
+      b.belt === "named"
+        ? b.named.test(all)
+        : said.flatMap(sentences).some((line) => b.named.test(line) && UNREAD.test(line))
+    if (!counts) continue
+    if (cited.some((h) => b.host.test(h))) continue
+    const listed = out.some(
+      (e) => b.named.test(e.site) || b.host.test(e.site) || (e.url && b.host.test(hostOf(e.url))),
+    )
+    if (!listed) out.push({ site: b.site, why: NOT_OPENED_WHY })
+  }
+  return out
+}
 
 /** A page whose text would be cut shorter than this to fit the whole is dropped instead. */
 export const MIN_PAGE_CHARS = 200

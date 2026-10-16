@@ -23,6 +23,7 @@ import {
   SENT_DISALLOWED_TOOLS,
   TASK_TYPES,
   usesSentSources,
+  WEB_DISALLOWED_TOOLS,
 } from "../src/index.js"
 import { actor, FakeClock, FakeNotifier, T0 } from "./helpers.js"
 
@@ -138,10 +139,10 @@ describe("gathered pages", () => {
     expect(review.prompt).toContain("check it against that page's text above")
   })
 
-  it("change nothing for a web request", () => {
+  it("are not quoted into a web request, which bars eBay alone (0.10.0)", () => {
     const web = researchJob({ question: SENT.question })
     expect(web.prompt).not.toContain("<<<PAGES")
-    expect(web.disallowedTools).toEqual([...DEFAULT_DISALLOWED_TOOLS])
+    expect(web.disallowedTools).toEqual([...DEFAULT_DISALLOWED_TOOLS, ...WEB_DISALLOWED_TOOLS])
     expect(reviewJob({ question: SENT.question }, DRAFT).prompt).not.toContain("<<<PAGES")
   })
 })
