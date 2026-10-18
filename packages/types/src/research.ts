@@ -331,7 +331,7 @@ export function researchJob(
         ]
       : []),
     ...partsLines(earlier !== undefined),
-    ...categoryLines(),
+    ...categoryLines(earlier !== undefined),
     "",
     ...bestSourceLines(sent, canWait),
     ...(webFirst ? ["", ...firecrawlLines(), ...bggSearchHint()] : []),

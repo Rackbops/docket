@@ -89,23 +89,35 @@ function categoryNames(): string {
  * question asks about categories and the best source defines its own, the answer uses that
  * taxonomy and says so, rather than inventing genres or saying no source defines them. A category
  * with no qualifying entry is answered "none yet", with why, never skipped. Every research run.
- * The summary names every category's pick in one compact run: `renderAnswer` fits the DM into
+ * A first pass's summary names every category's pick in one compact run (`COMPACT_RUN`;
+ * a second pass, `second`, names only the categories whose pick changed): `renderAnswer` fits the DM into
  * `MAX_MESSAGE_CHARS` by dropping whole lines from the end, so a category answered only in a late
  * finding can fall out of the DM; the summary comes first and is kept.
  */
-export function categoryLines(): string[] {
+export function categoryLines(second = false): string[] {
   return [
     'When the question asks about categories (or "each of the major" kinds of something) and ' +
-      "the best source defines its own categories, use that site's categories and say so in " +
-      "the summary; do not invent genres, and do not say that no source defines them. For " +
+      "the best source defines its own categories, use that site's categories and say so" +
+      (second ? "" : " in the summary") +
+      "; do not invent genres, and do not say that no source defines them. For " +
       `board games these are BoardGameGeek's ${BGG_CATEGORIES.length} category rankings: ` +
       `${categoryNames()}. A category with no entry that qualifies is answered "none yet", ` +
-      "with the reason; never leave it out. The summary itself names every category's pick in " +
-      "one compact run, such as \"Strategy: X; Family: Y; ...; Children's: none yet (no 2026 " +
-      'game has 30 ratings)", so none is lost when a long answer is cut; the findings carry ' +
-      "each pick's source.",
+      "with the reason; never leave it out." +
+      (second
+        ? // A second pass's summary says what changed (research.ts), so no compact run here.
+          " In this update, the summary names any category whose pick changed."
+        : ` ${COMPACT_RUN}`),
   ]
 }
+
+/**
+ * The compact-run sentence (0.11.0): a first pass only. A second pass's summary says what
+ * changed and repeats nothing, so it names only the categories whose pick changed.
+ */
+export const COMPACT_RUN =
+  "The summary itself names every category's pick in one compact run, such as \"Strategy: X; " +
+  "Family: Y; ...; Children's: none yet (no 2026 game has 30 ratings)\", so none is lost when " +
+  "a long answer is cut; the findings carry each pick's source."
 
 /** The BGG search hint a web first pass may use (0.11.0), with the observed ids. */
 export function bggSearchHint(): string[] {

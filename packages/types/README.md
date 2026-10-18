@@ -182,7 +182,9 @@ The tracker's task types, built on `@rackbops/docket-core`'s contract. Shipped s
   Abstract, Customizable, Children's, Wargames). A category with no qualifying entry is answered
   "none yet", with the reason, never skipped. The summary names every category's pick in one
   compact run ("Strategy: X; Family: Y; ..."), with each pick's source in the findings: the DM is
-  fitted to 1,900 characters by dropping lines from the end, and the summary comes first. A web first pass also gets a hint: a BGG advanced
+  fitted to 1,900 characters by dropping lines from the end, and the summary comes first. A
+  second pass keeps the rest of the rule, but its summary, which says what changed, names only
+  the categories whose pick changed. A web first pass also gets a hint: a BGG advanced
   search (`bggCategoryUrl(familyId, year)`) shows one category for one year, with the
   `familyids[0]` ids as observed on the site on 2026-10-18 (not documented by BGG). The reviewer
   of a full answer revises one that invents categories where the source defines them, or skips

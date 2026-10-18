@@ -210,3 +210,21 @@ describe("all eight categories survive the DM's cut (0.11.0)", () => {
     for (const c of BGG_CATEGORIES) expect(dm).toContain(`${c.name}:`)
   })
 })
+
+describe("a second pass keeps the category rule but not the compact run (0.11.0)", () => {
+  const COMPACT = "The summary itself names every category's pick in one compact run"
+
+  it("first-pass prompts ask for the compact run; pass-2 prompts do not", () => {
+    for (const prompt of [researchJob(WEB).prompt, researchJob(SENT, PAGES).prompt]) {
+      expect(prompt).toContain(COMPACT)
+      expect(prompt).toContain("use that site's categories and say so in the summary")
+    }
+    const second = researchJob(WEB, PAGES, DRAFT).prompt
+    expect(second).not.toContain(COMPACT)
+    expect(second).not.toContain("one compact run")
+    expect(second).toContain("use that site's categories and say so;")
+    expect(second).toContain('is answered "none yet", with the reason; never leave it out')
+    expect(second).toContain("the summary names any category whose pick changed")
+    expect(second).toContain("`summary` says in a few sentences what changed")
+  })
+})
