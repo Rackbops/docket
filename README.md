@@ -156,12 +156,15 @@ epic is Rackbops/Tooling#816.
   apply whichever tool fetched the page. Runs on gathered pages (a `sent` request, a second pass)
   keep their tools and denials. The core's `DEFAULT_ALLOWED_TOOLS` is unchanged; the runner's
   tool ceiling gains the two names in a parallel Rackbops/docket-runner PR, and a runner with no
-  Firecrawl key drops them.
+  Firecrawl key drops them. **Release order:** these Jobs need runner 0.0.6 or later (its
+  ceiling admits the two names, and without a Firecrawl key it drops them); a runner older than
+  that fails them (0.0.5 throws `ToolCeilingError`), so release the runner before deploying 0.11.0.
 
   The same release has a question about categories answered in **the best source's own
   categories** -- BoardGameGeek's eight category rankings for board games (`BGG_CATEGORIES`) --
   rather than invented genres, and a category with no qualifying entry answered "none yet" with
-  the reason. A web first pass gets a BGG advanced-search hint (`bggCategoryUrl`; the
+  the reason. The summary names every category's pick in one compact run ("Strategy: X; Family:
+  Y; ..."), since the DM is cut from the end at 1,900 characters. A web first pass gets a BGG advanced-search hint (`bggCategoryUrl`; the
   `familyids[0]` ids as observed on 2026-10-18, not documented by BGG). The reviewer revises an
   answer that invents categories where the source defines them. No core change and no host code
   change.

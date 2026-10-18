@@ -6,7 +6,10 @@ import {
   bggCategoryUrl,
   FIRECRAWL_TOOLS,
   type GatheredPage,
+  MAX_MESSAGE_CHARS,
+  parseAnswer,
   type ResearchConfig,
+  renderAnswer,
   researchJob,
   reviewJob,
   SENT_DISALLOWED_TOOLS,
@@ -160,5 +163,50 @@ describe("the site's own categories (0.11.0)", () => {
       )
       expect(prompt).toContain('answered "none yet" with the reason')
     }
+  })
+})
+
+describe("all eight categories survive the DM's cut (0.11.0)", () => {
+  const picks = BGG_CATEGORIES.map((c, i) =>
+    c.name === "Children's"
+      ? "Children's: none yet (no 2026 game has 30 ratings)"
+      : `${c.name}: Example ${c.name} Game ${i + 1} (8.${i})`,
+  )
+  /** A realistic answer: the compact run in the summary, a long sourced finding per pick. */
+  const EIGHT = {
+    summary:
+      "By BoardGameGeek's own category rankings, the best-rated 2026 releases are " +
+      `${picks.join("; ")}.`,
+    findings: BGG_CATEGORIES.map((c) => ({
+      claim:
+        `Example ${c.name} Game is the highest-rated 2026 release in BoardGameGeek's ${c.name} ` +
+        "ranking, with an average rating above 8 from more than 30 voters and no expansions " +
+        "counted, as its advanced search for that category and year shows.",
+      sources: [bggCategoryUrl(c.familyId, 2026)],
+    })),
+    uncertain: ["Ratings for 2026 releases are still moving as more people log plays."],
+  }
+
+  it("the prompt asks for the compact run in the summary, sources in the findings", () => {
+    const prompt = researchJob(WEB).prompt
+    expect(prompt).toContain("The summary itself names every category's pick in one compact run")
+    expect(prompt).toContain("Children's: none yet (no 2026 game has 30 ratings)")
+    expect(prompt).toContain("the findings carry each pick's source")
+    expect(reviewJob(WEB, DRAFT).prompt).toContain(
+      "`revise` a summary that leaves a category to the findings alone",
+    )
+  })
+
+  it("renderAnswer cuts the findings but keeps every category's name and pick", () => {
+    const answer = parseAnswer(EIGHT)
+    expect(answer).not.toBeNull()
+    if (!answer) return
+    const dm = renderAnswer("Best of 2026", answer, { verdict: "approve", problems: [], answer })
+    expect(dm.length).toBeLessThanOrEqual(MAX_MESSAGE_CHARS)
+    // The answer is long enough that whole lines were dropped from the end.
+    expect(dm).toMatch(/\(\d+ more lines not shown\)/)
+    expect(dm).not.toContain("Wargames ranking")
+    for (const pick of picks) expect(dm).toContain(pick)
+    for (const c of BGG_CATEGORIES) expect(dm).toContain(`${c.name}:`)
   })
 })

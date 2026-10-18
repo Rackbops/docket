@@ -170,15 +170,19 @@ The tracker's task types, built on `@rackbops/docket-core`'s contract. Shipped s
   a tool's parameters, so the prompt is the only control for the proxy and for eBay through
   Firecrawl (`WEB_DISALLOWED_TOOLS` still denies eBay to WebFetch). The reviewer's eBay handling
   and the belt read the answer's addresses, so they apply whichever tool fetched the page. A run
-  on gathered pages keeps `DEFAULT_ALLOWED_TOOLS` and `SENT_DISALLOWED_TOOLS`. The runner holds
-  the ceiling of tools a Job may name and drops the Firecrawl two when it has no key.
+  on gathered pages keeps `DEFAULT_ALLOWED_TOOLS` and `SENT_DISALLOWED_TOOLS`. These Jobs need
+  runner 0.0.6 or later, whose ceiling admits the two names and which drops them when it has no
+  Firecrawl key; an older runner fails them (0.0.5 throws `ToolCeilingError`), so the runner is
+  released first.
 
   **The site's own categories** (0.11.0): when the question asks about categories (or "each of
   the major" kinds) and the best source defines its own, every research run uses that taxonomy
   and says so, rather than inventing genres or saying no source defines them -- for board games,
   BoardGameGeek's eight category rankings (`BGG_CATEGORIES`: Strategy, Family, Thematic, Party,
   Abstract, Customizable, Children's, Wargames). A category with no qualifying entry is answered
-  "none yet", with the reason, never skipped. A web first pass also gets a hint: a BGG advanced
+  "none yet", with the reason, never skipped. The summary names every category's pick in one
+  compact run ("Strategy: X; Family: Y; ..."), with each pick's source in the findings: the DM is
+  fitted to 1,900 characters by dropping lines from the end, and the summary comes first. A web first pass also gets a hint: a BGG advanced
   search (`bggCategoryUrl(familyId, year)`) shows one category for one year, with the
   `familyids[0]` ids as observed on the site on 2026-10-18 (not documented by BGG). The reviewer
   of a full answer revises one that invents categories where the source defines them, or skips

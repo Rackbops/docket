@@ -5,8 +5,10 @@ import { DEFAULT_ALLOWED_TOOLS } from "@rackbops/docket-core"
  * firecrawl" after comparing a research answer with a run through the Firecrawl tools): the
  * Firecrawl MCP server's search and scrape. Only the web first pass gets them: a run on gathered
  * pages (a `sent` request or a second pass) keeps `DEFAULT_ALLOWED_TOOLS` and its denials as in
- * 0.10.0. The runner (Rackbops/docket-runner) holds the ceiling of tools a Job may name and
- * drops these two when it has no Firecrawl key, so a run without them falls back to WebFetch.
+ * 0.10.0. The runner (Rackbops/docket-runner) holds the ceiling of tools a Job may name: these
+ * Jobs need runner 0.0.6 or later, whose ceiling admits the two names and which drops them when
+ * it has no Firecrawl key (the run then falls back to WebFetch). A runner older than that fails
+ * these Jobs (0.0.5 throws `ToolCeilingError`), so the runner is released first.
  *
  * The permission rules cannot see a tool's parameters, so nothing in the tool lists stops a
  * scrape with a disguising proxy or of an eBay URL: `WEB_DISALLOWED_TOOLS` denies eBay to WebFetch
@@ -87,6 +89,9 @@ function categoryNames(): string {
  * question asks about categories and the best source defines its own, the answer uses that
  * taxonomy and says so, rather than inventing genres or saying no source defines them. A category
  * with no qualifying entry is answered "none yet", with why, never skipped. Every research run.
+ * The summary names every category's pick in one compact run: `renderAnswer` fits the DM into
+ * `MAX_MESSAGE_CHARS` by dropping whole lines from the end, so a category answered only in a late
+ * finding can fall out of the DM; the summary comes first and is kept.
  */
 export function categoryLines(): string[] {
   return [
@@ -95,7 +100,10 @@ export function categoryLines(): string[] {
       "the summary; do not invent genres, and do not say that no source defines them. For " +
       `board games these are BoardGameGeek's ${BGG_CATEGORIES.length} category rankings: ` +
       `${categoryNames()}. A category with no entry that qualifies is answered "none yet", ` +
-      "with the reason; never leave it out.",
+      "with the reason; never leave it out. The summary itself names every category's pick in " +
+      "one compact run, such as \"Strategy: X; Family: Y; ...; Children's: none yet (no 2026 " +
+      'game has 30 ratings)", so none is lost when a long answer is cut; the findings carry ' +
+      "each pick's source.",
   ]
 }
 
@@ -122,6 +130,8 @@ export function categoryChecks(): string[] {
       "uses them and says so. An answer that invents its own categories, or says no source " +
       "defines them, while the source does, is `revise`d onto the source's categories. A " +
       'category with no qualifying entry is answered "none yet" with the reason, never left ' +
-      "out: `revise` an answer that skips one.",
+      "out: `revise` an answer that skips one. The summary names every category's pick in " +
+      'one compact run ("Strategy: X; Family: Y; ..."), since the findings may be cut from ' +
+      "the DM: `revise` a summary that leaves a category to the findings alone.",
   ]
 }
