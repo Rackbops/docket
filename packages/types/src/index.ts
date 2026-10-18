@@ -124,6 +124,12 @@ export {
   withBarredSites,
 } from "./research-sources.js"
 export {
+  BGG_CATEGORIES,
+  bggCategoryUrl,
+  FIRECRAWL_TOOLS,
+  WEB_ALLOWED_TOOLS,
+} from "./research-web.js"
+export {
   itemKey,
   LENS_TEXT,
   LENSES,

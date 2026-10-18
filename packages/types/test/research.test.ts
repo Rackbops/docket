@@ -19,6 +19,7 @@ import {
   AUTH_RETRY_MS,
   clean,
   draftJson,
+  FIRECRAWL_TOOLS,
   MAX_MESSAGE_CHARS,
   parseAnswer,
   parseReview,
@@ -198,7 +199,8 @@ describe("the research type", () => {
     expect(spec).toMatchObject({
       maxTurns: RESEARCH_MAX_TURNS,
       maxBudgetUsd: RESEARCH_MAX_BUDGET_USD,
-      allowedTools: [...DEFAULT_ALLOWED_TOOLS],
+      // Firecrawl for a web first pass (0.11.0).
+      allowedTools: [...DEFAULT_ALLOWED_TOOLS, ...FIRECRAWL_TOOLS],
       // eBay barred for every run (0.10.0).
       disallowedTools: [...DEFAULT_DISALLOWED_TOOLS, ...WEB_DISALLOWED_TOOLS],
     })

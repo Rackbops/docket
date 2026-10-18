@@ -110,7 +110,7 @@ The tracker's task types, built on `@rackbops/docket-core`'s contract. Shipped s
   site -- BoardGameGeek for board games, eBay for listings and sold prices, otherwise the maker,
   the standards body or the official record -- and rests the answer on it. A `web` first pass and
   its reviewer open BoardGameGeek like any site (an ordinary read, nothing to get round a
-  refusal). eBay is never opened by any run (eBay's User Agreement, section 3 (automated access)):
+  refusal; from 0.11.0, one more try through `firecrawl_scrape`, below). eBay is never opened by any run (eBay's User Agreement, section 3 (automated access)):
   a web first pass and its reviewer deny its fetches (`WEB_DISALLOWED_TOOLS`, new; before 0.10.0 a
   web run had no eBay denial), and a run on gathered pages (a `sent` request, a second pass) never
   opens either site (`SENT_DISALLOWED_TOOLS`, now built from `BARRED_SITES`). Only fetches are
@@ -158,6 +158,31 @@ The tracker's task types, built on `@rackbops/docket-core`'s contract. Shipped s
   outgoing answer cites one of its pages; eBay, never opened, has no such exemption. At most 6 in
   all. Nothing the model wrote is stripped from the DM; the "Couldn't open:" list and the queued
   line say what was not opened.
+
+  **Firecrawl** (0.11.0): a `web` first pass and its reviewer may also use the Firecrawl MCP
+  tools, `mcp__firecrawl__firecrawl_search` and `mcp__firecrawl__firecrawl_scrape`
+  (`FIRECRAWL_TOOLS`; their allowed list is `WEB_ALLOWED_TOOLS`, the core's `DEFAULT_ALLOWED_TOOLS`
+  and then these two). The prompts say: WebFetch first; a page that refuses it (a 403, a block, a
+  CAPTCHA) is read with `firecrawl_scrape`, always with `proxy: "basic"`, never "stealth",
+  "enhanced" or "auto", one page at a time and never several pages of one site in parallel; no
+  eBay URL through any tool; `firecrawl_search` like web search; a page Firecrawl is refused too
+  is handled as a refused page (`blocked` or `uncertain`, as above). Permission rules cannot see
+  a tool's parameters, so the prompt is the only control for the proxy and for eBay through
+  Firecrawl (`WEB_DISALLOWED_TOOLS` still denies eBay to WebFetch). The reviewer's eBay handling
+  and the belt read the answer's addresses, so they apply whichever tool fetched the page. A run
+  on gathered pages keeps `DEFAULT_ALLOWED_TOOLS` and `SENT_DISALLOWED_TOOLS`. The runner holds
+  the ceiling of tools a Job may name and drops the Firecrawl two when it has no key.
+
+  **The site's own categories** (0.11.0): when the question asks about categories (or "each of
+  the major" kinds) and the best source defines its own, every research run uses that taxonomy
+  and says so, rather than inventing genres or saying no source defines them -- for board games,
+  BoardGameGeek's eight category rankings (`BGG_CATEGORIES`: Strategy, Family, Thematic, Party,
+  Abstract, Customizable, Children's, Wargames). A category with no qualifying entry is answered
+  "none yet", with the reason, never skipped. A web first pass also gets a hint: a BGG advanced
+  search (`bggCategoryUrl(familyId, year)`) shows one category for one year, with the
+  `familyids[0]` ids as observed on the site on 2026-10-18 (not documented by BGG). The reviewer
+  of a full answer revises one that invents categories where the source defines them, or skips
+  an empty one.
 
 - `scout` (category 1, E9): execute lane, `calendar` every N days at the owner's hour (the host bounds N; the tracker
   plugin allows 1 to 30). One

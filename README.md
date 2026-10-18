@@ -144,6 +144,27 @@ epic is Rackbops/Tooling#816.
   options argument (`{ canWait }`) that defaults to `canWait: false` when they are called
   directly; the type's own `prepare` sets it. No core change and no host code change; a host's
   own docs that say the research run cannot open BoardGameGeek need the new wording.
+- **0.11.0 -- Firecrawl for the web research run, and the site's own categories** (from Rod's
+  "add firecrawl", after comparing a research answer with a run through the Firecrawl tools): a
+  `web` first pass and its reviewer may also use `mcp__firecrawl__firecrawl_search` and
+  `mcp__firecrawl__firecrawl_scrape` (`FIRECRAWL_TOOLS`, `WEB_ALLOWED_TOOLS`). The prompts say
+  WebFetch first, `firecrawl_scrape` for a page that refuses it, always with `proxy: "basic"`
+  (never "stealth", "enhanced" or "auto"), one page at a time, never an eBay URL through any tool,
+  and `firecrawl_search` like web search; a page Firecrawl is refused too is handled as a refused
+  page, as in 0.10.0. The prompt is the control for the proxy and for eBay through Firecrawl:
+  permission rules cannot see a tool's parameters. The reviewer's eBay handling and the belt
+  apply whichever tool fetched the page. Runs on gathered pages (a `sent` request, a second pass)
+  keep their tools and denials. The core's `DEFAULT_ALLOWED_TOOLS` is unchanged; the runner's
+  tool ceiling gains the two names in a parallel Rackbops/docket-runner PR, and a runner with no
+  Firecrawl key drops them.
+
+  The same release has a question about categories answered in **the best source's own
+  categories** -- BoardGameGeek's eight category rankings for board games (`BGG_CATEGORIES`) --
+  rather than invented genres, and a category with no qualifying entry answered "none yet" with
+  the reason. A web first pass gets a BGG advanced-search hint (`bggCategoryUrl`; the
+  `familyids[0]` ids as observed on 2026-10-18, not documented by BGG). The reviewer revises an
+  answer that invents categories where the source defines them. No core change and no host code
+  change.
 
 ## Use
 
