@@ -239,6 +239,18 @@ describe("the research type", () => {
 // --- The two runs through the lanes -----------------------------------------------------------
 
 describe("a research request", () => {
+  it("sends the draft when the reviewer approves without copying it back (t11, 2026-10-18)", async () => {
+    const bare: JobResult = { ...approved, structuredOutput: { verdict: "approve", problems: [] } }
+    const { executor } = scripted(researched, bare)
+    const { lanes, dms, share } = await setup(executor)
+    await share()
+    await lanes.tickExecute()
+    await lanes.tickExecute()
+    const text = dms()[0]?.message.text ?? ""
+    expect(text).toContain(DRAFT.summary)
+    expect(text).not.toContain("could not check")
+  })
+
   it("researches, then reviews, then DMs the owner and recipients and saves the findings", async () => {
     const { executor, specs } = scripted(researched, approved)
     const { store, lanes, task, larry, moe, share, dms, status } = await setup(executor)
@@ -510,11 +522,18 @@ describe("what the model returns", () => {
     expect(parseAnswer({ summary: "s" })).toBeNull()
     expect(parseReview({ verdict: "maybe", problems: [] })).toBeNull()
     expect(parseReview({ verdict: "approve", problems: [] })).toBeNull()
+    expect(parseReview({ verdict: "revise", problems: [] }, DRAFT)).toBeNull()
     expect(parseReview({ verdict: "reject", problems: ["p", 3] })).toEqual({
       verdict: "reject",
       problems: ["p"],
       answer: null,
     })
+  })
+
+  it("takes the draft on an approve whose answer is missing or unusable (t11, 2026-10-18)", () => {
+    const want = { verdict: "approve", problems: [], answer: parseAnswer(DRAFT) }
+    expect(parseReview({ verdict: "approve", problems: [] }, DRAFT)).toEqual(want)
+    expect(parseReview({ verdict: "approve", problems: [], answer: {} }, DRAFT)).toEqual(want)
   })
 
   it("accepts only http(s) URLs with no credentials", () => {

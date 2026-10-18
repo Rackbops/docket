@@ -490,8 +490,8 @@ export function reviewJob(
     ...(earlier ? updateChecks() : [...answerChecks(), ...categoryChecks()]),
     ...(earlier || sent ? [] : [...bestSourceChecks(canWait), ...firecrawlChecks()]),
     "",
-    "Then give a verdict: `approve` if the draft stands as is and covers every part (return it " +
-      "unchanged in `answer`); `revise` if it stands once corrected (return the corrected " +
+    "Then give a verdict: `approve` if the draft stands as is and covers every part (leave " +
+      "`answer` out: the draft is sent as it is); `revise` if it stands once corrected (return the corrected " +
       "answer in `answer`); `reject` if editing cannot fix it. List each problem you found in " +
       "`problems`, one line each.",
   ].join("\n")
@@ -662,7 +662,7 @@ function afterReview(
   output: unknown,
   canWait: boolean,
 ): Outcome {
-  const review = parseReview(output)
+  const review = parseReview(output, state.draft ?? undefined)
   if (!review) return failed(ctx, state, "malformed", "no usable verdict in the structured output")
   if (state.pass === 2) return afterUpdateReview(ctx, state, review)
   const title = clean(ctx.task.title, 200, true)
