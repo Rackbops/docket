@@ -219,8 +219,13 @@ export const REVIEW_SCHEMA = {
   required: ["verdict", "problems"],
 } as const
 
-/** The reviewer's verdict in `value`, cleaned, or null when it is not one. */
-export function parseReview(value: unknown): Review | null {
+/**
+ * The reviewer's verdict in `value`, cleaned, or null when it is not one. An `approve` whose
+ * `answer` is missing or unusable takes `draft`: approving says the draft stands, and the type
+ * sends the draft on approve anyway (a reviewer that skipped copying a long draft back failed
+ * twice on t11, 2026-10-18).
+ */
+export function parseReview(value: unknown, draft?: ResearchAnswer): Review | null {
   if (!isObj(value) || typeof value.verdict !== "string") return null
   const verdict = (VERDICTS as readonly string[]).includes(value.verdict)
     ? (value.verdict as Verdict)
@@ -231,8 +236,9 @@ export function parseReview(value: unknown): Review | null {
     .map((p) => clean(p, MAX_PROBLEM_CHARS, true))
     .filter((p) => p.length > 0)
     .slice(0, MAX_PROBLEMS)
-  const answer = parseAnswer(value.answer)
-  // Approve or revise without a usable answer is not a verdict the type can act on.
+  const answer = parseAnswer(value.answer) ?? (verdict === "approve" ? (draft ?? null) : null)
+  // Revise, or approve with no draft to fall back on, without a usable answer is not a verdict
+  // the type can act on.
   if (verdict !== "reject" && !answer) return null
   return { verdict, problems, answer: verdict === "reject" ? null : answer }
 }

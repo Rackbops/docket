@@ -662,7 +662,7 @@ function afterReview(
   output: unknown,
   canWait: boolean,
 ): Outcome {
-  const review = parseReview(output)
+  const review = parseReview(output, state.draft ?? undefined)
   if (!review) return failed(ctx, state, "malformed", "no usable verdict in the structured output")
   if (state.pass === 2) return afterUpdateReview(ctx, state, review)
   const title = clean(ctx.task.title, 200, true)

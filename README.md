@@ -168,6 +168,12 @@ epic is Rackbops/Tooling#816.
   `familyids[0]` ids as observed on 2026-10-18, not documented by BGG). The reviewer revises an
   answer that invents categories where the source defines them. No core change and no host code
   change.
+- **0.11.1 -- an approve without the draft copied back is still an approve** (t11, 2026-10-18):
+  the reviewer of a long eight-category draft twice returned `approve` with no `answer`, and
+  `parseReview` refused that as malformed, so the person got "could not check" instead of the
+  answer. The type already sends the draft on approve, so `parseReview(value, draft)` now uses
+  the draft when an `approve` carries no usable answer. A `revise` without one is still
+  malformed. No core change and no host code change; the tracker only needs the version bump.
 
 ## Use
 
