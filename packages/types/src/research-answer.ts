@@ -213,7 +213,7 @@ export const REVIEW_SCHEMA = {
     },
     answer: {
       ...ANSWER_SCHEMA,
-      description: "The answer to send: the draft unchanged on approve, corrected on revise.",
+      description: "The corrected answer, on revise only; left out on approve and reject.",
     },
   },
   required: ["verdict", "problems"],
