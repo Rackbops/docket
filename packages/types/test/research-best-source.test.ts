@@ -149,8 +149,8 @@ describe("the prompts the runs get, by whether a fuller pass can follow (0.10.0)
     expect(review).toContain('("I didn\'t check BoardGameGeek") is no answer: move it to `blocked`')
     expect(review).toContain("You may open BoardGameGeek like any site.")
     expect(review).toContain(
-      "a claim resting only on an eBay address came from a search listing, not a page anyone " +
-        "opened, so move it to `uncertain`",
+      "a claim resting only on an eBay address, whichever tool listed or fetched it, is not one " +
+        "an answer may rest on, so move it to `uncertain`",
     )
   })
 

@@ -36,6 +36,14 @@ import {
   WEB_DISALLOWED_TOOLS,
   withBarredSites,
 } from "./research-sources.js"
+import {
+  bggSearchHint,
+  categoryChecks,
+  categoryLines,
+  firecrawlChecks,
+  firecrawlLines,
+  WEB_ALLOWED_TOOLS,
+} from "./research-web.js"
 
 /**
  * Category 5 (plan section 1.2 row 5): "look into X and report back once". Execute lane, a `once`
@@ -87,6 +95,16 @@ import {
  * pass with `readSources`), a best source not opened goes in `blocked`, the reviewer adds one the
  * answer leans around, and the belt (`withBarredSites`) adds a barred site the answer or its draft
  * names as unread; elsewhere `blocked` is never shown, so the runs name it in `uncertain`.
+ *
+ * **Firecrawl** (0.11.0): a web first pass and its reviewer may also use the Firecrawl MCP tools
+ * (`WEB_ALLOWED_TOOLS`, `research-web.ts`): WebFetch first, `firecrawl_scrape` with
+ * `proxy: "basic"` for a page that refuses it, one page at a time, never an eBay URL. The tool
+ * rules cannot see parameters, so the prompt is the control for the proxy and for eBay through
+ * Firecrawl. Runs on gathered pages keep their tools and denials.
+ *
+ * **The site's own categories** (0.11.0): a question about categories is answered in the best
+ * source's own taxonomy (BoardGameGeek's eight category rankings for board games), a category
+ * with no qualifying entry as "none yet"; the reviewer revises an answer that invents its own.
  *
  * Failures (a usage limit never reaches `finish`: the dispatcher requeues the run):
  *
@@ -274,6 +292,14 @@ function disallowed(sent: boolean): string[] {
 }
 
 /**
+ * The runs' allowed tools (0.11.0): a web first pass adds the Firecrawl tools; a run on gathered
+ * pages, or a second pass, keeps the defaults.
+ */
+function allowed(webFirst: boolean): string[] {
+  return [...(webFirst ? WEB_ALLOWED_TOOLS : DEFAULT_ALLOWED_TOOLS)]
+}
+
+/**
  * The research run: the spike's prompt (docket-runner spike/cases.json, case `research`), with the
  * gathered pages when `pages` is given (`sources: "sent"`, or a second pass). With `earlier`, the
  * second pass (0.9.0): the answer already sent goes in as escaped JSON between markers, and the
@@ -287,6 +313,7 @@ export function researchJob(
 ): JobSpec {
   const canWait = options.canWait === true && pages === undefined && earlier === undefined
   const sent = pages !== undefined
+  const webFirst = !sent && earlier === undefined
   const prompt = [
     "You are researching a one-off question for a person, who will read your answer as a " +
       "Discord DM.",
@@ -304,8 +331,10 @@ export function researchJob(
         ]
       : []),
     ...partsLines(earlier !== undefined),
+    ...categoryLines(earlier !== undefined),
     "",
     ...bestSourceLines(sent, canWait),
+    ...(webFirst ? ["", ...firecrawlLines(), ...bggSearchHint()] : []),
     "",
     "Use web search and fetch pages to check facts. Prefer primary sources (manufacturers, " +
       "government, utilities, standards bodies). Every claim that a reader might act on needs a " +
@@ -333,7 +362,7 @@ export function researchJob(
   return {
     prompt,
     jsonSchema: ANSWER_SCHEMA as unknown as Record<string, unknown>,
-    allowedTools: [...DEFAULT_ALLOWED_TOOLS],
+    allowedTools: allowed(webFirst),
     disallowedTools: disallowed(sent),
     maxTurns: RESEARCH_MAX_TURNS,
     maxBudgetUsd: RESEARCH_MAX_BUDGET_USD,
@@ -396,8 +425,9 @@ function bestSourceLines(pages: boolean, canWait: boolean): string[] {
       ? "BoardGameGeek and eBay are not opened from this run: do not try. When the best source " +
         "is one of them and no gathered page is from it, or a page refused you (a 403, a " +
         "CAPTCHA or challenge page, an empty or blocked body, a sign-in wall)"
-      : "Open BoardGameGeek like any other site: an ordinary read, with nothing to get round a " +
-        "refusal. eBay is not opened from this run: do not try it. When the best source is " +
+      : "Open BoardGameGeek like any other site: an ordinary read, with nothing that disguises " +
+        "the request; a page that refuses WebFetch gets one more try through " +
+        "`firecrawl_scrape`, as below (0.11.0). eBay is not opened from this run: do not try it. When the best source is " +
         "eBay, or its page refused you (BoardGameGeek or any other: a 403, a CAPTCHA or " +
         "challenge page, an empty or blocked body, a sign-in wall)") +
       (canWait
@@ -457,8 +487,8 @@ export function reviewJob(
             "gathered pages cannot be checked: move it to `uncertain`.",
         ]
       : []),
-    ...(earlier ? updateChecks() : answerChecks()),
-    ...(earlier || sent ? [] : bestSourceChecks(canWait)),
+    ...(earlier ? updateChecks() : [...answerChecks(), ...categoryChecks()]),
+    ...(earlier || sent ? [] : [...bestSourceChecks(canWait), ...firecrawlChecks()]),
     "",
     "Then give a verdict: `approve` if the draft stands as is and covers every part (return it " +
       "unchanged in `answer`); `revise` if it stands once corrected (return the corrected " +
@@ -468,7 +498,7 @@ export function reviewJob(
   return {
     prompt,
     jsonSchema: REVIEW_SCHEMA as unknown as Record<string, unknown>,
-    allowedTools: [...DEFAULT_ALLOWED_TOOLS],
+    allowedTools: allowed(!sent && earlier === undefined),
     disallowedTools: disallowed(sent),
     maxTurns: REVIEW_MAX_TURNS,
     maxBudgetUsd: REVIEW_MAX_BUDGET_USD,
@@ -501,8 +531,8 @@ function answerChecks(): string[] {
  * BoardGameGeek like the research run. An answer that leans on secondary sources while the best
  * one is neither cited nor said to be missing is revised: with `canWait`, to list it in `blocked`,
  * so the person's browser can gather it; otherwise to name it in one short `uncertain` line, since
- * `blocked` is never shown there. A claim resting only on an eBay address came from a search
- * listing, never an opened page (no run opens eBay), so it moves to `uncertain`. Not asked on
+ * `blocked` is never shown there. A claim resting only on an eBay address moves to `uncertain`,
+ * whichever tool listed or fetched it (no run may open eBay; 0.11.0 names Firecrawl too). Not asked on
  * gathered pages (their own checks cover BGG and eBay) nor of an update.
  */
 function bestSourceChecks(canWait: boolean): string[] {
@@ -516,9 +546,10 @@ function bestSourceChecks(canWait: boolean): string[] {
           "page, never a guessed one, and why) and keep the answer from the sources it has."
         : "named in `uncertain`, the verdict is `revise`: add one short `uncertain` line naming " +
           "it, and keep the answer from the sources it has."),
-    "- You may open BoardGameGeek like any site. eBay is never opened by these runs: a claim " +
-      "resting only on an eBay address came from a search listing, not a page anyone opened, " +
-      "so move it to `uncertain`.",
+    "- You may open BoardGameGeek like any site. eBay is never opened by these runs, through " +
+      "any tool (WebFetch, Firecrawl or another): a claim resting only on an eBay address, " +
+      "whichever tool listed or fetched it, is not one an answer may rest on, so move it to " +
+      "`uncertain`.",
     ...(canWait
       ? [
           "- A page that refused is not read, so a claim must not say a source was checked " +
