@@ -9,6 +9,7 @@ import {
 import { money } from "./money.js"
 import { MISSES_BEFORE_TELLING } from "./price.js"
 import { BGG_ATTRIBUTION } from "./want-bgg.js"
+import { SHOPIFY_ATTRIBUTION } from "./want-shopify.js"
 import {
   type Listing,
   listingKey,
@@ -107,7 +108,12 @@ export function listingLine(l: Listing, config: WantConfig): string {
     ...(l.condition ? [inert(l.condition)] : []),
     ...(l.seller ? [`sold by ${inert(l.seller)}`] : []),
   ]
-  const via = config.source === "bgg" ? ` (${BGG_ATTRIBUTION})` : ""
+  const via =
+    config.source === "bgg"
+      ? ` (${BGG_ATTRIBUTION})`
+      : config.source === "shopify"
+        ? ` (${SHOPIFY_ATTRIBUTION})`
+        : ""
   return `- ${parts.join(" -- ")} <${l.url}>${via}`
 }
 
@@ -146,9 +152,11 @@ export function miss<S extends WantState>(
     const where =
       ctx.config.source === "bgg"
         ? "BoardGameGeek"
-        : ctx.config.source === "inbox"
-          ? "what was sent in"
-          : ctx.config.target
+        : ctx.config.source === "shopify"
+          ? "Shopify's store search"
+          : ctx.config.source === "inbox"
+            ? "what was sent in"
+            : ctx.config.target
     outcome.notify = {
       text: clip(
         `${ctx.task.title}: I could read no listings from ${where} ${misses === 1 ? "just now" : `${misses} times in a row`} (${reason}). ` +
@@ -199,14 +207,17 @@ export async function pollWant(
         ctx,
         state,
         new SourceUnavailableError(
-          `this bot has no ${ctx.config.source === "bgg" ? "BoardGameGeek access" : "such source"}`,
+          `this bot has no ${ctx.config.source === "bgg" ? "BoardGameGeek access" : ctx.config.source === "shopify" ? "Shopify search (no Firecrawl key)" : "such source"}`,
         ),
       ),
     }
   }
   let listings: Listing[]
   try {
-    listings = await source.search(ctx.config.target, ctx.ports.fetch)
+    listings = await source.search(ctx.config.target, ctx.ports.fetch, {
+      ...(ctx.config.maxPrice !== undefined ? { maxPrice: ctx.config.maxPrice } : {}),
+      ...(ctx.config.currency ? { currency: ctx.config.currency } : {}),
+    })
   } catch (err) {
     if (err instanceof SourceMiss) return { kind: "done", outcome: miss(ctx, state, err) }
     throw err
@@ -231,13 +242,14 @@ export function wantlistType(sources: Partial<Record<SourceId, Source>>): TaskTy
       options: [
         {
           name: "source",
-          description: "Where to look: page, bgg or inbox",
+          description: "Where to look: page, bgg, inbox or shopify",
           required: true,
           kind: "string",
         },
         {
           name: "target",
-          description: "The listing page's address, the BGG game, or the inbox's key",
+          description:
+            "The listing page's address, the BGG game, the inbox's key, or the words to search Shopify for",
           required: true,
           kind: "string",
         },

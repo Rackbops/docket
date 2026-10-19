@@ -159,11 +159,12 @@ export function judgeState(value: unknown): JudgeState {
  * tracker's own fenced reads reach every poll (the host's Fetch port checks its address after the name lookup);
  * a host a listing merely names is never granted, since the runner sits on roshne's network and a
  * shop's data could name a private one (`nas.lan`). A listing elsewhere is judged from its own
- * text. Never an address, never eBay, and nothing for an `inbox` watch.
+ * text. Never an address, never eBay, and nothing for an `inbox` or `shopify` watch.
  */
 export function judgeHosts(pending: readonly Listing[], config: WantConfig): string[] {
-  // Sent-in listings come from sites the tracker never reads (eBay, BGG): nothing is opened.
-  if (config.source === "inbox") return []
+  // Sent-in listings come from sites the tracker never reads (eBay, BGG): nothing is opened. Shopify's
+  // come from any store, none of which the tracker itself reads: judged from their own text.
+  if (config.source === "inbox" || config.source === "shopify") return []
   let home: string
   try {
     home = config.source === "bgg" ? BGG_HOST : new URL(config.target).hostname.toLowerCase()
@@ -214,9 +215,11 @@ export function judgeJob(title: string, config: WantConfig, pending: readonly Li
   const where =
     config.source === "bgg"
       ? "BoardGameGeek's marketplace"
-      : config.source === "inbox"
-        ? "alert emails and searches sent in for them (from eBay, BoardGameGeek or a shop)"
-        : "a shop page they gave"
+      : config.source === "shopify"
+        ? "a search of Shopify stores' catalogs (new copies in stock)"
+        : config.source === "inbox"
+          ? "alert emails and searches sent in for them (from eBay, BoardGameGeek or a shop)"
+          : "a shop page they gave"
   const lines = pending.map((l, i) => {
     const parts = [
       inert(l.title),

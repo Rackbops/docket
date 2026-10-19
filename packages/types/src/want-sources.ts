@@ -6,7 +6,7 @@ import { safeUrl } from "./research-answer.js"
 /**
  * The want-list watcher's sources (category 2, plan 1.2 row 2; rackbops-bot-plugins#83): where a
  * wanted thing's listings come from, behind one port so the type (wantlist.ts) knows none of
- * them. Two read listings:
+ * them. Each reads listings:
  *
  * - `page` (here): a listing or search page the owner pasted (roshne, 2026-10-04, "Pages too"), read
  *   through the fenced Fetch port as `/price` reads a product page, and only its structured data --
@@ -19,6 +19,9 @@ import { safeUrl } from "./research-answer.js"
  *   a site sent the owner and they forwarded, or listings the owner's own browser found while they
  *   ran it (`inboxSource`). The host keeps each watch's inbox (its `target` is the inbox's key) and
  *   hands back what arrived; every field is untrusted and cleaned here (`submittedListing`).
+ *
+ * - `shopify` (want-shopify.ts): new copies in stock at Shopify stores, from Shopify's catalog
+ *   search through Firecrawl, run by the host with its Firecrawl key (0.12.0).
  *
  * eBay is a third answer, not a source: the tracker never reads eBay (no API, no pages); `/want`
  * hands the owner an eBay search to save on eBay, whose own alerts do the watching (the tracker plugin's `/want`).
@@ -35,13 +38,19 @@ export interface Listing {
   seller?: string
 }
 
-export type SourceId = "page" | "bgg" | "inbox"
-export const SOURCE_IDS: readonly SourceId[] = ["page", "bgg", "inbox"]
+export type SourceId = "page" | "bgg" | "inbox" | "shopify"
+export const SOURCE_IDS: readonly SourceId[] = ["page", "bgg", "inbox", "shopify"]
+
+/** The watch's own limits, for a source that can narrow its search by them (Shopify's); the type still checks every listing against them. */
+export interface SearchLimits {
+  maxPrice?: number
+  currency?: string
+}
 
 export interface Source {
   id: SourceId
   /** The listings at `target` now; throws `SourceMiss` for a read that counts as a miss. */
-  search(target: string, fetch: Fetch | undefined): Promise<Listing[]>
+  search(target: string, fetch: Fetch | undefined, limits?: SearchLimits): Promise<Listing[]>
 }
 
 /** A read that found nothing usable (an error page, no structured data, a busy API): the type counts it. */
