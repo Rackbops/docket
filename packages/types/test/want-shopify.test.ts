@@ -16,6 +16,7 @@ import {
   shopifySource,
   type WantConfig,
   wantlistType,
+  withinLimits,
 } from "../src/index.js"
 
 /**
@@ -304,6 +305,12 @@ describe("a Shopify watch", () => {
     expect(first.notify?.text).not.toContain("Barnes")
     const again = await type.run(ctx(first.state))
     expect(again.notify).toBeUndefined()
+  })
+
+  it("keeps a listing in the watch's currency however the watch spells it", () => {
+    const [l] = parseShopifyAnswer(answer([STONEMAIER]), QUERY)
+    expect(l && withinLimits(l, { ...config, currency: "usd" })).toBe(true)
+    expect(l && withinLimits(l, { ...config, currency: "EUR" })).toBe(false)
   })
 
   it("counts a bot without Shopify search as a miss, and says so at once", async () => {

@@ -24,7 +24,7 @@ import {
  * country filter is Shopify's, and leaky (stores abroad still appear, priced in the asked currency).
  *
  * The answer is untrusted shop text: every field is capped and cleaned, an address is kept only as
- * an absolute http(s) one without Shopify's per-view parameters, and the walk is bounded.
+ * an absolute http(s) one with no fragment and no query parameter but `variant`, and the walk is bounded.
  */
 
 export const SHOPIFY_PROVIDER = "shopify"
@@ -59,7 +59,7 @@ export interface ShopifySearch extends SearchLimits {
   query: string
 }
 
-/** The request for a search: in stock, at or under the top price (minor units, rounded down), in USD unless the watch names a currency. Pure. */
+/** The request for a search: in stock, at or under the top price (minor units, rounded down), in USD unless the watch names a valid three-letter code. Pure. */
 export function shopifyRequest(s: ShopifySearch): ShopifyRequest {
   const asked = (s.currency ?? "").trim().toUpperCase()
   const currency = /^[A-Z]{3}$/.test(asked) ? asked : SHOPIFY_CURRENCY
@@ -92,7 +92,7 @@ export function shopifyQuery(query: string): string {
   return (space > 0 ? cut.slice(0, space) : line.slice(0, QUERY_CHARS)).trim()
 }
 
-/** Letters and digits, lower-cased, accents folded ("Pokemon" is "Pokémon"). */
+/** Letters and digits, lower-cased, accents folded (an accented "e" matches a plain one). */
 function wordsOf(text: string): string[] {
   return (
     text
@@ -183,7 +183,7 @@ export function parseShopifyAnswer(body: unknown, query: string): Listing[] {
   for (const product of data.products.slice(0, SHOPIFY_LIMIT)) {
     if (out.length >= MAX_LISTINGS) break
     if (!isObj(product) || typeof product.title !== "string") continue
-    // Matched on the whole title, before it is cut for the DM.
+    // Matched on the title before it is cut for the DM (its first 2,000 characters).
     if (!matchesWords(product.title.slice(0, 2_000), words)) continue
     const title = clean(product.title, TITLE_CHARS, true)
     if (!title) continue

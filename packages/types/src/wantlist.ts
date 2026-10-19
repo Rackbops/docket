@@ -87,9 +87,10 @@ export function wantState(value: unknown): WantState {
   }
 }
 
-/** Whether a listing is within the owner's limits: an unknown price never passes a top price. */
+/** Whether a listing is within the owner's limits: an unknown price never passes a top price; currencies compare without case. */
 export function withinLimits(l: Listing, config: WantConfig): boolean {
-  if (config.currency && l.currency && l.currency !== config.currency) return false
+  const want = config.currency?.trim().toUpperCase()
+  if (want && l.currency && l.currency.toUpperCase() !== want) return false
   if (config.maxPrice === undefined) return true
   return l.price !== undefined && l.price <= config.maxPrice + 1e-9
 }
