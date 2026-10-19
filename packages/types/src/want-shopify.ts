@@ -20,7 +20,7 @@ import {
  * price when one is set (Shopify's own `filters`, in minor units). Shopify's search is loose -- it
  * returns related products too -- so a product is kept only when every word of the watch's search
  * is in its title (`matchesWords`). Only a variant that is available, and new or unmarked, is a
- * listing: the catalog sells new copies, and a used one is not what this source is for. The
+ * listing (a variant whose condition is unmarked is taken as new): the catalog sells new copies. The
  * country filter is Shopify's, and leaky (stores abroad still appear, priced in the asked currency).
  *
  * The answer is untrusted shop text: every field is capped and cleaned, an address is kept only as
@@ -61,15 +61,18 @@ export interface ShopifySearch extends SearchLimits {
 
 /** The request for a search: in stock, at or under the top price (minor units, rounded down), in USD unless the watch names a currency. Pure. */
 export function shopifyRequest(s: ShopifySearch): ShopifyRequest {
+  const asked = (s.currency ?? "").trim().toUpperCase()
+  const currency = /^[A-Z]{3}$/.test(asked) ? asked : SHOPIFY_CURRENCY
   const filters: ShopifyRequest["options"]["filters"] = { available: true }
-  if (s.maxPrice !== undefined) filters.price = { max: Math.floor(s.maxPrice * 100 + 1e-6) }
+  if (s.maxPrice !== undefined && Number.isFinite(s.maxPrice) && s.maxPrice >= 0)
+    filters.price = { max: Math.floor(s.maxPrice * minorUnits(currency) + 1e-6) }
   return {
     provider: SHOPIFY_PROVIDER,
     capability: SHOPIFY_CAPABILITY,
     options: {
-      query: clean(s.query, 200, true),
+      query: shopifyQuery(s.query),
       country: SHOPIFY_COUNTRY,
-      currency: s.currency ?? SHOPIFY_CURRENCY,
+      currency,
       limit: SHOPIFY_LIMIT,
       filters,
     },
@@ -79,18 +82,39 @@ export function shopifyRequest(s: ShopifySearch): ShopifyRequest {
 type Json = Record<string, unknown>
 const isObj = (v: unknown): v is Json => typeof v === "object" && v !== null && !Array.isArray(v)
 
-/** The words a title must hold: letters and digits, lower-cased, in any order. */
+/** The words as sent to Shopify: one line, at most `QUERY_CHARS` and cut at a word, never with an ellipsis. */
+const QUERY_CHARS = 200
+export function shopifyQuery(query: string): string {
+  const line = clean(query, 10_000, true)
+  if (line.length <= QUERY_CHARS) return line
+  const cut = line.slice(0, QUERY_CHARS + 1)
+  const space = cut.lastIndexOf(" ")
+  return (space > 0 ? cut.slice(0, space) : line.slice(0, QUERY_CHARS)).trim()
+}
+
+/** Letters and digits, lower-cased, accents folded ("Pokemon" is "Pokémon"). */
+function wordsOf(text: string): string[] {
+  return (
+    text
+      .normalize("NFKD")
+      .replace(/\p{M}+/gu, "")
+      .toLowerCase()
+      .match(/[\p{L}\p{N}]+/gu) ?? []
+  )
+}
+
+/** The words a title must hold: those of the query as sent, in any order. */
 export function searchWords(query: string): string[] {
-  return [...new Set(query.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? [])]
+  return [...new Set(wordsOf(shopifyQuery(query)))]
 }
 
 /** Whether `title` holds every one of `words` as a whole word. Pure. */
 export function matchesWords(title: string, words: readonly string[]): boolean {
-  const have = new Set(title.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? [])
+  const have = new Set(wordsOf(title))
   return words.every((w) => have.has(w))
 }
 
-/** A variant's address without Shopify's per-search parameters (`_gsid`, the `utm_*` family), keeping `variant`. */
+/** A variant's address with no fragment and no query parameter but `variant`: Shopify adds per-search ones (`_gsid`, the `utm_*` family), and a listing must keep one id. */
 function listingUrl(raw: unknown): string | null {
   if (typeof raw !== "string") return null
   let u: URL
@@ -105,6 +129,18 @@ function listingUrl(raw: unknown): string | null {
   return safeUrl(u.toString())
 }
 
+/** ISO 4217 currencies whose minor unit is not a hundredth: none (JPY, KRW, ...) or a thousandth (KWD, ...). */
+const ZERO_DECIMAL = new Set(
+  "BIF CLP DJF GNF ISK JPY KMF KRW PYG RWF UGX UYI VND VUV XAF XOF XPF".split(" "),
+)
+const THREE_DECIMAL = new Set("BHD IQD JOD KWD LYD OMR TND".split(" "))
+
+/** How many minor units make one of `currency` (100 for USD, 1 for JPY, 1000 for KWD). */
+export function minorUnits(currency: string): number {
+  const c = currency.toUpperCase()
+  return ZERO_DECIMAL.has(c) ? 1 : THREE_DECIMAL.has(c) ? 1000 : 100
+}
+
 /** A price object `{ amount, currency }` in minor units, as a value and a code; null without both. */
 function priceOf(v: unknown): { value: number; currency: string } | null {
   if (!isObj(v)) return null
@@ -112,14 +148,15 @@ function priceOf(v: unknown): { value: number; currency: string } | null {
   const currency = typeof v.currency === "string" ? v.currency.trim().toUpperCase() : ""
   if (typeof amount !== "number" || !Number.isFinite(amount) || amount < 0) return null
   if (!/^[A-Z]{3}$/.test(currency)) return null
-  return { value: Math.round(amount) / 100, currency }
+  return { value: Math.round(amount) / minorUnits(currency), currency }
 }
 
+/** New when unmarked, or when every condition it names is "new": anything else (used, refurbished, a shape not known) is not. */
 function isNew(variant: Json): boolean {
   const c = variant.condition
-  if (c === undefined) return true
-  const all = (Array.isArray(c) ? c : [c]).filter((x): x is string => typeof x === "string")
-  return all.length === 0 || all.some((x) => x.toLowerCase() === "new")
+  if (c === undefined || c === null) return true
+  const all = Array.isArray(c) ? c : [c]
+  return all.every((x) => typeof x === "string" && x.trim().toLowerCase() === "new")
 }
 
 /**
@@ -146,15 +183,18 @@ export function parseShopifyAnswer(body: unknown, query: string): Listing[] {
   for (const product of data.products.slice(0, SHOPIFY_LIMIT)) {
     if (out.length >= MAX_LISTINGS) break
     if (!isObj(product) || typeof product.title !== "string") continue
+    // Matched on the whole title, before it is cut for the DM.
+    if (!matchesWords(product.title.slice(0, 2_000), words)) continue
     const title = clean(product.title, TITLE_CHARS, true)
-    if (!title || !matchesWords(title, words)) continue
+    if (!title) continue
     const variants = Array.isArray(product.variants) ? product.variants.slice(0, MAX_VARIANTS) : []
     for (const v of variants) {
       if (out.length >= MAX_LISTINGS) break
-      if (!isObj(v) || typeof v.id !== "string" || !isNew(v)) continue
+      // The id is kept whole (it is hashed for the state), so two variants never share one.
+      if (!isObj(v) || typeof v.id !== "string" || v.id.length > 300 || !isNew(v)) continue
       if (!isObj(v.availability) || v.availability.available !== true) continue
       const url = listingUrl(v.url)
-      const id = `shopify:${clean(v.id, 120, true)}`
+      const id = `shopify:${v.id}`
       if (!url || seen.has(id)) continue
       seen.add(id)
       const own = typeof v.title === "string" ? clean(v.title, TITLE_CHARS, true) : ""
@@ -192,7 +232,7 @@ export function shopifySource(scrape: ShopifyScrape): Source {
         ;({ status, body } = await scrape(shopifyRequest({ query: target, ...limits })))
       } catch (err) {
         throw new SourceMiss(
-          `Shopify could not be searched: ${err instanceof Error ? err.message : String(err)}`,
+          `Shopify could not be searched: ${clean(err instanceof Error ? err.message : String(err), 200, true)}`,
           { cause: err },
         )
       }

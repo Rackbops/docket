@@ -2,6 +2,7 @@ import type { Occurrence, RunContext, Task, User } from "@rackbops/docket-core"
 import { describe, expect, it } from "vitest"
 import {
   judgeHosts,
+  judgeJob,
   matchesWords,
   parseShopifyAnswer,
   renderWant,
@@ -100,6 +101,33 @@ describe("shopifyRequest", () => {
     })
   })
 
+  it("counts a top price in the currency's own minor units, and skips a top price that is not a price", () => {
+    expect(shopifyRequest({ query: QUERY, maxPrice: 5000, currency: "jpy" }).options).toMatchObject(
+      {
+        currency: "JPY",
+        filters: { price: { max: 5000 } },
+      },
+    )
+    expect(
+      shopifyRequest({ query: QUERY, maxPrice: 1.5, currency: "KWD" }).options.filters,
+    ).toEqual({
+      available: true,
+      price: { max: 1500 },
+    })
+    expect(shopifyRequest({ query: QUERY, maxPrice: Number.NaN }).options.filters).toEqual({
+      available: true,
+    })
+    expect(shopifyRequest({ query: QUERY, currency: "dollars" }).options.currency).toBe("USD")
+  })
+
+  it("sends a long search cut at a word, and asks titles for only the words sent", () => {
+    const long = `${"wingspan ".repeat(30)}oceania`
+    const q = shopifyRequest({ query: long }).options.query
+    expect(q.length).toBeLessThanOrEqual(200)
+    expect(q.endsWith("wingspan")).toBe(true)
+    expect(searchWords(long)).toEqual(["wingspan"])
+  })
+
   it("leaves the price filter out without a top price, and asks in the watch's currency", () => {
     const r = shopifyRequest({ query: QUERY, currency: "CAD" })
     expect(r.options.filters).toEqual({ available: true })
@@ -115,6 +143,8 @@ describe("searchWords and matchesWords", () => {
     expect(matchesWords("Oceania Expansion for WINGSPAN!", words)).toBe(true)
     expect(matchesWords("Wingspan (base game)", words)).toBe(false)
     expect(matchesWords("Wingspan Oceanian Expansions", words)).toBe(false)
+    expect(matchesWords("Pokémon TCG", searchWords("pokemon tcg"))).toBe(true)
+    expect(matchesWords(`${"x ".repeat(100)}Wingspan Oceania Expansion`, words)).toBe(true)
   })
 })
 
@@ -148,6 +178,8 @@ describe("parseShopifyAnswer", () => {
       variants: [
         variant({ id: "a", availability: { available: false } }),
         variant({ id: "b", condition: ["used"] }),
+        variant({ id: "b2", condition: ["refurbished", "new"] }),
+        variant({ id: "b3", condition: [{ label: "Used" }] }),
         variant({ id: "c", url: "javascript:alert(1)" }),
         variant({ id: "d", url: "/relative" }),
         variant({ id: "e" }),
@@ -169,6 +201,17 @@ describe("parseShopifyAnswer", () => {
       "Wingspan: Oceania Expansion (Deluxe)",
       "Wingspan: Oceania Expansion",
     ])
+  })
+
+  it("reads a zero-decimal currency's amount as whole units", () => {
+    const product = {
+      title: "Wingspan Oceania Expansion",
+      variants: [variant({ price: { amount: 4800, currency: "JPY" } })],
+    }
+    expect(parseShopifyAnswer(answer([product]), QUERY)[0]).toMatchObject({
+      price: 4800,
+      currency: "JPY",
+    })
   })
 
   it("keeps a listing without a price, and an empty search as no listings", () => {
@@ -272,6 +315,10 @@ describe("a Shopify watch", () => {
   it("opens no store for the judge", () => {
     const listing = parseShopifyAnswer(answer([STONEMAIER]), QUERY)
     expect(judgeHosts(listing, config)).toEqual([])
+    const job = judgeJob(QUERY, config, listing)
+    expect(job.allowedTools).toEqual([])
+    expect(job.disallowedTools).toContain("WebFetch")
+    expect(job.prompt).toContain("You cannot open any page")
     expect(renderWant(QUERY, "t7", listing, config)).toContain("(via Shopify)")
   })
 })

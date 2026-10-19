@@ -170,6 +170,7 @@ export {
 } from "./want-bgg.js"
 export {
   matchesWords,
+  minorUnits,
   parseShopifyAnswer,
   SHOPIFY_ATTRIBUTION,
   SHOPIFY_CAPABILITY,
@@ -182,6 +183,7 @@ export {
   type ShopifyScrape,
   type ShopifySearch,
   searchWords,
+  shopifyQuery,
   shopifyRequest,
   shopifySource,
 } from "./want-shopify.js"

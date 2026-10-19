@@ -178,7 +178,8 @@ epic is Rackbops/Tooling#816.
   daily"): a fourth want-list source, `shopify`, for new copies in stock at Shopify stores. Each
   look is one Shopify catalog search through Firecrawl's Alexandria (`catalog/search_catalog`, 5
   credits), in stock only and narrowed by the watch's top price; a product counts only when every
-  word of the watch's search is in its title, and only its available new variants are listings.
+  word of the watch's search is in its title, and only its available variants that are new (or
+  unmarked) are listings.
   `Source.search` takes the watch's limits as an optional third argument (additive). The host
   runs the request with its own Firecrawl key (`ShopifyScrape`); docket opens nothing. No core
   change.

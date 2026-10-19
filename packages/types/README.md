@@ -221,7 +221,9 @@ host:
 - `shopifySource(scrape)` gets a `scrape(request)` that sends `request` as the `alexandria` field
   of Firecrawl's `POST https://api.firecrawl.dev/v2/scrape` with the host's own key, and hands back
   the HTTP status and the parsed JSON body (bounded in time and size). The watch's `target` is
-  the words to search for; its top price and currency narrow the search itself;
+  the words to search for; its top price and currency narrow the search itself. Each look is
+  paid for (5 credits), and the type sets no floor on how often a `poll` runs, so the host keeps
+  a Shopify watch's interval long (the tracker's floor is a day);
 - its Fetch port reaches only public addresses, checked after the name lookup: the judge grants
   the runner WebFetch on the watch's own host only because the host's reads already reach it;
 - `bggSource` gets a Fetch that hands back the body as sent and follows no redirect, so BGG's
