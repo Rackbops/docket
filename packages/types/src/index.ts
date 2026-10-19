@@ -169,6 +169,25 @@ export {
   parseMarketplace,
 } from "./want-bgg.js"
 export {
+  matchesWords,
+  minorUnits,
+  parseShopifyAnswer,
+  SHOPIFY_ATTRIBUTION,
+  SHOPIFY_CAPABILITY,
+  SHOPIFY_COUNTRY,
+  SHOPIFY_CREDITS,
+  SHOPIFY_CURRENCY,
+  SHOPIFY_LIMIT,
+  SHOPIFY_PROVIDER,
+  type ShopifyRequest,
+  type ShopifyScrape,
+  type ShopifySearch,
+  searchWords,
+  shopifyQuery,
+  shopifyRequest,
+  shopifySource,
+} from "./want-shopify.js"
+export {
   inboxSource,
   isEbayHost,
   type Listing,
@@ -179,6 +198,7 @@ export {
   pageSource,
   type ReadInbox,
   readListings,
+  type SearchLimits,
   SOURCE_IDS,
   type Source,
   type SourceId,

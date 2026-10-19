@@ -174,6 +174,15 @@ epic is Rackbops/Tooling#816.
   answer. The type already sends the draft on approve, so `parseReview(value, draft)` now uses
   the draft when an `approve` carries no usable answer. A `revise` without one is still
   malformed. No core change and no host code change; the tracker only needs the version bump.
+- **0.12.0 -- Shopify for want-list watches** (Rod, 2026-10-19: "add Shopify to watches,
+  daily"): a fourth want-list source, `shopify`, for new copies in stock at Shopify stores. Each
+  look is one Shopify catalog search through Firecrawl's Alexandria (`catalog/search_catalog`, 5
+  credits), in stock only and narrowed by the watch's top price; a product counts only when every
+  word of the watch's search is in its title, and only its available variants that are new (or
+  unmarked) are listings.
+  `Source.search` takes the watch's limits as an optional third argument (additive). The host
+  runs the request with its own Firecrawl key (`ShopifyScrape`); docket opens nothing. No core
+  change.
 
 ## Use
 

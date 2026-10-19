@@ -201,7 +201,9 @@ The tracker's task types, built on `@rackbops/docket-core`'s contract. Shipped s
   Fetch port, never eBay), `bggSource` (BGG's XML API, with the host's token) and `inboxSource`
   (listings the host stored for the watch's inbox key: alert emails, or searches someone ran in
   their own browser and sent in; `submittedListing` cleans each one, and the judge opens no
-  page for such a watch).
+  page for such a watch) and `shopifySource` (new copies in stock at Shopify stores, from
+  Shopify's catalog search through Firecrawl's Alexandria, 5 credits a look; a product counts only
+  when every word of the search is in its title, and the judge opens no store for it).
 - `wantjudge` (category 2, plan 5.4, item 63): the same watch on the execute lane. New listings
   are read in plain code (no charge), then one Job has the model judge each one and its seller
   (WebFetch only on the watch's own host, never WebSearch or the runner's files; 12 turns,
@@ -216,6 +218,12 @@ host:
 
 - its Fetch port refuses any hop to eBay when a read carries the `NEVER_EBAY` header, and does
   not send that header on;
+- `shopifySource(scrape)` gets a `scrape(request)` that sends `request` as the `alexandria` field
+  of Firecrawl's `POST https://api.firecrawl.dev/v2/scrape` with the host's own key, and hands back
+  the HTTP status and the parsed JSON body (bounded in time and size). The watch's `target` is
+  the words to search for; its top price and currency narrow the search itself. Each look is
+  paid for (5 credits), and the type sets no floor on how often a `poll` runs, so the host keeps
+  a Shopify watch's interval long (the tracker's floor is a day);
 - its Fetch port reaches only public addresses, checked after the name lookup: the judge grants
   the runner WebFetch on the watch's own host only because the host's reads already reach it;
 - `bggSource` gets a Fetch that hands back the body as sent and follows no redirect, so BGG's
@@ -230,7 +238,7 @@ host:
 
 ```ts
 import { TASK_TYPES, reminder, renewal, price, research, scout, TYPE_IDS, isTypeId } from "@rackbops/docket-types"
-import { bggSource, inboxSource, pageSource, wantjudgeType, wantlistType } from "@rackbops/docket-types"
+import { bggSource, inboxSource, pageSource, shopifySource, wantjudgeType, wantlistType } from "@rackbops/docket-types"
 ```
 
 `TASK_TYPES` is every shipped type keyed by id, ready for the dispatcher. Every type is declared
