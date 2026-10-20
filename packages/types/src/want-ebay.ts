@@ -142,8 +142,11 @@ export function parseEbayAnswer(body: unknown, query: string): Listing[] {
     if (!matchesWords(item.title.slice(0, 2_000), words)) continue
     const title = clean(item.title, TITLE_CHARS, true)
     const url = itemUrl(item.itemWebUrl)
-    if (!title || !url || item.itemId.length > 120 || seen.has(item.itemId)) continue
+    // One listing's variations share its `/itm/<number>`: the first stands for them all.
+    if (!title || !url || item.itemId.length > 120 || seen.has(item.itemId) || seen.has(url))
+      continue
     seen.add(item.itemId)
+    seen.add(url)
     const options = Array.isArray(item.buyingOptions) ? item.buyingOptions : []
     const auction = options.includes("AUCTION")
     const buyNow = options.includes("FIXED_PRICE")

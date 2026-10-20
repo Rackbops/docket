@@ -143,6 +143,7 @@ describe("the eBay answer", () => {
         item({ itemId: "d", itemWebUrl: "https://www.ebay.com/sch/i.html?_nkw=wingspan" }),
         item({ itemId: "e" }),
         item({ itemId: "e" }),
+        item({ itemId: "e2" }),
         item({
           itemId: "f",
           title: "WINGSPAN: Océania Expansion",
@@ -234,7 +235,11 @@ describe("an eBay watch", () => {
   }
 
   it("DMs the new listings within the limits, via eBay, once", async () => {
-    const pricey = item({ itemId: "p", price: { value: "80.00", currency: "USD" } })
+    const pricey = item({
+      itemId: "p",
+      itemWebUrl: "https://www.ebay.com/itm/999456789012",
+      price: { value: "80.00", currency: "USD" },
+    })
     const type = wantlistType({ ebay: browse(200, answer([item(), pricey])).source })
     const first = await type.run(ctx())
     expect(first.summary).toBe("2 listed, 1 within limits, 1 new")

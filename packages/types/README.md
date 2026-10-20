@@ -231,8 +231,8 @@ host:
   and an application token (client credentials, scope `https://api.ebay.com/oauth/api_scope`) from
   the host's own eBay keys, and hands back the HTTP status and the parsed JSON body (bounded in
   time and size). The watch's `target` is the words to search for. eBay's API License wants
-  listing data shown no more than six hours old, so the host keeps an eBay watch's interval
-  under that;
+  listing data shown no more than six hours old: a plain watch DMs what it read at once, and a
+  judged one once the model has looked;
 - its Fetch port reaches only public addresses, checked after the name lookup: the judge grants
   the runner WebFetch on the watch's own host only because the host's reads already reach it;
 - `bggSource` gets a Fetch that hands back the body as sent and follows no redirect, so BGG's
