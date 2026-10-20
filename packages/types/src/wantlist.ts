@@ -9,6 +9,7 @@ import {
 import { money } from "./money.js"
 import { MISSES_BEFORE_TELLING } from "./price.js"
 import { BGG_ATTRIBUTION } from "./want-bgg.js"
+import { EBAY_ATTRIBUTION } from "./want-ebay.js"
 import { SHOPIFY_ATTRIBUTION } from "./want-shopify.js"
 import {
   type Listing,
@@ -56,6 +57,23 @@ export interface WantState {
 
 export const MAX_REPORTED = 500
 export const SHOWN_IN_DM = 5
+
+/**
+ * Whether a watch keeps its listings as findings. An eBay API watch keeps none (Rod, 2026-10-20,
+ * the account-deletion card): eBay's API License wants shown listing data at most six hours old
+ * and seller names deleted on eBay's notice, and an app may opt out of those notices only when it
+ * keeps no eBay data. Its state still remembers each listing told, as a digest of its id only.
+ */
+export function keepsFindings(config: WantConfig): boolean {
+  return config.source !== "ebay"
+}
+
+/** The DM's last line when more listings are new than it shows. */
+export function moreLine(more: number, taskId: string, config: WantConfig): string {
+  return keepsFindings(config)
+    ? `...and ${more} more: \`/task history ${taskId}\` lists them all.`
+    : `...and ${more} more, not kept here: eBay's own search shows them.`
+}
 /** New listings taken in one run, DMed and kept as findings; any more wait for the next run. */
 export const MAX_NEW_PER_RUN = 20
 
@@ -114,7 +132,9 @@ export function listingLine(l: Listing, config: WantConfig): string {
       ? ` (${BGG_ATTRIBUTION})`
       : config.source === "shopify"
         ? ` (${SHOPIFY_ATTRIBUTION})`
-        : ""
+        : config.source === "ebay"
+          ? ` (${EBAY_ATTRIBUTION})`
+          : ""
   return `- ${parts.join(" -- ")} <${l.url}>${via}`
 }
 
@@ -128,10 +148,7 @@ export function renderWant(
     `${title}: ${fresh.length === 1 ? "a new listing" : `${fresh.length} new listings`}.`,
   ]
   for (const l of fresh.slice(0, SHOWN_IN_DM)) lines.push(listingLine(l, config))
-  if (fresh.length > SHOWN_IN_DM)
-    lines.push(
-      `...and ${fresh.length - SHOWN_IN_DM} more: \`/task history ${taskId}\` lists them all.`,
-    )
+  if (fresh.length > SHOWN_IN_DM) lines.push(moreLine(fresh.length - SHOWN_IN_DM, taskId, config))
   lines.push("Press Done once you have it, and I stop looking.")
   return clip(lines.join("\n"))
 }
@@ -155,9 +172,11 @@ export function miss<S extends WantState>(
         ? "BoardGameGeek"
         : ctx.config.source === "shopify"
           ? "Shopify's store search"
-          : ctx.config.source === "inbox"
-            ? "what was sent in"
-            : ctx.config.target
+          : ctx.config.source === "ebay"
+            ? "eBay's search"
+            : ctx.config.source === "inbox"
+              ? "what was sent in"
+              : ctx.config.target
     outcome.notify = {
       text: clip(
         `${ctx.task.title}: I could read no listings from ${where} ${misses === 1 ? "just now" : `${misses} times in a row`} (${reason}). ` +
@@ -208,7 +227,7 @@ export async function pollWant(
         ctx,
         state,
         new SourceUnavailableError(
-          `this bot has no ${ctx.config.source === "bgg" ? "BoardGameGeek access" : ctx.config.source === "shopify" ? "Shopify search (no Firecrawl key)" : "such source"}`,
+          `this bot has no ${ctx.config.source === "bgg" ? "BoardGameGeek access" : ctx.config.source === "shopify" ? "Shopify search (no Firecrawl key)" : ctx.config.source === "ebay" ? "eBay search (no eBay keys)" : "such source"}`,
         ),
       ),
     }
@@ -243,14 +262,14 @@ export function wantlistType(sources: Partial<Record<SourceId, Source>>): TaskTy
       options: [
         {
           name: "source",
-          description: "Where to look: page, bgg, inbox or shopify",
+          description: "Where to look: page, bgg, inbox, shopify or ebay",
           required: true,
           kind: "string",
         },
         {
           name: "target",
           description:
-            "The listing page's address, the BGG game, the inbox's key, or the words to search Shopify for",
+            "The page's address, the BGG game, the inbox's key, or the words to search Shopify or eBay for",
           required: true,
           kind: "string",
         },
@@ -282,7 +301,9 @@ export function wantlistType(sources: Partial<Record<SourceId, Source>>): TaskTy
           text: renderWant(ctx.task.title, ctx.task.id, fresh, ctx.config),
           actions: ["done"],
         },
-        findings: fresh.map((l) => listingFinding(l, ctx.config, priceText(l, ctx.config))),
+        ...(keepsFindings(ctx.config)
+          ? { findings: fresh.map((l) => listingFinding(l, ctx.config, priceText(l, ctx.config))) }
+          : {}),
         summary,
       }
     },

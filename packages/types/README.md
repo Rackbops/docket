@@ -203,7 +203,9 @@ The tracker's task types, built on `@rackbops/docket-core`'s contract. Shipped s
   their own browser and sent in; `submittedListing` cleans each one, and the judge opens no
   page for such a watch) and `shopifySource` (new copies in stock at Shopify stores, from
   Shopify's catalog search through Firecrawl's Alexandria, 5 credits a look; a product counts only
-  when every word of the search is in its title, and the judge opens no store for it).
+  when every word of the search is in its title, and the judge opens no store for it) and
+  `ebaySource` (eBay listings from eBay's own Browse API, with the host's eBay app token; the
+  judge opens no eBay page for it).
 - `wantjudge` (category 2, plan 5.4, item 63): the same watch on the execute lane. New listings
   are read in plain code (no charge), then one Job has the model judge each one and its seller
   (WebFetch only on the watch's own host, never WebSearch or the runner's files; 12 turns,
@@ -224,6 +226,15 @@ host:
   the words to search for; its top price and currency narrow the search itself. Each look is
   paid for (5 credits), and the type sets no floor on how often a `poll` runs, so the host keeps
   a Shopify watch's interval long (the tracker's floor is a day);
+- `ebaySource(browse)` gets a `browse(request)` that sends `GET https://api.ebay.com` +
+  `request.path` with `request.params` as the query, `X-EBAY-C-MARKETPLACE-ID: request.marketplace`
+  and an application token (client credentials, scope `https://api.ebay.com/oauth/api_scope`) from
+  the host's own eBay keys, and hands back the HTTP status and the parsed JSON body (bounded in
+  time and size). The watch's `target` is the words to search for. eBay's API License wants
+  listing data shown no more than six hours old: a plain watch DMs what it read at once, and a
+  judged one once the model has looked. An eBay watch stores no findings (`keepsFindings`), so a
+  host that keeps no eBay data also clears the run's recorded DM after a while, and does not judge
+  one whose Job a queue would keep;
 - its Fetch port reaches only public addresses, checked after the name lookup: the judge grants
   the runner WebFetch on the watch's own host only because the host's reads already reach it;
 - `bggSource` gets a Fetch that hands back the body as sent and follows no redirect, so BGG's
@@ -238,7 +249,7 @@ host:
 
 ```ts
 import { TASK_TYPES, reminder, renewal, price, research, scout, TYPE_IDS, isTypeId } from "@rackbops/docket-types"
-import { bggSource, inboxSource, pageSource, shopifySource, wantjudgeType, wantlistType } from "@rackbops/docket-types"
+import { bggSource, ebaySource, inboxSource, pageSource, shopifySource, wantjudgeType, wantlistType } from "@rackbops/docket-types"
 ```
 
 `TASK_TYPES` is every shipped type keyed by id, ready for the dispatcher. Every type is declared

@@ -169,6 +169,19 @@ export {
   parseMarketplace,
 } from "./want-bgg.js"
 export {
+  EBAY_ATTRIBUTION,
+  EBAY_CURRENCY,
+  EBAY_LIMIT,
+  EBAY_MARKETPLACE,
+  EBAY_SEARCH_PATH,
+  type EbayBrowse,
+  type EbayRequest,
+  type EbaySearch,
+  ebayRequest,
+  ebaySource,
+  parseEbayAnswer,
+} from "./want-ebay.js"
+export {
   matchesWords,
   minorUnits,
   parseShopifyAnswer,
@@ -229,12 +242,14 @@ export {
 export {
   clip,
   inert,
+  keepsFindings,
   listingFinding,
   listingLine,
   MAX_DM_CHARS,
   MAX_NEW_PER_RUN,
   MAX_REPORTED,
   miss,
+  moreLine,
   type Polled,
   pollWant,
   priceText,

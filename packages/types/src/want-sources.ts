@@ -22,9 +22,12 @@ import { safeUrl } from "./research-answer.js"
  *
  * - `shopify` (want-shopify.ts): new copies in stock at Shopify stores, from Shopify's catalog
  *   search through Firecrawl, run by the host with its Firecrawl key (0.12.0).
+ * - `ebay` (want-ebay.ts): eBay listings from eBay's own Browse API, run by the host with the owner's
+ *   eBay developer keys (0.13.0). The only way the tracker reads eBay; no eBay page is ever opened.
  *
- * eBay is a third answer, not a source: the tracker never reads eBay (no API, no pages); `/want`
- * hands the owner an eBay search to save on eBay, whose own alerts do the watching (the tracker plugin's `/want`).
+ * Without eBay keys, eBay is a third answer, not a source: the tracker reads no eBay page; `/want`
+ * hands the owner an eBay search to save on eBay, whose own alerts do the watching (the tracker
+ * plugin's `/want`). With them, `ebay` reads eBay through its API only, never a page.
  */
 
 export interface Listing {
@@ -38,10 +41,10 @@ export interface Listing {
   seller?: string
 }
 
-export type SourceId = "page" | "bgg" | "inbox" | "shopify"
-export const SOURCE_IDS: readonly SourceId[] = ["page", "bgg", "inbox", "shopify"]
+export type SourceId = "page" | "bgg" | "inbox" | "shopify" | "ebay"
+export const SOURCE_IDS: readonly SourceId[] = ["page", "bgg", "inbox", "shopify", "ebay"]
 
-/** The watch's own limits, for a source that can narrow its search by them (Shopify's); the type still checks every listing against them. */
+/** The watch's own limits, for a source that can narrow its search by them (Shopify's, eBay's); the type still checks every listing against them. */
 export interface SearchLimits {
   maxPrice?: number
   currency?: string

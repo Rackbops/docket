@@ -21,11 +21,13 @@ import { isEbayHost, type Listing, listingKey, type Source, type SourceId } from
 import {
   clip,
   inert,
+  keepsFindings,
   listingFinding,
   listingLine,
   MAX_NEW_PER_RUN,
   MAX_REPORTED,
   miss,
+  moreLine,
   pollWant,
   priceText,
   SHOWN_IN_DM,
@@ -159,12 +161,13 @@ export function judgeState(value: unknown): JudgeState {
  * tracker's own fenced reads reach every poll (the host's Fetch port checks its address after the name lookup);
  * a host a listing merely names is never granted, since the runner sits on roshne's network and a
  * shop's data could name a private one (`nas.lan`). A listing elsewhere is judged from its own
- * text. Never an address, never eBay, and nothing for an `inbox` or `shopify` watch.
+ * text. Never an address, never eBay, and nothing for an `inbox`, `shopify` or `ebay` watch.
  */
 export function judgeHosts(pending: readonly Listing[], config: WantConfig): string[] {
   // Sent-in listings come from sites the tracker never reads (eBay, BGG): nothing is opened. Shopify's
-  // come from any store, none of which the tracker itself reads: judged from their own text.
-  if (config.source === "inbox" || config.source === "shopify") return []
+  // come from any store, none of which the tracker itself reads, and eBay's from its API, whose pages
+  // are never opened: all judged from their own text.
+  if (closedSource(config)) return []
   let home: string
   try {
     home = config.source === "bgg" ? BGG_HOST : new URL(config.target).hostname.toLowerCase()
@@ -204,6 +207,11 @@ function grantableHost(raw: string): string | null {
   return isEbayHost(host) ? null : host
 }
 
+/** A watch whose listings the judge may not open at all: sent in, Shopify's, or eBay's. */
+function closedSource(config: WantConfig): boolean {
+  return config.source === "inbox" || config.source === "shopify" || config.source === "ebay"
+}
+
 function limitsText(config: WantConfig): string {
   if (config.maxPrice !== undefined)
     return `at or under ${money(config.maxPrice, config.currency ?? "")}`
@@ -212,16 +220,18 @@ function limitsText(config: WantConfig): string {
 
 /** The judge Job: the want, the listings numbered (shop text, inert, marked as data), and the rules. */
 export function judgeJob(title: string, config: WantConfig, pending: readonly Listing[]): JobSpec {
-  // An inbox or Shopify watch's listings are on sites the tracker never reads: the judge opens none.
-  const closed = config.source === "inbox" || config.source === "shopify"
+  // An inbox, Shopify or eBay watch's listings are on sites the tracker never reads: the judge opens none.
+  const closed = closedSource(config)
   const where =
     config.source === "bgg"
       ? "BoardGameGeek's marketplace"
-      : config.source === "shopify"
-        ? "a search of Shopify stores' catalogs (new copies in stock)"
-        : config.source === "inbox"
-          ? "alert emails and searches sent in for them (from eBay, BoardGameGeek or a shop)"
-          : "a shop page they gave"
+      : config.source === "ebay"
+        ? "a search of eBay's listings, through eBay's own API"
+        : config.source === "shopify"
+          ? "a search of Shopify stores' catalogs (new copies in stock)"
+          : config.source === "inbox"
+            ? "alert emails and searches sent in for them (from eBay, BoardGameGeek or a shop)"
+            : "a shop page they gave"
   const lines = pending.map((l, i) => {
     const parts = [
       inert(l.title),
@@ -254,7 +264,7 @@ export function judgeJob(title: string, config: WantConfig, pending: readonly Li
     jsonSchema: JUDGE_SCHEMA as unknown as Record<string, unknown>,
     allowedTools: judgeHosts(pending, config).map((h) => `WebFetch(domain:${h})`),
     // No web search, and no reading the runner's own files: a listing's text could ask for either.
-    // An inbox or Shopify watch opens no page at all, so WebFetch goes too.
+    // An inbox, Shopify or eBay watch opens no page at all, so WebFetch goes too.
     disallowedTools: [
       ...DEFAULT_DISALLOWED_TOOLS,
       "WebSearch",
@@ -318,10 +328,7 @@ export function renderJudged(
       `  ${FIT_SAID[v.fit]}${v.why ? `: ${v.why}` : ""}${v.seller && !/^not shown\.?$/i.test(v.seller) ? ` Seller: ${v.seller}` : ""}`,
     )
   }
-  if (shown.length > SHOWN_IN_DM)
-    lines.push(
-      `...and ${shown.length - SHOWN_IN_DM} more: \`/task history ${taskId}\` lists them all.`,
-    )
+  if (shown.length > SHOWN_IN_DM) lines.push(moreLine(shown.length - SHOWN_IN_DM, taskId, config))
   lines.push("Press Done once you have it, and I stop looking.")
   return clip(lines.join("\n"))
 }
@@ -339,9 +346,7 @@ export function renderUnchecked(
   ]
   for (const l of pending.slice(0, SHOWN_IN_DM)) lines.push(listingLine(l, config))
   if (pending.length > SHOWN_IN_DM)
-    lines.push(
-      `...and ${pending.length - SHOWN_IN_DM} more: \`/task history ${taskId}\` lists them all.`,
-    )
+    lines.push(moreLine(pending.length - SHOWN_IN_DM, taskId, config))
   lines.push("Press Done once you have it, and I stop looking.")
   return clip(lines.join("\n"))
 }
@@ -405,9 +410,13 @@ function judgeFailed(
           },
         }
       : {}),
-    findings: within.map((l) =>
-      listingFinding(l, ctx.config, priceText(l, ctx.config), ["unchecked"]),
-    ),
+    ...(keepsFindings(ctx.config)
+      ? {
+          findings: within.map((l) =>
+            listingFinding(l, ctx.config, priceText(l, ctx.config), ["unchecked"]),
+          ),
+        }
+      : {}),
     summary: `${summary}; ${within.length} sent unchecked`,
   }
 }
@@ -445,7 +454,7 @@ function judged(
           },
         }
       : {}),
-    findings,
+    ...(keepsFindings(ctx.config) ? { findings } : {}),
     summary,
   }
 }
@@ -479,14 +488,14 @@ export function wantjudgeType(
       options: [
         {
           name: "source",
-          description: "Where to look: page, bgg, inbox or shopify",
+          description: "Where to look: page, bgg, inbox, shopify or ebay",
           required: true,
           kind: "string",
         },
         {
           name: "target",
           description:
-            "The listing page's address, the BGG game, the inbox's key, or the words to search Shopify for",
+            "The page's address, the BGG game, the inbox's key, or the words to search Shopify or eBay for",
           required: true,
           kind: "string",
         },
