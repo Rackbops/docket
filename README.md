@@ -189,7 +189,9 @@ epic is Rackbops/Tooling#816.
   counts only when every word of the search is in its title; an auction is priced at its current
   bid (or its Buy It Now price, when it has one) and marked "auction"; the seller line is the seller's name, feedback percentage and score.
   The host runs the request with an application token from the owner's eBay developer keys
-  (`EbayBrowse`); docket opens nothing, and the judge opens no eBay page. No core change.
+  (`EbayBrowse`); docket opens nothing, and the judge opens no eBay page. An eBay watch keeps no
+  findings (`keepsFindings`): eBay's API License limits how long listing data may be kept and shown,
+  so its listings are in the DM only, and its state holds digests of their ids. No core change.
 
 ## Use
 

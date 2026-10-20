@@ -21,11 +21,13 @@ import { isEbayHost, type Listing, listingKey, type Source, type SourceId } from
 import {
   clip,
   inert,
+  keepsFindings,
   listingFinding,
   listingLine,
   MAX_NEW_PER_RUN,
   MAX_REPORTED,
   miss,
+  moreLine,
   pollWant,
   priceText,
   SHOWN_IN_DM,
@@ -326,10 +328,7 @@ export function renderJudged(
       `  ${FIT_SAID[v.fit]}${v.why ? `: ${v.why}` : ""}${v.seller && !/^not shown\.?$/i.test(v.seller) ? ` Seller: ${v.seller}` : ""}`,
     )
   }
-  if (shown.length > SHOWN_IN_DM)
-    lines.push(
-      `...and ${shown.length - SHOWN_IN_DM} more: \`/task history ${taskId}\` lists them all.`,
-    )
+  if (shown.length > SHOWN_IN_DM) lines.push(moreLine(shown.length - SHOWN_IN_DM, taskId, config))
   lines.push("Press Done once you have it, and I stop looking.")
   return clip(lines.join("\n"))
 }
@@ -347,9 +346,7 @@ export function renderUnchecked(
   ]
   for (const l of pending.slice(0, SHOWN_IN_DM)) lines.push(listingLine(l, config))
   if (pending.length > SHOWN_IN_DM)
-    lines.push(
-      `...and ${pending.length - SHOWN_IN_DM} more: \`/task history ${taskId}\` lists them all.`,
-    )
+    lines.push(moreLine(pending.length - SHOWN_IN_DM, taskId, config))
   lines.push("Press Done once you have it, and I stop looking.")
   return clip(lines.join("\n"))
 }
@@ -413,9 +410,13 @@ function judgeFailed(
           },
         }
       : {}),
-    findings: within.map((l) =>
-      listingFinding(l, ctx.config, priceText(l, ctx.config), ["unchecked"]),
-    ),
+    ...(keepsFindings(ctx.config)
+      ? {
+          findings: within.map((l) =>
+            listingFinding(l, ctx.config, priceText(l, ctx.config), ["unchecked"]),
+          ),
+        }
+      : {}),
     summary: `${summary}; ${within.length} sent unchecked`,
   }
 }
@@ -453,7 +454,7 @@ function judged(
           },
         }
       : {}),
-    findings,
+    ...(keepsFindings(ctx.config) ? { findings } : {}),
     summary,
   }
 }

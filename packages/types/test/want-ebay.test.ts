@@ -245,6 +245,8 @@ describe("an eBay watch", () => {
     expect(first.summary).toBe("2 listed, 1 within limits, 1 new")
     expect(first.notify?.text).toContain("boardgame_bin")
     expect(first.notify?.text).toContain("(via eBay)")
+    expect(first.findings).toBeUndefined()
+    expect(JSON.stringify(first.state)).not.toContain("boardgame_bin")
     const again = await type.run(ctx(first.state))
     expect(again.notify).toBeUndefined()
   })

@@ -232,7 +232,9 @@ host:
   the host's own eBay keys, and hands back the HTTP status and the parsed JSON body (bounded in
   time and size). The watch's `target` is the words to search for. eBay's API License wants
   listing data shown no more than six hours old: a plain watch DMs what it read at once, and a
-  judged one once the model has looked;
+  judged one once the model has looked. An eBay watch stores no findings (`keepsFindings`), so a
+  host that keeps no eBay data also clears the run's recorded DM after a while, and does not judge
+  one whose Job a queue would keep;
 - its Fetch port reaches only public addresses, checked after the name lookup: the judge grants
   the runner WebFetch on the watch's own host only because the host's reads already reach it;
 - `bggSource` gets a Fetch that hands back the body as sent and follows no redirect, so BGG's

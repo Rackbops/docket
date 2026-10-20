@@ -57,6 +57,23 @@ export interface WantState {
 
 export const MAX_REPORTED = 500
 export const SHOWN_IN_DM = 5
+
+/**
+ * Whether a watch keeps its listings as findings. An eBay API watch keeps none (Rod, 2026-10-20,
+ * the account-deletion card): eBay's API License wants shown listing data at most six hours old
+ * and seller names deleted on eBay's notice, and an app may opt out of those notices only when it
+ * keeps no eBay data. Its state still remembers each listing told, as a digest of its id only.
+ */
+export function keepsFindings(config: WantConfig): boolean {
+  return config.source !== "ebay"
+}
+
+/** The DM's last line when more listings are new than it shows. */
+export function moreLine(more: number, taskId: string, config: WantConfig): string {
+  return keepsFindings(config)
+    ? `...and ${more} more: \`/task history ${taskId}\` lists them all.`
+    : `...and ${more} more, not kept here: eBay's own search shows them.`
+}
 /** New listings taken in one run, DMed and kept as findings; any more wait for the next run. */
 export const MAX_NEW_PER_RUN = 20
 
@@ -131,10 +148,7 @@ export function renderWant(
     `${title}: ${fresh.length === 1 ? "a new listing" : `${fresh.length} new listings`}.`,
   ]
   for (const l of fresh.slice(0, SHOWN_IN_DM)) lines.push(listingLine(l, config))
-  if (fresh.length > SHOWN_IN_DM)
-    lines.push(
-      `...and ${fresh.length - SHOWN_IN_DM} more: \`/task history ${taskId}\` lists them all.`,
-    )
+  if (fresh.length > SHOWN_IN_DM) lines.push(moreLine(fresh.length - SHOWN_IN_DM, taskId, config))
   lines.push("Press Done once you have it, and I stop looking.")
   return clip(lines.join("\n"))
 }
@@ -287,7 +301,9 @@ export function wantlistType(sources: Partial<Record<SourceId, Source>>): TaskTy
           text: renderWant(ctx.task.title, ctx.task.id, fresh, ctx.config),
           actions: ["done"],
         },
-        findings: fresh.map((l) => listingFinding(l, ctx.config, priceText(l, ctx.config))),
+        ...(keepsFindings(ctx.config)
+          ? { findings: fresh.map((l) => listingFinding(l, ctx.config, priceText(l, ctx.config))) }
+          : {}),
         summary,
       }
     },
