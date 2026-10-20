@@ -69,15 +69,18 @@ describe("the eBay request", () => {
     })
   })
 
-  it("leaves the price filter out with no top price, and writes a zero-decimal currency whole", () => {
+  it("leaves the price filter out with no top price, or for a watch not in USD", () => {
     expect(ebayRequest({ query: QUERY }).params.filter).toBeUndefined()
     expect(ebayRequest({ query: QUERY, maxPrice: Number.NaN }).params.filter).toBeUndefined()
-    expect(ebayRequest({ query: QUERY, maxPrice: 4000, currency: "jpy" }).params.filter).toBe(
-      "price:[..4000],priceCurrency:JPY",
+    expect(
+      ebayRequest({ query: QUERY, maxPrice: 4000, currency: "jpy" }).params.filter,
+    ).toBeUndefined()
+    expect(ebayRequest({ query: QUERY, maxPrice: 20.5, currency: "usd" }).params.filter).toBe(
+      "price:[..20.50],priceCurrency:USD",
     )
-    expect(ebayRequest({ query: QUERY, maxPrice: 20, currency: "dollars" }).params.filter).toBe(
-      "price:[..20.00],priceCurrency:USD",
-    )
+    expect(
+      ebayRequest({ query: QUERY, maxPrice: 20, currency: "dollars" }).params.filter,
+    ).toBeUndefined()
   })
 
   it("is a source id", () => {
@@ -114,6 +117,21 @@ describe("the eBay answer", () => {
     )
     expect(l?.price).toBe(12.5)
     expect(l?.condition).toBe("Used, auction")
+  })
+
+  it("prices an auction with Buy It Now at that price, and says both", () => {
+    const [l] = parseEbayAnswer(
+      answer([
+        item({
+          buyingOptions: ["AUCTION", "FIXED_PRICE"],
+          price: { value: "45.00", currency: "USD" },
+          currentBidPrice: { value: "12.50", currency: "USD" },
+        }),
+      ]),
+      QUERY,
+    )
+    expect(l?.price).toBe(45)
+    expect(l?.condition).toBe("New, auction, Buy It Now")
   })
 
   it("keeps only titles holding every word, with an eBay item address, once each", () => {

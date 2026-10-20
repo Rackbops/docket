@@ -23,7 +23,8 @@ import {
  * One search a look, the newest `EBAY_LIMIT` listings, fixed-price and auction alike, narrowed by
  * the watch's top price (eBay's own `price` and `priceCurrency` filters). eBay matches the words
  * itself; a listing is still kept only when every word is in its title (`matchesWords`), as for
- * Shopify, so a description-only match is not DMed. An auction's price is its current bid. The
+ * Shopify, so a description-only match is not DMed. An auction's price is its current bid, or its
+ * Buy It Now price when it has one. The
  * seller line carries what eBay's answer shows: the seller's name, feedback percentage and score.
  *
  * The answer is untrusted text: every field is capped and cleaned, and an address is kept only as
@@ -57,18 +58,25 @@ export interface EbaySearch {
 
 /**
  * The request for a search: the words as sent (cut at a word, like Shopify's), newest first, at
- * most `EBAY_LIMIT`, and at or under the top price in the watch's currency (USD unless it names a
- * valid three-letter code). eBay's price filter is in whole units with decimals. Pure.
+ * most `EBAY_LIMIT`, and at or under the top price. eBay US prices in USD, so the price filter is
+ * sent only for a watch in USD (or naming no currency); a watch in another currency gets no filter,
+ * and the type's own limits drop what is not in its currency. The filter is in whole units with
+ * decimals. Pure.
  */
 export function ebayRequest(s: EbaySearch): EbayRequest {
   const asked = (s.currency ?? "").trim().toUpperCase()
-  const currency = /^[A-Z]{3}$/.test(asked) ? asked : EBAY_CURRENCY
+  const currency = asked === "" ? EBAY_CURRENCY : asked
   const params: Record<string, string> = {
     q: shopifyQuery(s.query),
     limit: String(EBAY_LIMIT),
     sort: "newlyListed",
   }
-  if (s.maxPrice !== undefined && Number.isFinite(s.maxPrice) && s.maxPrice >= 0) {
+  if (
+    currency === EBAY_CURRENCY &&
+    s.maxPrice !== undefined &&
+    Number.isFinite(s.maxPrice) &&
+    s.maxPrice >= 0
+  ) {
     const digits = Math.round(Math.log10(minorUnits(currency)))
     params.filter = `price:[..${s.maxPrice.toFixed(digits)}],priceCurrency:${currency}`
   }
@@ -137,14 +145,13 @@ export function parseEbayAnswer(body: unknown, query: string): Listing[] {
     if (!title || !url || item.itemId.length > 120 || seen.has(item.itemId)) continue
     seen.add(item.itemId)
     const options = Array.isArray(item.buyingOptions) ? item.buyingOptions : []
-    const auction = options.includes("AUCTION") && !options.includes("FIXED_PRICE")
-    const price = amountOf(auction ? (item.currentBidPrice ?? item.price) : item.price)
+    const auction = options.includes("AUCTION")
+    const buyNow = options.includes("FIXED_PRICE")
+    // A plain auction at its current bid; one with Buy It Now at that price, which buys it outright.
+    const price = amountOf(auction && !buyNow ? (item.currentBidPrice ?? item.price) : item.price)
     const state = typeof item.condition === "string" ? clean(item.condition, 30, true) : ""
-    const condition = clean(
-      [state, ...(auction ? ["auction"] : [])].filter(Boolean).join(", "),
-      CONDITION_CHARS,
-      true,
-    )
+    const kind = auction ? [buyNow ? "auction, Buy It Now" : "auction"] : []
+    const condition = clean([state, ...kind].filter(Boolean).join(", "), CONDITION_CHARS, true)
     const seller = sellerOf(item.seller)
     out.push({
       id: `ebay:${item.itemId}`,

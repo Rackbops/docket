@@ -255,7 +255,7 @@ export function wantlistType(sources: Partial<Record<SourceId, Source>>): TaskTy
         {
           name: "target",
           description:
-            "The listing page's address, the BGG game, the inbox's key, or the words to search Shopify or eBay for",
+            "The page's address, the BGG game, the inbox's key, or the words to search Shopify or eBay for",
           required: true,
           kind: "string",
         },

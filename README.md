@@ -187,7 +187,7 @@ epic is Rackbops/Tooling#816.
   Browse API card): a fifth want-list source, `ebay`, over eBay's Browse API
   (`item_summary/search`, eBay US, newest fifty, narrowed by the watch's top price). A listing
   counts only when every word of the search is in its title; an auction is priced at its current
-  bid and marked "auction"; the seller line is the seller's name, feedback percentage and score.
+  bid (or its Buy It Now price, when it has one) and marked "auction"; the seller line is the seller's name, feedback percentage and score.
   The host runs the request with an application token from the owner's eBay developer keys
   (`EbayBrowse`); docket opens nothing, and the judge opens no eBay page. No core change.
 
