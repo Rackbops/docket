@@ -142,11 +142,12 @@ export function parseEbayAnswer(body: unknown, query: string): Listing[] {
     if (!matchesWords(item.title.slice(0, 2_000), words)) continue
     const title = clean(item.title, TITLE_CHARS, true)
     const url = itemUrl(item.itemWebUrl)
-    // One listing's variations share its `/itm/<number>`: the first stands for them all.
-    if (!title || !url || item.itemId.length > 120 || seen.has(item.itemId) || seen.has(url))
-      continue
-    seen.add(item.itemId)
-    seen.add(url)
+    if (!title || !url || item.itemId.length > 120) continue
+    // Keyed by the listing's `/itm/<number>`, which its variations share: one listing is told once,
+    // whichever variation eBay puts first on a later look.
+    const number = /\/itm\/([0-9]+)$/.exec(url)?.[1]
+    if (!number || seen.has(number)) continue
+    seen.add(number)
     const options = Array.isArray(item.buyingOptions) ? item.buyingOptions : []
     const auction = options.includes("AUCTION")
     const buyNow = options.includes("FIXED_PRICE")
@@ -157,7 +158,7 @@ export function parseEbayAnswer(body: unknown, query: string): Listing[] {
     const condition = clean([state, ...kind].filter(Boolean).join(", "), CONDITION_CHARS, true)
     const seller = sellerOf(item.seller)
     out.push({
-      id: `ebay:${item.itemId}`,
+      id: `ebay:${number}`,
       title,
       url,
       ...(price ? { price: price.value, currency: price.currency } : {}),

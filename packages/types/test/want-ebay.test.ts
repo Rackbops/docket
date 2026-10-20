@@ -93,7 +93,7 @@ describe("the eBay answer", () => {
     const [l, ...rest] = parseEbayAnswer(answer([item()]), QUERY)
     expect(rest).toEqual([])
     expect(l).toEqual({
-      id: "ebay:v1|123456789012|0",
+      id: "ebay:123456789012",
       title: "Wingspan Oceania Expansion - Stonemaier Games - New Sealed",
       url: "https://www.ebay.com/itm/123456789012",
       price: 29.99,
@@ -152,7 +152,7 @@ describe("the eBay answer", () => {
       ]),
       QUERY,
     )
-    expect(out.map((l) => l.id)).toEqual(["ebay:e", "ebay:f"])
+    expect(out.map((l) => l.id)).toEqual(["ebay:123456789012", "ebay:223344556677"])
     expect(out[1]?.url).toBe("https://www.ebay.co.uk/itm/223344556677")
   })
 
