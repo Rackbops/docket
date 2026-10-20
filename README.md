@@ -183,6 +183,13 @@ epic is Rackbops/Tooling#816.
   `Source.search` takes the watch's limits as an optional third argument (additive). The host
   runs the request with its own Firecrawl key (`ShopifyScrape`); docket opens nothing. No core
   change.
+- **0.13.0 -- eBay's own API for want-list watches** (Rod, 2026-10-20, "Build it" on the eBay
+  Browse API card): a fifth want-list source, `ebay`, over eBay's Browse API
+  (`item_summary/search`, eBay US, newest fifty, narrowed by the watch's top price). A listing
+  counts only when every word of the search is in its title; an auction is priced at its current
+  bid and marked "auction"; the seller line is the seller's name, feedback percentage and score.
+  The host runs the request with an application token from the owner's eBay developer keys
+  (`EbayBrowse`); docket opens nothing, and the judge opens no eBay page. No core change.
 
 ## Use
 
