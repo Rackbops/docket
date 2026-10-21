@@ -199,7 +199,9 @@ epic is Rackbops/Tooling#816.
   task titles; the Job has no tools, no `resumeSessionId` (one-shot, `--no-session-persistence`)
   and caps of 3 turns, 0.10 USD and 60 s. `readIntake` reads the answer -- a question, a ready
   draft or a cancel -- and `checkDraft` holds a draft to that field list, so a draft the model can
-  fix comes back as a `problem` for one more turn instead of reaching the person. Nothing here
+  fix (no JSON, a `null` where it clears nothing, a blank required field) comes back as a `problem`
+  for another turn instead of reaching the person; how many such turns is the host's call. A field
+  gains an optional `nullable` (the one an edit clears with `null`). Nothing here
   saves: the host shows the draft and saves it through its editor on the person's press. No core
   change.
 

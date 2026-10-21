@@ -12,7 +12,7 @@ import {
  * `intakeJob`, submits it through the runner like any model Job, reads the answer with
  * `readIntake`, and saves nothing until the person presses Save on the draft it shows.
  *
- * Decided on the design (roshne, 2026-10-19): the host keeps the transcript and sends it whole
+ * Decided on the design (Rod, 2026-10-19): the host keeps the transcript and sends it whole
  * each turn, so every turn is a one-shot `claude -p` run (`--no-session-persistence`, no
  * `resumeSessionId`), and plan item 81's transcripts on the runner stay untouched. The model gets
  * no tools: it talks and drafts, and plain code saves (plan 5.6, tier 0). The field list is the
@@ -30,6 +30,8 @@ export interface IntakeField {
   minimum?: number
   maximum?: number
   enum?: string[]
+  /** True on the one kind of field an edit may send `null` to clear (a watch's top price). */
+  nullable?: boolean
 }
 
 /** One type the person may create, as `GET /types` lists it. */
@@ -122,6 +124,9 @@ export const INTAKE_SCHEMA = {
   required: ["reply", "state"],
 } as const
 
+/** A field's description in the prompt: long enough for the want-list target's source guidance. */
+const MAX_DESCRIPTION_CHARS = 1000
+
 function fieldLine(f: IntakeField): string {
   const limits = [
     f.required ? "required" : "optional",
@@ -130,8 +135,9 @@ function fieldLine(f: IntakeField): string {
     ...(f.maxLength !== undefined ? [`at most ${f.maxLength} characters`] : []),
     ...(f.minimum !== undefined ? [`at least ${f.minimum}`] : []),
     ...(f.maximum !== undefined ? [`at most ${f.maximum}`] : []),
+    ...(f.nullable ? ["null clears it"] : []),
   ]
-  return `  - ${f.name} (${limits.join("; ")}): ${clean(f.description, 400, true)}`
+  return `  - ${f.name} (${limits.join("; ")}): ${clean(f.description, MAX_DESCRIPTION_CHARS, true)}`
 }
 
 function typeBlock(t: IntakeType, editing: boolean): string[] {
@@ -221,8 +227,8 @@ function isObj(v: unknown): v is Record<string, unknown> {
 /**
  * Why `draft` cannot be shown as it stands, or null when it fits the field list: the type is
  * offered, an edit names one of the person's tasks of that type and an editable type, every field
- * is one the list names with a value of its kind and within its limits, and a create carries every
- * required field. The tracker still validates on Save; this catches what the model can fix itself.
+ * is one the list names with a value of its kind and within its limits (`null` only on an edit's
+ * `nullable` field), and a create carries every required field, none of its text blank. The tracker still validates on Save; this catches what the model can fix itself.
  */
 export function checkDraft(
   draft: IntakeDraft,
@@ -243,11 +249,13 @@ export function checkDraft(
     const f = byName.get(name)
     if (!f) return `"${clean(name, 40, true)}" is not a ${draft.action} field of a ${t.type}.`
     if (value === null) {
-      if (draft.action !== "edit") return `${name} cannot be empty.`
-      continue
+      if (draft.action === "edit" && f.nullable) continue
+      return `${name} cannot be null; leave it out instead.`
     }
     if (f.type === "string") {
       if (typeof value !== "string") return `${name} must be text.`
+      if (draft.action === "create" && f.required && value.trim() === "")
+        return `${name} cannot be empty.`
       if (f.enum && !f.enum.includes(value)) return `${name} must be one of ${f.enum.join(", ")}.`
       if (f.maxLength !== undefined && value.length > f.maxLength)
         return `${name} is longer than ${f.maxLength} characters.`
@@ -260,7 +268,9 @@ export function checkDraft(
     if (f.maximum !== undefined && value > f.maximum) return `${name} must be at most ${f.maximum}.`
   }
   if (draft.action === "create") {
-    const missing = fields.filter((f) => f.required && !(f.name in draft.fields)).map((f) => f.name)
+    const missing = fields
+      .filter((f) => f.required && !Object.hasOwn(draft.fields, f.name))
+      .map((f) => f.name)
     if (missing.length > 0) return `A ${t.type} needs ${missing.join(", ")}.`
   } else if (Object.keys(draft.fields).length === 0) {
     return "An edit must change at least one field."
@@ -287,13 +297,15 @@ function readDraft(value: unknown): IntakeDraft | null {
 
 export type IntakeRead =
   | { ok: true; answer: IntakeAnswer }
-  /** `retry`: worth one more turn with `problem` set (a malformed or ill-fitting draft); else a run failure to report. */
+  /** `retry`: worth another turn with `problem` set (no usable JSON, or an ill-fitting draft); else a run failure to report. How many such turns to allow is the host's call. */
   | { ok: false; retry: boolean; problem: string }
+
+const NOT_THE_OBJECT = "The answer was not the JSON object the schema describes."
 
 /**
  * One turn's JobResult as an answer. A failed run is `ok: false` with `retry: false`, so the host
  * reports it (and tells a usage limit apart through `result.kind`); an answer the model can fix --
- * no usable JSON, a ready state with no draft, a draft that does not fit -- is `retry: true` with
+ * no usable JSON (a `schema_miss` run included), a ready state with no draft, a draft that does not fit -- is `retry: true` with
  * the problem to feed back as `IntakeContext.problem`. The reply is cleaned for a DM.
  */
 export function readIntake(
@@ -301,13 +313,15 @@ export function readIntake(
   types: readonly IntakeType[],
   tasks: readonly IntakeTask[] = [],
 ): IntakeRead {
+  // No JSON at all (an answer in a code fence, say) is the model's to fix, as in research and scout.
+  if (result.kind === "schema_miss") return { ok: false, retry: true, problem: NOT_THE_OBJECT }
   if (result.kind !== "success") return { ok: false, retry: false, problem: result.kind }
   const v = result.structuredOutput
   if (!isObj(v) || typeof v.reply !== "string" || !INTAKE_STATES.includes(v.state as IntakeState)) {
     return {
       ok: false,
       retry: true,
-      problem: "The answer was not the JSON object the schema describes.",
+      problem: NOT_THE_OBJECT,
     }
   }
   const reply = clean(v.reply, MAX_REPLY_CHARS)

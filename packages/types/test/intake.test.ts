@@ -82,6 +82,20 @@ const TYPES: IntakeType[] = [
     ],
   },
   {
+    type: "wantlist",
+    editable: true,
+    create: [{ name: "target", type: "string", required: true, description: "What to watch for" }],
+    edit: [
+      {
+        name: "max",
+        type: "number",
+        required: false,
+        description: "Top price. Send null to clear it.",
+        nullable: true,
+      },
+    ],
+  },
+  {
     type: "research",
     editable: false,
     create: [{ name: "question", type: "string", required: true, description: "The question" }],
@@ -148,6 +162,9 @@ describe("intakeJob", () => {
     })
     expect(prompt).toContain("- t4 (reminder): Call Anne")
     expect(prompt).toContain("edit fields (send only what changes)")
+    expect(prompt).toContain(
+      "  - max (optional; number; null clears it): Top price. Send null to clear it.",
+    )
   })
 
   it("feeds a refused draft back as the problem to fix", () => {
@@ -246,7 +263,37 @@ describe("checkDraft", () => {
     ).toBe("text is longer than 200 characters.")
     expect(
       checkDraft({ action: "create", type: "reminder", fields: { text: null, at: "b" } }, TYPES),
+    ).toBe("text cannot be null; leave it out instead.")
+    expect(
+      checkDraft({ action: "create", type: "reminder", fields: { text: "  ", at: "b" } }, TYPES),
     ).toBe("text cannot be empty.")
+    expect(
+      checkDraft(
+        { action: "create", type: "reminder", fields: { text: "a", toString: "b" } },
+        TYPES,
+      ),
+    ).toBe('"toString" is not a create field of a reminder.')
+  })
+
+  it("takes null in an edit only on a field that says null clears it", () => {
+    const tasks = [
+      { id: "t4", type: "reminder", title: "Call Anne" },
+      { id: "t7", type: "wantlist", title: "Oceania" },
+    ]
+    expect(
+      checkDraft(
+        { action: "edit", type: "reminder", taskId: "t4", fields: { text: null } },
+        TYPES,
+        tasks,
+      ),
+    ).toBe("text cannot be null; leave it out instead.")
+    expect(
+      checkDraft(
+        { action: "edit", type: "wantlist", taskId: "t7", fields: { max: null } },
+        TYPES,
+        tasks,
+      ),
+    ).toBeNull()
   })
 
   it("holds an edit to one of the person's own tasks, of an editable type, changing something", () => {
@@ -369,6 +416,14 @@ describe("readIntake", () => {
         TYPES,
       ),
     ).toMatchObject({ ok: false, retry: true })
+  })
+
+  it("asks again when the run found no JSON at all", () => {
+    expect(readIntake({ kind: "schema_miss", detail: "no json", durationMs: 1 }, TYPES)).toEqual({
+      ok: false,
+      retry: true,
+      problem: "The answer was not the JSON object the schema describes.",
+    })
   })
 
   it("reports a failed run by its kind, not as something to retry", () => {
