@@ -1,7 +1,7 @@
 {
   "name": "@rackbops/docket-types",
-  "version": "0.13.0",
-  "description": "The tracker's task types: reminder, renewal, price, research, scout, wantlist, wantjudge. Built on @rackbops/docket-core.",
+  "version": "0.14.0",
+  "description": "The tracker's task types: reminder, renewal, price, research, scout, wantlist, wantjudge; and the plain-language intake's turn. Built on @rackbops/docket-core.",
   "license": "MIT",
   "repository": {
     "type": "git",
