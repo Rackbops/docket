@@ -6,7 +6,7 @@ one version, one tag:
 | Package | What it holds |
 |---|---|
 | [`@rackbops/docket-core`](packages/core) | the domain, the scheduler, the two lanes, the task-type contract and the **ports** a host implements: Store, Clock, Identity, Notifier, Executor, Fetch |
-| [`@rackbops/docket-types`](packages/types) | the task types: reminder, renewal, price, research, scout, wantlist, wantjudge |
+| [`@rackbops/docket-types`](packages/types) | the task types: reminder, renewal, price, research, scout, wantlist, wantjudge; and the plain-language intake's turn (`intakeJob`, `readIntake`) |
 
 docket is a **library**, never a service: it imports no Hono, discord.js, sqlite or fetch, and it
 never calls a model. A host supplies the adapters and the surfaces. The host is the tracker plugin in
@@ -192,6 +192,16 @@ epic is Rackbops/Tooling#816.
   (`EbayBrowse`); docket opens nothing, and the judge opens no eBay page. An eBay watch keeps no
   findings (`keepsFindings`): eBay's API License limits how long listing data may be kept and shown,
   so its listings are in the DM only, and its state holds digests of their ids. No core change.
+- **0.14.0 -- the plain-language intake's turn** (plan E10; Rod, 2026-10-19 and 2026-10-21, "Clerk
+  keeps it" and "Go"): not a task type, the pure half of the DM conversation that turns a person's
+  words into a task. `intakeJob` builds one turn's Job from the whole transcript the host keeps, the
+  field list the tracker's `GET /types` gives (its editor fields) and, for an edit, the person's own
+  task titles; the Job has no tools, no `resumeSessionId` (one-shot, `--no-session-persistence`)
+  and caps of 3 turns, 0.10 USD and 60 s. `readIntake` reads the answer -- a question, a ready
+  draft or a cancel -- and `checkDraft` holds a draft to that field list, so a draft the model can
+  fix comes back as a `problem` for one more turn instead of reaching the person. Nothing here
+  saves: the host shows the draft and saves it through its editor on the person's press. No core
+  change.
 
 ## Use
 
