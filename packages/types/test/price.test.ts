@@ -1,7 +1,7 @@
 import { createTask, type PollSchedule } from "@rackbops/docket-core"
 import { describe, expect, it } from "vitest"
 
-import { MISSES_BEFORE_TELLING, type PriceConfig, price } from "../src/index.js"
+import { MISSES_BEFORE_TELLING, type PriceConfig, price, reference } from "../src/index.js"
 import { actor, FakeFetch, tracker } from "./helpers.js"
 
 const URL = "https://shop.example/widget"
@@ -49,6 +49,13 @@ async function observe(
 }
 
 describe("price", () => {
+  it("treats a 0 baseline kept from before 0.14.1 as no baseline (docket#40)", () => {
+    const state = { first: 0, last: 0, peak: 0, below: false, misses: 0, alerts: 0 }
+    expect(reference(state, "first")).toBeNull()
+    expect(reference(state, "peak")).toBeNull()
+    expect(reference({ ...state, first: 49.99 }, "first")).toBe(49.99)
+  })
+
   it("takes a read of 0 as a miss, not a baseline, and baselines on the next real price (docket#40)", async () => {
     const t = await tracked({ baseline: "first" })
     const texts = await observe(t, [0, 0, 49.99, 44.99])

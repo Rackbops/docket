@@ -19,6 +19,7 @@ describe("parsePrice on the audit's cases (docket#39)", () => {
   it("stops at a space unless a thousands group follows", () => {
     expect(parsePrice("$12.99 2 left")).toBe(12.99)
     expect(parsePrice("$20 50% off")).toBe(20)
+    expect(parsePrice("$12.99 100 in stock")).toBe(12.99)
     expect(parsePrice("1 299")).toBe(1299)
     expect(parsePrice("1.299,99")).toBe(1299.99)
     expect(parsePrice("$1,299.99")).toBe(1299.99)

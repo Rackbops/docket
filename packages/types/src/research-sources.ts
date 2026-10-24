@@ -8,9 +8,9 @@ import { type BlockedPage, MAX_BLOCKED, type ResearchAnswer, safeUrl } from "./r
  * User Agreement, section 3 (automated access)), so a request
  * made with `sources: "sent"` waits until the person's browser -- Claude in Chrome, when they ask
  * it to -- has read pages for it and the host has stored them. The research run and its reviewer
- * then work from those pages' text, quoted into their prompts as data; neither run may fetch
- * BoardGameGeek or eBay (`SENT_DISALLOWED_TOOLS`), and both may still search and fetch the rest of
- * the open web.
+ * then work from those pages' text, quoted into their prompts as data; both may search the web
+ * but open no page (`GATHERED_ALLOWED_TOOLS`, docket#66), and `SENT_DISALLOWED_TOOLS` bars
+ * BoardGameGeek and eBay besides.
  *
  * The host stores the pages and decides who may send them; this module only reads what the host
  * hands back (`ReadSources`) and cleans and caps it, whatever the host stored.
@@ -148,7 +148,8 @@ function barredDomains(everywhereOnly = false): string[] {
  * read 2026-10-13): `domain:host` matches that host only, `domain:*.host` any subdomain at any
  * depth, and a `*` elsewhere one label, so `ebay.*` is `ebay.fr` and `ebay.co.*` is `ebay.co.uk`.
  * Whether `*.ebay.*` (a leading and a later `*`) is accepted is inferred from that wording. Deny
- * rules beat the bare `WebFetch` allowed. WebSearch cannot be limited by site, so a search may
+ * rules beat an allowed `WebFetch`; since 0.14.1 these runs are not allowed `WebFetch` at all
+ * (`GATHERED_ALLOWED_TOOLS`), so these rules are a second wall. WebSearch cannot be limited by site, so a search may
  * still list their pages; the run cannot open them there (a cache or proxy site could still serve
  * them: not covered).
  */

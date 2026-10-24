@@ -40,9 +40,10 @@ The tracker's task types, built on `@rackbops/docket-core`'s contract. Shipped s
 
   **Gathered pages** (0.8.0): with `sources: "sent"`, both runs work from pages the person's own
   browser gathered and the host stored, quoted into their prompts as escaped data between
-  markers: up to 10 pages, 12,000 characters each and 100,000 in all. Neither run may fetch
-  BoardGameGeek or eBay (`SENT_DISALLOWED_TOOLS`); both may still search and fetch the rest of the
-  web. `researchType({ readSources })` builds the type over the host's store, read by task id at
+  markers: up to 10 pages, 12,000 characters each and 100,000 in all. Both runs may search
+  the web but open no page at all (`GATHERED_ALLOWED_TOOLS`, `WebSearch` only, and a bare `WebFetch`
+  deny, since 0.14.1, docket#66); `SENT_DISALLOWED_TOOLS` still bars BoardGameGeek and eBay
+  besides. `researchType({ readSources })` builds the type over the host's store, read by task id at
   each run; `research` (and `TASK_TYPES`) has none, so a `sent` request there is not run. When a
   `sent` request runs is the host's: it moves the run to now once the pages are in. A run with no
   usable page, or a host with no store, makes no model call and tells the owner (in the review

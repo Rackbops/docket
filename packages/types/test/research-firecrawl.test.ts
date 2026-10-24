@@ -91,6 +91,14 @@ describe("a run on gathered pages is told it cannot open pages (docket#66)", () 
       expect(spec.prompt).not.toContain("fetch pages to check facts")
     }
   })
+
+  it("says so in the reviewer's prompt, and asks it to read the gathered page, not open one", () => {
+    for (const spec of [reviewJob(SENT, DRAFT, PAGES), reviewJob(WEB, DRAFT, PAGES, DRAFT)]) {
+      expect(spec.prompt).toContain("This run cannot open pages")
+      expect(spec.prompt).not.toContain("Open the sources behind every claim")
+    }
+    expect(reviewJob(WEB, DRAFT).prompt).toContain("Open the sources behind every claim")
+  })
 })
 
 describe("the Firecrawl rules in the prompts (0.11.0)", () => {

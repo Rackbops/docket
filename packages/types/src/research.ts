@@ -498,7 +498,13 @@ export function reviewJob(
             "gathered pages cannot be checked: move it to `uncertain`.",
         ]
       : []),
-    ...(earlier ? updateChecks() : [...answerChecks(), ...categoryChecks()]),
+    ...(sent
+      ? [
+          "- This run cannot open pages (docket#66): a claim that rests on no gathered page " +
+            "cannot be checked here, so move it to `uncertain`.",
+        ]
+      : []),
+    ...(earlier ? updateChecks() : [...answerChecks(sent), ...categoryChecks()]),
     ...(earlier || sent ? [] : [...bestSourceChecks(canWait), ...firecrawlChecks()]),
     "",
     "Then give a verdict: `approve` if the draft stands as is and covers every part (leave " +
@@ -521,7 +527,7 @@ export function reviewJob(
  * The reviewer's checks of a full answer: the spike's, after the parts check (0.10.0), which
  * comes first so the rest is checked against what the question asked.
  */
-function answerChecks(): string[] {
+function answerChecks(sent = false): string[] {
   return [
     "- First work out the parts the question implies, including any list it takes for granted: " +
       '"the best in each of the major categories" means naming the major categories, then ' +
@@ -529,8 +535,10 @@ function answerChecks(): string[] {
       "or names it in `uncertain` with why it could not be settled. An answer that silently " +
       "skips a part is never approved: `revise` it, filling the part from the sources (or " +
       "naming it in `uncertain` when they cannot settle it), or `reject` it.",
-    "- Open the sources behind every claim a reader might act on, and confirm each one says what " +
-      "the claim says. A claim its sources do not support is corrected, moved to `uncertain`, or " +
+    (sent
+      ? "- Read the gathered page behind every claim a reader might act on, and confirm it says "
+      : "- Open the sources behind every claim a reader might act on, and confirm each one says ") +
+      "what the claim says. A claim its sources do not support is corrected, moved to `uncertain`, or " +
       "removed.",
     "- The summary says nothing the findings do not support, and answers the question asked.",
     "- Where sources disagree, the answer says so.",
