@@ -31,6 +31,7 @@ export {
 } from "./extract.js"
 export {
   checkDraft,
+  INTAKE_ALLOWED_TOOLS,
   INTAKE_MAX_BUDGET_USD,
   INTAKE_MAX_TURNS,
   INTAKE_SCHEMA,

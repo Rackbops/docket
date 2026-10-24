@@ -42,7 +42,7 @@ The tracker's task types, built on `@rackbops/docket-core`'s contract. Shipped s
   browser gathered and the host stored, quoted into their prompts as escaped data between
   markers: up to 10 pages, 12,000 characters each and 100,000 in all. Both runs may search
   the web but open no page at all (`GATHERED_ALLOWED_TOOLS`, `WebSearch` only, and a bare `WebFetch`
-  deny, since 0.14.1, docket#66); `SENT_DISALLOWED_TOOLS` still bars BoardGameGeek and eBay
+  deny, since 0.15.0, docket#66); `SENT_DISALLOWED_TOOLS` still bars BoardGameGeek and eBay
   besides. `researchType({ readSources })` builds the type over the host's store, read by task id at
   each run; `research` (and `TASK_TYPES`) has none, so a `sent` request there is not run. When a
   `sent` request runs is the host's: it moves the run to now once the pages are in. A run with no
