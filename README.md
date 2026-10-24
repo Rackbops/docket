@@ -221,8 +221,9 @@ epic is Rackbops/Tooling#816.
   game kicks off, the turn sent him to look it up): a turn may use `WebSearch` and nothing else
   (`INTAKE_ALLOWED_TOOLS`; `WebFetch` stays denied, so no page is opened), and the prompt tells it
   to search a public fact the task hangs on, say what it found in the person's time zone, and never
-  send the person off to look it up. Its caps rise to 6 turns, 0.25 USD and 120 s, inside the
-  tracker's 5-minute wait. No core change.
+  send the person off to look it up, with at most two searches, the person's own details kept out of
+  them and no link copied into the reply. Its caps rise to 8 turns, 0.25 USD and 120 s, inside the
+  tracker's 5-minute wait. Release order: docket 0.15.0 first, then the tracker bump that pins it. No core change.
 
 ## Use
 
