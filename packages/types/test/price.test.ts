@@ -49,7 +49,7 @@ async function observe(
 }
 
 describe("price", () => {
-  it("treats a 0 baseline kept from before 0.14.1 as no baseline (docket#40)", () => {
+  it("treats a 0 baseline kept from before 0.15.0 as no baseline (docket#40)", () => {
     const state = { first: 0, last: 0, peak: 0, below: false, misses: 0, alerts: 0 }
     expect(reference(state, "first")).toBeNull()
     expect(reference(state, "peak")).toBeNull()
