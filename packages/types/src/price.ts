@@ -84,14 +84,9 @@ function baselineRule(config: PriceConfig): BaselineRule {
 
 /** The price a drop is measured from under `rule`, or null before anything was seen. */
 export function reference(state: PriceState, rule: BaselineRule): number | null {
-  switch (rule) {
-    case "first":
-      return state.first
-    case "last":
-      return state.last
-    case "peak":
-      return state.peak
-  }
+  const ref = rule === "first" ? state.first : rule === "last" ? state.last : state.peak
+  // A baseline of 0 or less, kept from before 0.14.1, is no baseline: the next read sets a new one.
+  return ref !== null && ref > 0 ? ref : null
 }
 
 function miss(ctx: RunContext<PriceConfig>, state: PriceState, reason: string): Outcome {
@@ -151,6 +146,10 @@ export const price = defineTaskType<PriceConfig>({
     }
     const found = extractPrice(body, ctx.config.pattern)
     if (!found) return miss(ctx, state, "no price in the page")
+    // A 0 (or less) is a shop's out-of-stock or placeholder, not a price: as a baseline it made a
+    // later read of 0 alert "down NaN%", and under baseline "first" the watch never alerted again
+    // (docket#40).
+    if (found.value <= 0) return miss(ctx, state, `price ${found.value} is not a price`)
     const seen = found.value
     const currency = found.currency ?? ctx.config.currency ?? ""
     const point: SeriesObservation = currency

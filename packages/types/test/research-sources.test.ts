@@ -130,7 +130,11 @@ describe("gathered pages", () => {
       expect(spec.prompt).toContain("\\u003cb\\u003enow")
       // The page's own text cannot close the markers: only the real closing line is bare.
       expect(spec.prompt.split("\n").filter((l) => l === "PAGES>>>")).toHaveLength(1)
-      expect(spec.disallowedTools).toEqual([...DEFAULT_DISALLOWED_TOOLS, ...SENT_DISALLOWED_TOOLS])
+      expect(spec.disallowedTools).toEqual([
+        ...DEFAULT_DISALLOWED_TOOLS,
+        "WebFetch",
+        ...SENT_DISALLOWED_TOOLS,
+      ])
     }
     expect(SENT_DISALLOWED_TOOLS).toContain("WebFetch(domain:boardgamegeek.com)")
     expect(SENT_DISALLOWED_TOOLS).toContain("WebFetch(domain:*.boardgamegeek.com)")

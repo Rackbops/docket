@@ -5,6 +5,8 @@ import {
   BGG_CATEGORIES,
   bggCategoryUrl,
   FIRECRAWL_TOOLS,
+  GATHERED_ALLOWED_TOOLS,
+  GATHERED_DENIED_TOOLS,
   type GatheredPage,
   MAX_MESSAGE_CHARS,
   parseAnswer,
@@ -64,13 +66,38 @@ describe("Firecrawl tools by pass (0.11.0)", () => {
     }
   })
 
-  it("a sent request and a second pass keep the defaults and their bans unchanged", () => {
+  it("a sent request and a second pass get web search only, and deny WebFetch outright (docket#66)", () => {
+    expect(GATHERED_ALLOWED_TOOLS).toEqual(["WebSearch"])
+    expect(GATHERED_DENIED_TOOLS).toEqual(["WebFetch"])
     for (const spec of gatheredRuns()) {
-      expect(spec.allowedTools).toEqual([...DEFAULT_ALLOWED_TOOLS])
-      expect(spec.disallowedTools).toEqual([...DEFAULT_DISALLOWED_TOOLS, ...SENT_DISALLOWED_TOOLS])
+      expect(spec.allowedTools).toEqual(["WebSearch"])
+      expect(spec.allowedTools).not.toContain("WebFetch")
+      expect(spec.disallowedTools).toEqual([
+        ...DEFAULT_DISALLOWED_TOOLS,
+        "WebFetch",
+        ...SENT_DISALLOWED_TOOLS,
+      ])
       expect(spec.allowedTools?.some((t) => t.includes("firecrawl"))).toBe(false)
       expect(spec.prompt).not.toContain("firecrawl")
     }
+  })
+})
+
+describe("a run on gathered pages is told it cannot open pages (docket#66)", () => {
+  it("says so in the research prompt, first pass and second", () => {
+    for (const spec of [researchJob(SENT, PAGES), researchJob(WEB, PAGES, DRAFT)]) {
+      expect(spec.prompt).toContain("this run cannot open pages")
+      expect(spec.prompt).not.toContain("fetch other pages")
+      expect(spec.prompt).not.toContain("fetch pages to check facts")
+    }
+  })
+
+  it("says so in the reviewer's prompt, and asks it to read the gathered page, not open one", () => {
+    for (const spec of [reviewJob(SENT, DRAFT, PAGES), reviewJob(WEB, DRAFT, PAGES, DRAFT)]) {
+      expect(spec.prompt).toContain("This run cannot open pages")
+      expect(spec.prompt).not.toContain("Open the sources behind every claim")
+    }
+    expect(reviewJob(WEB, DRAFT).prompt).toContain("Open the sources behind every claim")
   })
 })
 
