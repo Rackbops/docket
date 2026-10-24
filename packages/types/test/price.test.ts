@@ -49,6 +49,17 @@ async function observe(
 }
 
 describe("price", () => {
+  it("takes a read of 0 as a miss, not a baseline, and baselines on the next real price (docket#40)", async () => {
+    const t = await tracked({ baseline: "first" })
+    const texts = await observe(t, [0, 0, 49.99, 44.99])
+    expect(texts).toEqual([
+      "Now tracking widget at 49.99 USD. I will say when it drops 10% or more from the first price seen. https://shop.example/widget",
+      "widget: 44.99 USD, down 10% from 49.99 USD (first seen). https://shop.example/widget",
+    ])
+    expect(texts.join("\n")).not.toContain("NaN")
+    expect((await t.store.listSeries(t.task.id)).map((p) => p.value)).toEqual([49.99, 44.99])
+  })
+
   it("alerts exactly once per crossing of the drop line, with the delta", async () => {
     const t = await tracked({ baseline: "first" })
     const texts = await observe(t, [49.99, 47.99, 44.99, 44.99, 42, 46, 44])

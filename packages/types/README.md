@@ -170,7 +170,8 @@ The tracker's task types, built on `@rackbops/docket-core`'s contract. Shipped s
   a tool's parameters, so the prompt is the only control for the proxy and for eBay through
   Firecrawl (`WEB_DISALLOWED_TOOLS` still denies eBay to WebFetch). The reviewer's eBay handling
   and the belt read the answer's addresses, so they apply whichever tool fetched the page. A run
-  on gathered pages keeps `DEFAULT_ALLOWED_TOOLS` and `SENT_DISALLOWED_TOOLS`. These Jobs need
+  on gathered pages gets `GATHERED_ALLOWED_TOOLS` (`WebSearch` only, docket#66) and denies
+  `WebFetch` outright (`GATHERED_DENIED_TOOLS`) besides `SENT_DISALLOWED_TOOLS`. These Jobs need
   runner 0.0.6 or later, whose ceiling admits the two names and which drops them when it has no
   Firecrawl key; an older runner fails them (0.0.5 throws `ToolCeilingError`), so the runner is
   released first.

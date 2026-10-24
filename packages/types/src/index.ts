@@ -126,6 +126,8 @@ export {
 export {
   BARRED_SITES,
   blockedKey,
+  GATHERED_ALLOWED_TOOLS,
+  GATHERED_DENIED_TOOLS,
   type GatheredPage,
   gatheredPages,
   MAX_GATHERED_CHARS,

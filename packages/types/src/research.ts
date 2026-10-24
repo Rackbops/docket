@@ -26,6 +26,8 @@ import {
   renderUpdate,
 } from "./research-answer.js"
 import {
+  GATHERED_ALLOWED_TOOLS,
+  GATHERED_DENIED_TOOLS,
   type GatheredPage,
   gatheredPages,
   pagesBlock,
@@ -284,18 +286,23 @@ function earlierBlock(earlier: ResearchAnswer): string[] {
 }
 
 /**
- * The runs' tool denials: the defaults, and BGG and eBay for a run on gathered pages; eBay alone
- * for a web first pass (0.10.0), which opens BoardGameGeek like any site.
+ * The runs' tool denials: the defaults, and for a run on gathered pages WebFetch itself (docket#66)
+ * besides the BGG and eBay rules; eBay alone for a web first pass (0.10.0), which opens
+ * BoardGameGeek like any site.
  */
 function disallowed(sent: boolean): string[] {
-  return [...DEFAULT_DISALLOWED_TOOLS, ...(sent ? SENT_DISALLOWED_TOOLS : WEB_DISALLOWED_TOOLS)]
+  return [
+    ...DEFAULT_DISALLOWED_TOOLS,
+    ...(sent ? [...GATHERED_DENIED_TOOLS, ...SENT_DISALLOWED_TOOLS] : WEB_DISALLOWED_TOOLS),
+  ]
 }
 
 /**
- * The runs' allowed tools (0.11.0): a web first pass adds the Firecrawl tools; a run on gathered
- * pages, or a second pass, keeps the defaults.
+ * The runs' allowed tools: a web first pass adds the Firecrawl tools (0.11.0); a run on gathered
+ * pages, first or second pass, gets web search only (docket#66); anything else keeps the defaults.
  */
-function allowed(webFirst: boolean): string[] {
+function allowed(webFirst: boolean, sent: boolean): string[] {
+  if (sent) return [...GATHERED_ALLOWED_TOOLS]
   return [...(webFirst ? WEB_ALLOWED_TOOLS : DEFAULT_ALLOWED_TOOLS)]
 }
 
@@ -325,8 +332,9 @@ export function researchJob(
     "",
     ...(sent
       ? [
-          "Start from the gathered pages. You may also search the web and fetch other pages to " +
-            "check or fill in facts, but not BoardGameGeek or eBay.",
+          "Start from the gathered pages. You may also search the web to check or fill in " +
+            "facts, but this run cannot open pages: a fact seen only in a search result, not in " +
+            "a gathered page, goes in `uncertain`.",
           "",
         ]
       : []),
@@ -336,7 +344,10 @@ export function researchJob(
     ...bestSourceLines(sent, canWait),
     ...(webFirst ? ["", ...firecrawlLines(), ...bggSearchHint()] : []),
     "",
-    "Use web search and fetch pages to check facts. Prefer primary sources (manufacturers, " +
+    (sent
+      ? "Use the pages and web search to check facts."
+      : "Use web search and fetch pages to check facts.") +
+      " Prefer primary sources (manufacturers, " +
       "government, utilities, standards bodies). Every claim that a reader might act on needs a " +
       "source you actually opened. Say plainly where sources disagree or where you are unsure.",
     "",
@@ -362,7 +373,7 @@ export function researchJob(
   return {
     prompt,
     jsonSchema: ANSWER_SCHEMA as unknown as Record<string, unknown>,
-    allowedTools: allowed(webFirst),
+    allowedTools: allowed(webFirst, sent),
     disallowedTools: disallowed(sent),
     maxTurns: RESEARCH_MAX_TURNS,
     maxBudgetUsd: RESEARCH_MAX_BUDGET_USD,
@@ -498,7 +509,7 @@ export function reviewJob(
   return {
     prompt,
     jsonSchema: REVIEW_SCHEMA as unknown as Record<string, unknown>,
-    allowedTools: allowed(!sent && earlier === undefined),
+    allowedTools: allowed(!sent && earlier === undefined, sent),
     disallowedTools: disallowed(sent),
     maxTurns: REVIEW_MAX_TURNS,
     maxBudgetUsd: REVIEW_MAX_BUDGET_USD,

@@ -11,22 +11,32 @@ export interface ExtractedPrice {
 }
 
 /**
- * Reads a number out of a price string: "$1,299.99", "1.299,99 EUR", "49,90", "USD 20". The
- * last separator followed by exactly two digits is the decimal mark; everything else is
- * grouping. Null when there is no digit.
+ * Reads a number out of a price string: "$1,299.99", "1.299,99 EUR", "49,90", "USD 20",
+ * "1 299". The number ends at the first character that cannot continue it; a space continues it
+ * only when exactly three digits follow (a thousands group), so "$12.99 2 left" is 12.99 and
+ * "$20 50% off" is 20 (docket#39). The last separator is the decimal mark when one, two, or four
+ * or more digits follow it, or when three follow a whole part of 0 ("0.995"); three digits after
+ * any other whole part are a thousands group, so "12.345" and "29.990" read as 12345 and 29990
+ * (free text cannot tell those from a decimal; a machine-written price goes through `asPrice`).
+ * Null when there is no digit.
  */
 export function parsePrice(text: string): number | null {
-  const m = /-?\d[\d.,\s]*/.exec(text.replace(/ /g, " "))
+  const m = /-?\d(?:[\d.,]|\s(?=\d{3}(?!\d)))*/.exec(text.replace(/\u00a0/g, " "))
   if (!m) return null
-  let digits = m[0].replace(/\s+/g, "")
+  let digits = m[0].replace(/\s+/g, "").replace(/[.,]+$/, "")
   const negative = digits.startsWith("-")
   if (negative) digits = digits.slice(1)
-  const decimal = /[.,](\d{1,2})$/.exec(digits)
   let whole = digits
   let fraction = ""
-  if (decimal) {
-    whole = digits.slice(0, decimal.index)
-    fraction = decimal[1] ?? ""
+  const last = /[.,](\d+)$/.exec(digits)
+  if (last) {
+    const tail = last[1] ?? ""
+    const before = digits.slice(0, last.index).replace(/[.,]/g, "")
+    const isDecimal = tail.length !== 3 || /^0*$/.test(before)
+    if (isDecimal) {
+      whole = digits.slice(0, last.index)
+      fraction = tail
+    }
   }
   whole = whole.replace(/[.,]/g, "")
   if (whole === "" && fraction === "") return null
@@ -34,6 +44,9 @@ export function parsePrice(text: string): number | null {
   if (!Number.isFinite(value)) return null
   return negative ? -value : value
 }
+
+/** A plain machine decimal, as schema.org and JSON bodies write a price: "29.990", "-5". */
+const MACHINE_DECIMAL = /^\s*-?\d+(\.\d+)?\s*$/
 
 const CURRENCY = /^[A-Z]{3}$/
 
@@ -45,7 +58,14 @@ function asCurrency(value: unknown): string | undefined {
 
 function asPrice(value: unknown): number | null {
   if (typeof value === "number") return Number.isFinite(value) ? value : null
-  if (typeof value === "string") return parsePrice(value)
+  if (typeof value === "string") {
+    // A structured price is written with a `.` decimal, so read it as one (docket#39).
+    if (MACHINE_DECIMAL.test(value)) {
+      const n = Number(value)
+      return Number.isFinite(n) ? n : null
+    }
+    return parsePrice(value)
+  }
   return null
 }
 

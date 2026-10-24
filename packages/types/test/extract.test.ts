@@ -15,6 +15,30 @@ describe("parsePrice", () => {
   })
 })
 
+describe("parsePrice on the audit's cases (docket#39)", () => {
+  it("stops at a space unless a thousands group follows", () => {
+    expect(parsePrice("$12.99 2 left")).toBe(12.99)
+    expect(parsePrice("$20 50% off")).toBe(20)
+    expect(parsePrice("1 299")).toBe(1299)
+    expect(parsePrice("1.299,99")).toBe(1299.99)
+    expect(parsePrice("$1,299.99")).toBe(1299.99)
+  })
+
+  it("reads four or more digits, or three after a 0, as a decimal", () => {
+    expect(parsePrice("29.0000")).toBe(29)
+    expect(parsePrice("0.995")).toBe(0.995)
+    // Three digits after any other whole part stay a thousands group in free text.
+    expect(parsePrice("29.990")).toBe(29990)
+  })
+
+  it("reads a machine-written JSON price as a plain decimal", () => {
+    expect(priceFromJson({ price: "29.990" })?.value).toBe(29.99)
+    expect(priceFromJson({ price: "0.995" })?.value).toBe(0.995)
+    expect(priceFromJson({ price: "29.0000" })?.value).toBe(29)
+    expect(priceFromJson({ price: "1.299,99" })?.value).toBe(1299.99)
+  })
+})
+
 describe("extractPrice", () => {
   it("prefers JSON-LD offers, with their currency", () => {
     const html = `<html><head>

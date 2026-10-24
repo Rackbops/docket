@@ -155,6 +155,18 @@ function barredDomains(everywhereOnly = false): string[] {
 export const SENT_DISALLOWED_TOOLS = barredDomains().map((host) => `WebFetch(domain:${host})`)
 
 /**
+ * What a run on gathered pages may use (docket#66, roshne 2026-10-24): web search only, no fetch.
+ * The pages come from the person's own logged-in browser and may hold personal data, and text in a
+ * hostile page could tell the model to fetch an address carrying another page's contents. Without
+ * WebFetch there is nothing to send it with. The bare `WebFetch` deny in `GATHERED_DENIED_TOOLS`
+ * backs up its absence here.
+ */
+export const GATHERED_ALLOWED_TOOLS: readonly string[] = ["WebSearch"]
+
+/** The fetch denial a run on gathered pages carries besides the BGG and eBay rules (docket#66). */
+export const GATHERED_DENIED_TOOLS: readonly string[] = ["WebFetch"]
+
+/**
  * What a web first pass, and its reviewer, may not fetch (0.10.0): eBay only (eBay's User
  * Agreement, section 3 (automated access)). BoardGameGeek they open like any site, and list a page
  * that refuses them in `blocked`.

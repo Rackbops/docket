@@ -154,7 +154,7 @@ epic is Rackbops/Tooling#816.
   page, as in 0.10.0. The prompt is the control for the proxy and for eBay through Firecrawl:
   permission rules cannot see a tool's parameters. The reviewer's eBay handling and the belt
   apply whichever tool fetched the page. Runs on gathered pages (a `sent` request, a second pass)
-  keep their tools and denials. The core's `DEFAULT_ALLOWED_TOOLS` is unchanged; the runner's
+  keep their tools and denials (narrowed to `WebSearch` in 0.14.1). The core's `DEFAULT_ALLOWED_TOOLS` is unchanged; the runner's
   tool ceiling gains the two names in a parallel Rackbops/docket-runner PR, and a runner with no
   Firecrawl key drops them. **Release order:** these Jobs need runner 0.0.6 or later (its
   ceiling admits the two names, and without a Firecrawl key it drops them); a runner older than
@@ -204,6 +204,16 @@ epic is Rackbops/Tooling#816.
   gains an optional `nullable` (the one an edit clears with `null`). Nothing here
   saves: the host shows the draft and saves it through its editor on the person's press. No core
   change.
+- **0.14.1 -- audit fixes** (Rod, 2026-10-24, "follow your recommendations", on the 2026-10-23
+  audit): a run on gathered pages (a `sent` request or a second pass, research and reviewer
+  alike) gets `WebSearch` only, and denies `WebFetch` outright (`GATHERED_ALLOWED_TOOLS`,
+  `GATHERED_DENIED_TOOLS`; docket#66): the pages come from the person's own browser, and a hostile
+  page could otherwise have the model fetch an address carrying another page's text; the prompt
+  says the run cannot open pages, and a fact seen only in a search result goes in `uncertain`.
+  `parsePrice` stops a number at a space unless a thousands group follows ("$12.99 2 left" is
+  12.99), and reads four or more digits after the last separator, or three after a 0, as a
+  decimal; a JSON price string such as "29.990" is read as a plain decimal (docket#39). The
+  price tracker takes a read of 0 or less as a miss, never a baseline (docket#40). No core change.
 
 ## Use
 

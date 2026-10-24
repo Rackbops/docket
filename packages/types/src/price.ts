@@ -151,6 +151,9 @@ export const price = defineTaskType<PriceConfig>({
     }
     const found = extractPrice(body, ctx.config.pattern)
     if (!found) return miss(ctx, state, "no price in the page")
+    // A 0 (or less) is a shop's out-of-stock or placeholder, not a price: as a baseline it made
+    // the next read alert "down NaN%" and ended the watch (docket#40).
+    if (found.value <= 0) return miss(ctx, state, `price ${found.value} is not a price`)
     const seen = found.value
     const currency = found.currency ?? ctx.config.currency ?? ""
     const point: SeriesObservation = currency
