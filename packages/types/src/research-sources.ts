@@ -148,7 +148,7 @@ function barredDomains(everywhereOnly = false): string[] {
  * read 2026-10-13): `domain:host` matches that host only, `domain:*.host` any subdomain at any
  * depth, and a `*` elsewhere one label, so `ebay.*` is `ebay.fr` and `ebay.co.*` is `ebay.co.uk`.
  * Whether `*.ebay.*` (a leading and a later `*`) is accepted is inferred from that wording. Deny
- * rules beat an allowed `WebFetch`; since 0.14.1 these runs are not allowed `WebFetch` at all
+ * rules beat an allowed `WebFetch`; since 0.15.0 these runs are not allowed `WebFetch` at all
  * (`GATHERED_ALLOWED_TOOLS`), so these rules are a second wall. WebSearch cannot be limited by site, so a search may
  * still list their pages; the run cannot open them there (a cache or proxy site could still serve
  * them: not covered).

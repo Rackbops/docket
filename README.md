@@ -154,7 +154,7 @@ epic is Rackbops/Tooling#816.
   page, as in 0.10.0. The prompt is the control for the proxy and for eBay through Firecrawl:
   permission rules cannot see a tool's parameters. The reviewer's eBay handling and the belt
   apply whichever tool fetched the page. Runs on gathered pages (a `sent` request, a second pass)
-  keep their tools and denials (in 0.14.1 they lose `WebFetch`: `WebSearch` only, docket#66). The core's `DEFAULT_ALLOWED_TOOLS` is unchanged; the runner's
+  keep their tools and denials (in 0.15.0 they lose `WebFetch`: `WebSearch` only, docket#66). The core's `DEFAULT_ALLOWED_TOOLS` is unchanged; the runner's
   tool ceiling gains the two names in a parallel Rackbops/docket-runner PR, and a runner with no
   Firecrawl key drops them. **Release order:** these Jobs need runner 0.0.6 or later (its
   ceiling admits the two names, and without a Firecrawl key it drops them); a runner older than
@@ -204,8 +204,8 @@ epic is Rackbops/Tooling#816.
   gains an optional `nullable` (the one an edit clears with `null`). Nothing here
   saves: the host shows the draft and saves it through its editor on the person's press. No core
   change.
-- **0.14.1 -- audit fixes** (Rod, 2026-10-24, "follow your recommendations", on the 2026-10-23
-  audit): a run on gathered pages (a `sent` request or a second pass, research and reviewer
+- **0.15.0 -- audit fixes, and the intake looks things up** (never released as 0.14.1). The audit
+  fixes (Rod, 2026-10-24, "follow your recommendations", on the 2026-10-23 audit): a run on gathered pages (a `sent` request or a second pass, research and reviewer
   alike) gets `WebSearch` only, and denies `WebFetch` outright (`GATHERED_ALLOWED_TOOLS`,
   `GATHERED_DENIED_TOOLS`; docket#66): the pages come from the person's own browser, and a hostile
   page could otherwise have the model fetch an address carrying another page's text; the prompt
@@ -217,7 +217,13 @@ epic is Rackbops/Tooling#816.
   three digits after a separator ("29.990" is 29990 there): free text cannot tell the two apart.
   The price tracker takes a read of 0 or less as a miss, never a baseline, and a 0 baseline kept
   from before is replaced by the next real read (docket#40). The reviewer on gathered pages is
-  told it cannot open pages. No core change.
+  told it cannot open pages. The intake (Rod's first test, 2026-10-24, "Not ideal": asked when a
+  game kicks off, the turn sent him to look it up): a turn may use `WebSearch` and nothing else
+  (`INTAKE_ALLOWED_TOOLS`; `WebFetch` stays denied, so no page is opened), and the prompt tells it
+  to search a public fact the task hangs on, say what it found in the person's time zone, and never
+  send the person off to look it up, with at most two searches, the person's own details kept out of
+  them and no link copied into the reply. Its caps rise to 8 turns, 0.25 USD and 120 s, inside the
+  tracker's 5-minute wait. Release order: docket 0.15.0 first, then the tracker bump that pins it. No core change.
 
 ## Use
 
