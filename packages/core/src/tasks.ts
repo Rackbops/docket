@@ -2,8 +2,8 @@ import { CAPABILITY_TIER, type Capability } from "./capabilities.js"
 import type { TaskType } from "./contract.js"
 import type { Occurrence, Task, User } from "./model.js"
 import type { Actor, Store } from "./ports.js"
-import { type Schedule, scheduleProblems } from "./schedule.js"
-import { materialize, ScheduleError } from "./scheduler.js"
+import type { Schedule } from "./schedule.js"
+import { checkSchedule, materialize } from "./scheduler.js"
 
 /**
  * Creating a task (plan sections 5.2, 5.6). The lane comes from the type; the capabilities a new
@@ -41,13 +41,7 @@ export async function createTask<Config>(
   if (!actor.admin && actor.userId !== owner.id) {
     throw new TaskError("only the owner or an admin creates a task for a person")
   }
-  if (input.schedule) {
-    if (!input.type.schedule.includes(input.schedule.kind)) {
-      throw new ScheduleError(`${input.type.id} does not accept a ${input.schedule.kind} schedule`)
-    }
-    const problems = scheduleProblems(input.schedule)
-    if (problems.length > 0) throw new ScheduleError(problems.join("; "))
-  }
+  if (input.schedule) checkSchedule(input.schedule, input.type as TaskType<unknown>)
   const at = now.toISOString()
   const task = await store.createTask({
     ownerId: owner.id,

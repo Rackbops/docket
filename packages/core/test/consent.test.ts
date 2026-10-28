@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest"
 
 import {
+  ConsentError,
   createTask,
   DECLINE_BLOCK_MS,
   invite,
@@ -77,6 +78,22 @@ describe("the decline rule", () => {
     expect(await store.listBlocks(larry.id, moe.id)).toEqual([])
     expect((await store.listRecipients(task.id))[0]?.state).toBe("opted_out")
     expect((await invite(store, actor(larry), task, moe.id, clock.now())).ok).toBe(true)
+  })
+
+  it("refuses an opt-out from anyone but an accepted recipient, storing nothing (docket#49)", async () => {
+    const { store, clock, task, larry, moe, curly } = await setup()
+    await invite(store, actor(larry), task, moe.id, clock.now())
+    // Invited, never accepted: an opt-out would dodge the decline rule's block.
+    await expect(optOut(store, task, moe.id, clock.now())).rejects.toThrow(ConsentError)
+    expect((await store.listRecipients(task.id))[0]?.state).toBe("invited")
+    // No row at all (a stranger, or the owner): no recipient row is made.
+    await expect(optOut(store, task, curly.id, clock.now())).rejects.toThrow(ConsentError)
+    await expect(optOut(store, task, larry.id, clock.now())).rejects.toThrow(ConsentError)
+    expect((await store.listRecipients(task.id)).map((r) => r.userId)).toEqual([moe.id])
+    expect(await store.listReplies(task.id)).toEqual([])
+    // The decline rule still applies to the invited one.
+    await respondToInvite(store, task, moe.id, "decline", clock.now())
+    expect(await store.listBlocks(larry.id, moe.id)).toHaveLength(1)
   })
 
   it("lets only the owner or an admin invite, and never the owner themselves", async () => {

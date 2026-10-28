@@ -17,6 +17,7 @@ import type {
   User,
 } from "./model.js"
 import type {
+  DeleteGuard,
   DeliveryFilter,
   DeliverySettle,
   FindingFilter,
@@ -272,8 +273,17 @@ export class MemoryStore implements Store {
     return this.updateOccurrence(id, patch)
   }
 
-  async deleteOccurrence(id: string): Promise<boolean> {
-    if (this.occurrences.get(id)?.status !== "queued") return false
+  async deleteOccurrence(id: string, guard?: DeleteGuard): Promise<boolean> {
+    const cur = this.occurrences.get(id)
+    if (cur?.status !== "queued") return false
+    if (guard) {
+      if (cur.record !== null) return false
+      const from =
+        guard.lastEventId === null ? 0 : this.events.findIndex((e) => e.id === guard.lastEventId)
+      if (from < 0) return false
+      const after = guard.lastEventId === null ? from : from + 1
+      if (this.events.slice(after).some((e) => e.occurrenceId === id)) return false
+    }
     return this.occurrences.delete(id)
   }
 
@@ -340,11 +350,15 @@ export class MemoryStore implements Store {
   }
 
   async listSeries(taskId: string, filter: SeriesFilter = {}): Promise<SeriesPoint[]> {
+    // Ties on `at` keep insertion order, never string id order (`s10` before `s9`; docket#48).
     const points = this.series
-      .filter((p) => p.taskId === taskId)
-      .filter((p) => filter.since === undefined || p.at >= filter.since)
-      .sort((a, b) => a.at.localeCompare(b.at) || a.id.localeCompare(b.id))
-    const kept = filter.limit === undefined ? points : points.slice(-filter.limit)
+      .map((p, i) => ({ p, i }))
+      .filter(({ p }) => p.taskId === taskId)
+      .filter(({ p }) => filter.since === undefined || p.at >= filter.since)
+      .sort((a, b) => a.p.at.localeCompare(b.p.at) || a.i - b.i)
+      .map(({ p }) => p)
+    const limit = filter.limit
+    const kept = limit === undefined ? points : !(limit >= 1) ? [] : points.slice(-limit)
     return kept.map((p) => MemoryStore.copy(p))
   }
 

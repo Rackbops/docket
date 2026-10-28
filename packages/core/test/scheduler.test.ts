@@ -1,6 +1,16 @@
 import { describe, expect, it } from "vitest"
 
-import { createTask, materialize, reschedule, type Schedule } from "../src/index.js"
+import {
+  cancelScheduledRuns,
+  createTask,
+  DISPATCHER,
+  materialize,
+  reschedule,
+  type Schedule,
+  ScheduleError,
+  type Store,
+  SUBMITTED_EVENT,
+} from "../src/index.js"
 import { actor, FakeClock, MemoryStore, people, T0 } from "./helpers.js"
 
 const type = {
@@ -89,5 +99,62 @@ describe("materialization", () => {
         clock.now(),
       ),
     ).rejects.toThrow(/every/)
+  })
+
+  it("refuses an edit to a kind the type does not accept, as creation does (docket#50)", async () => {
+    const store = new MemoryStore()
+    const clock = new FakeClock(new Date(T0))
+    const { larry } = await people(store)
+    const { task } = await createTask(
+      store,
+      actor(larry),
+      larry,
+      { type, title: "t", config: {}, schedule: daily },
+      clock.now(),
+    )
+    const poll: Schedule = { kind: "poll", every: 1, unit: "hour", start: T0 }
+    await expect(reschedule(store, task, larry, poll, larry.id, clock.now(), type)).rejects.toThrow(
+      ScheduleError,
+    )
+    await expect(reschedule(store, task, larry, poll, larry.id, clock.now(), type)).rejects.toThrow(
+      "reminder does not accept a poll schedule",
+    )
+    expect((await store.getTask(task.id))?.schedule).toEqual(daily)
+    expect(await store.listOccurrences({ taskId: task.id })).toHaveLength(1)
+    // An accepted kind still goes through.
+    const once: Schedule = { kind: "once", at: "2026-03-05T15:00:00.000Z" }
+    const result = await reschedule(store, task, larry, once, larry.id, clock.now(), type)
+    expect(result.task.schedule).toEqual(once)
+  })
+
+  it("keeps a run whose Job went out between a cancel's checks and its delete (docket#55)", async () => {
+    const store = new MemoryStore()
+    const clock = new FakeClock(new Date(T0))
+    const { larry } = await people(store)
+    const exec = { ...type, id: "research", lane: "execute" as const }
+    const { task } = await createTask(
+      store,
+      actor(larry),
+      larry,
+      { type: exec, title: "t", config: {}, schedule: daily },
+      clock.now(),
+    )
+    const [run] = await store.listOccurrences({ taskId: task.id })
+    // A lane submits the run's Job inside the cancel's window: its event lands just before the
+    // delete.
+    const racing: Store = Object.assign(Object.create(store), {
+      async deleteOccurrence(...args: Parameters<Store["deleteOccurrence"]>) {
+        await store.addEvent({
+          occurrenceId: args[0],
+          agent: DISPATCHER,
+          type: "status",
+          text: SUBMITTED_EVENT,
+          at: clock.now().toISOString(),
+        })
+        return store.deleteOccurrence(...args)
+      },
+    })
+    expect(await cancelScheduledRuns(racing, task.id)).toBe(0)
+    expect(await store.getOccurrence(run?.id ?? "")).not.toBeNull()
   })
 })

@@ -53,7 +53,7 @@ import {
   type Store,
 } from "./ports.js"
 import { hasFired, isFinishing, parseRunRecord } from "./record.js"
-import { isLate, materialize } from "./scheduler.js"
+import { deleteIdleRun, isLate, materialize } from "./scheduler.js"
 import { clean } from "./text.js"
 
 /**
@@ -317,8 +317,9 @@ export class Lanes {
    * Routes a reply to the task: consent replies here, the rest to the type. A run's done, snooze
    * or decision is the owner's, once per run (`runRefusal`); anything else throws
    * `ReplyRefusedError` and stores nothing. Text is stored whoever sends it -- the host gates who
-   * may reply -- and routed to the type when the task is active and the reply names a run; no
-   * type acts on text today. "Once" holds when the host handles one task's replies one
+   * may reply -- and routed to the type when the task is active and the reply names one of this
+   * task's runs; no type acts on text today, and an outcome's `complete` or `snoozeUntil` from
+   * anyone but the owner is dropped (docket#54). "Once" holds when the host handles one task's replies one
    * at a time; two truly concurrent answers can both pass (a snooze still queues one run). A run
    * reply names its run, so a host's `/task done <task>` has to pick one (the latest fired).
    */
@@ -345,9 +346,15 @@ export class Lanes {
     const loaded = await this.load(task)
     if ("error" in loaded || !loaded.type.onReply) return null
     const occurrence = input.occurrenceId ? await store.getOccurrence(input.occurrenceId) : null
-    if (!occurrence) return null
+    // Another task's run is no run of this one: never hand it to this type (docket#54).
+    if (!occurrence || occurrence.taskId !== task.id) return null
     const ctx = await this.context(loaded, occurrence, now)
-    const outcome = await loaded.type.onReply({ ...ctx, reply })
+    const outcome: Outcome = { ...(await loaded.type.onReply({ ...ctx, reply })) }
+    // Only the owner ends or snoozes the task; a recipient's text never does (docket#54).
+    if (input.userId !== task.ownerId) {
+      delete outcome.complete
+      delete outcome.snoozeUntil
+    }
     // A reply's findings are keyed by the reply, so one answered twice is stored once. A reply
     // queues no follow-up (`Outcome.followUp` is for runs).
     await this.apply(task, outcome, now, null, `reply:${reply.id}`)
@@ -532,7 +539,7 @@ export class Lanes {
     const at = now.toISOString()
     for (const o of await store.listOccurrences({ taskId: task.id, status: "queued" })) {
       // A run whose Job is out stays, to be collected and charged (its outcome is then dropped).
-      if (!hasFired(o) && !(await hasJobOut(store, o))) await store.deleteOccurrence(o.id)
+      await deleteIdleRun(store, o)
     }
     await store.updateTask(task.id, { status: "done", at })
     await store.addTaskEvent({ taskId: task.id, actorId, kind: "completed", detail: "", at })

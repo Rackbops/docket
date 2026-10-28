@@ -132,7 +132,12 @@ export async function respondToInvite(
   return { recipient, reply, block }
 }
 
-/** An accepted recipient stops receiving. Not a decline: no block is written. */
+/**
+ * An accepted recipient stops receiving. Not a decline: no block is written. Anyone else -- an
+ * invited person who never accepted, someone already out, a stranger -- gets a `ConsentError`
+ * and nothing is stored: an opt-out from `invited` would dodge the decline rule's block
+ * (docket#49).
+ */
 export async function optOut(
   store: Store,
   task: Task,
@@ -140,6 +145,10 @@ export async function optOut(
   now: Date,
   occurrenceId: string | null = null,
 ): Promise<Reply> {
+  const existing = (await store.listRecipients(task.id)).find((r) => r.userId === recipientId)
+  if (existing?.state !== "accepted") {
+    throw new ConsentError(`${recipientId} is not an accepted recipient of task ${task.id}`)
+  }
   const at = now.toISOString()
   await store.setRecipient(task.id, recipientId, "opted_out", at)
   await store.addTaskEvent({

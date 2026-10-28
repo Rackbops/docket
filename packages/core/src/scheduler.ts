@@ -1,3 +1,4 @@
+import type { TaskType } from "./contract.js"
 import { isOffSchedule, scheduledKey } from "./dedupe.js"
 import { hasJobOut } from "./job-state.js"
 import type { Occurrence, Task, User } from "./model.js"
@@ -20,6 +21,19 @@ export const LATE_AFTER_MS = 5 * 60_000
 
 export class ScheduleError extends Error {
   override name = "ScheduleError"
+}
+
+/**
+ * Throws a `ScheduleError` when `schedule` is malformed or, given the task's `type`, a kind the
+ * type does not accept. `createTask` and `reschedule` share it, so an edit can never give a task
+ * a schedule its creation would have refused (docket#50).
+ */
+export function checkSchedule(schedule: Schedule, type?: TaskType<unknown>): void {
+  if (type && !type.schedule.includes(schedule.kind)) {
+    throw new ScheduleError(`${type.id} does not accept a ${schedule.kind} schedule`)
+  }
+  const problems = scheduleProblems(schedule)
+  if (problems.length > 0) throw new ScheduleError(problems.join("; "))
 }
 
 export function isLate(occurrence: Occurrence, now: Date): boolean {
@@ -90,10 +104,21 @@ export interface RescheduleResult {
 export async function cancelScheduledRuns(store: Store, taskId: string): Promise<number> {
   let removed = 0
   for (const o of await store.listOccurrences({ taskId, status: "queued" })) {
-    if (isOffSchedule(o.dedupeKey) || hasFired(o) || (await hasJobOut(store, o))) continue
-    if (await store.deleteOccurrence(o.id)) removed += 1
+    if (isOffSchedule(o.dedupeKey)) continue
+    if (await deleteIdleRun(store, o)) removed += 1
   }
   return removed
+}
+
+/**
+ * Deletes a queued run that has not fired and has no Job out; true when it did. The checks read
+ * the run, then the delete is guarded by the last event read (`DeleteGuard`), so a lane that
+ * fires the run or submits its Job in between makes the delete a no-op (docket#55).
+ */
+export async function deleteIdleRun(store: Store, o: Occurrence): Promise<boolean> {
+  const lastEventId = (await store.listEvents(o.id)).at(-1)?.id ?? null
+  if (hasFired(o) || (await hasJobOut(store, o))) return false
+  return store.deleteOccurrence(o.id, { lastEventId })
 }
 
 async function anyJobOut(store: Store, taskId: string): Promise<boolean> {
@@ -105,8 +130,10 @@ async function anyJobOut(store: Store, taskId: string): Promise<boolean> {
 
 /**
  * Replaces the schedule: cancels the queued scheduled runs (`cancelScheduledRuns`, snoozes kept),
- * records the edit, materializes the next. Refused (`ScheduleError`) for a `once` schedule, old or
- * new, while the task's run has a Job out: that run is the task, and the edit would run it twice.
+ * records the edit, materializes the next. Refused (`ScheduleError`) for a malformed schedule, for
+ * a kind the task's `type` does not accept when the host passes the type (`checkSchedule`), and for
+ * a `once` schedule, old or new, while the task's run has a Job out: that run is the task, and the
+ * edit would run it twice.
  *
  * The host serializes this with the lanes per task: a run firing between the cancel and the
  * schedule write materializes its next run from the old schedule, and that run survives beside
@@ -120,11 +147,9 @@ export async function reschedule(
   schedule: Schedule | null,
   actorId: string | null,
   now: Date,
+  type?: TaskType<unknown>,
 ): Promise<RescheduleResult> {
-  if (schedule) {
-    const problems = scheduleProblems(schedule)
-    if (problems.length > 0) throw new ScheduleError(problems.join("; "))
-  }
+  if (schedule) checkSchedule(schedule, type)
   const jobOut = await anyJobOut(store, task.id)
   // A `once` task's run is the task: with its Job out, a new instant would run it twice.
   if (jobOut && (schedule?.kind === "once" || task.schedule?.kind === "once")) {

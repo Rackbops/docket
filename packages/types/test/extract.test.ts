@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest"
 
 import {
   extractPrice,
+  jsonLdBlocks,
   MAX_PATTERN_BODY_CHARS,
   MAX_PATTERN_CHARS,
   parsePrice,
@@ -128,5 +129,32 @@ describe("the owner's pattern (docket#45)", () => {
     const past = `${"x".repeat(MAX_PATTERN_BODY_CHARS)}price: 9`
     expect(priceFromPattern(past, "price: (\\d+)")).toBeNull()
     expect(priceFromPattern(`price: 9${past}`, "price: (\\d+)")).toEqual({ value: 9 })
+  })
+})
+
+describe("JSON-LD as pages write it (docket#56)", () => {
+  it("finds a block whose type is unquoted", () => {
+    const ld = JSON.stringify({
+      "@type": "Product",
+      offers: { price: "19.99", priceCurrency: "USD" },
+    })
+    expect(jsonLdBlocks(`<script type=application/ld+json>${ld}</script>`)).toHaveLength(1)
+    expect(extractPrice(`<script defer type=application/ld+json id=x>${ld}</script>`)).toEqual({
+      value: 19.99,
+      currency: "USD",
+    })
+    expect(jsonLdBlocks(`<script type=application/ld+jsonx>${ld}</script>`)).toHaveLength(0)
+  })
+
+  it("takes a record's own price before its offers, as the comment says", () => {
+    expect(priceFromJson({ price: "5", offers: { price: "10" } })).toEqual({ value: 5 })
+    expect(
+      priceFromJson({
+        priceSpecification: { price: 7 },
+        offers: { price: 10 },
+        other: { price: 1 },
+      }),
+    ).toEqual({ value: 7 })
+    expect(priceFromJson({ other: { price: 1 }, offers: { price: 10 } })).toEqual({ value: 10 })
   })
 })

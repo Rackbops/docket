@@ -83,17 +83,26 @@ export interface Spent {
   calls: number
 }
 
+/** A cost as charged: a negative or non-finite one counts as nothing (docket#51). */
+function costOf(usd: number | null | undefined): number {
+  return typeof usd === "number" && Number.isFinite(usd) && usd > 0 ? usd : 0
+}
+
+/** The day's spend; a negative cost stored before docket#51 never lowers it. */
 export function spent(rows: readonly Usage[]): Spent {
-  return rows.reduce((s, r) => ({ usd: s.usd + r.costUsd, calls: s.calls + r.calls }), {
+  return rows.reduce((s, r) => ({ usd: s.usd + costOf(r.costUsd), calls: s.calls + r.calls }), {
     usd: 0,
     calls: 0,
   })
 }
 
+/** How far under a USD limit a float sum still counts as at it: ten 0.2 charges are 2 USD. */
+const USD_EPSILON = 1e-9
+
 /** Which ceiling `used` has reached, calls first since it is the hard count; null when neither. */
 export function reached(used: Spent, limits: BudgetLimits): "calls" | "usd" | null {
   if (limits.calls !== null && used.calls >= limits.calls) return "calls"
-  if (limits.usd !== null && used.usd >= limits.usd) return "usd"
+  if (limits.usd !== null && used.usd >= limits.usd - USD_EPSILON) return "usd"
   return null
 }
 
@@ -162,7 +171,7 @@ export async function charge(store: Store, c: Charge): Promise<Usage> {
     source: c.source,
     key: c.key ?? null,
     calls: c.calls,
-    costUsd: c.costUsd ?? 0,
+    costUsd: costOf(c.costUsd),
     at: c.at.toISOString(),
   })
 }

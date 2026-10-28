@@ -39,6 +39,30 @@ for the plain-code types (the price tracker reads pages through it, via `RunCont
 every model call runs in the runner, through the Claude Code CLI on roshne's subscription, never an
 API key.
 
+## Adopting the audit fixes (the release after 0.15.0)
+
+The fixes for roshne's 2026-10-23 audit (#73, #74) tighten three Store rules and add two calls a
+host should make. Run `STORE_CONTRACT` against the Store: each rule below is a case there, and a
+store that skips one fails it.
+
+**Store**
+
+- `settleDelivery(o, u, settle, expected?)` with `expected` writes only while the row's status is
+  `expected` (`UPDATE ... WHERE status = ?`) and otherwise changes nothing, returning the row as
+  it stands; a missing row still throws (#47).
+- `deleteOccurrence(id, guard?)` with a `guard` deletes only while the run is `queued`, has no
+  record, and has no event after `guard.lastEventId` (none at all when it is null); an event id
+  it cannot find refuses too (#55).
+- `listSeries` breaks equal timestamps by insertion order, and a `limit` below 1 returns no
+  points (#48).
+
+**Calls**
+
+- Pass the task's type as `reschedule`'s seventh argument, so an edit is checked against the
+  schedule kinds the type takes, as `createTask` checks a new task (#50).
+- Call docket-types' `patternProblem` when a price watch with a pattern is saved, so the owner
+  hears at once rather than on the third miss (#45).
+
 ## Adopting 0.5.0
 
 0.5.0 adds what the `research` type (docket-types, plan 1.2 row 5) needs: a follow-up run, stored
