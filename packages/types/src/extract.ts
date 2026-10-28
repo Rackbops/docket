@@ -162,8 +162,11 @@ export function priceFromMeta(html: string): ExtractedPrice | null {
 export const MAX_PATTERN_CHARS = 300
 /**
  * How much of a body an owner's pattern runs over. The price type runs on the notify lane, which
- * never waits (plan 5.3), and a pattern runs on the event loop: the cap bounds a slow pattern
- * that `patternProblem` lets through. A host that wants a hard bound runs it off the loop.
+ * never waits (plan 5.3), and a pattern runs on the event loop. `patternProblem` refuses the
+ * exponential shapes; the cap only limits the rest. It does not bound a polynomial one: an
+ * unanchored `.*\$(\d+)` over a one-line body with no `$` grows with the square of the length
+ * (about 6 s at 80,000 characters in review). A host that needs a hard bound runs the pattern
+ * off the loop, with a timeout.
  */
 export const MAX_PATTERN_BODY_CHARS = 500_000
 
