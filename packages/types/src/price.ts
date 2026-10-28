@@ -50,7 +50,7 @@ export interface PriceState {
   /**
    * The currency the prices above are in, upper-cased, when the page or the config named one. A
    * read in another currency is a miss, never a drop (docket#59). Absent in a state from before
-   * 0.16.0; the next read fills it in.
+   * docket#59; the next read fills it in.
    */
   currency?: string
 }

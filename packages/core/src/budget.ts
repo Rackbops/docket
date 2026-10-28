@@ -88,7 +88,7 @@ function costOf(usd: number | null | undefined): number {
   return typeof usd === "number" && Number.isFinite(usd) && usd > 0 ? usd : 0
 }
 
-/** The day's spend; a negative cost stored before 0.16.0 never lowers it. */
+/** The day's spend; a negative cost stored before docket#51 never lowers it. */
 export function spent(rows: readonly Usage[]): Spent {
   return rows.reduce((s, r) => ({ usd: s.usd + costOf(r.costUsd), calls: s.calls + r.calls }), {
     usd: 0,

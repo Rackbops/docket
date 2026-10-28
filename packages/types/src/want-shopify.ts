@@ -130,7 +130,7 @@ function listingUrl(raw: unknown): string | null {
   return safeUrl(u.toString())
 }
 
-/** ISO 4217 currencies whose minor unit is not a hundredth: none (JPY, KRW, ...) or a thousandth (KWD, ...). */
+/** Re-exported from `money.ts`, its home since docket#61, for callers that import it from here. */
 export { minorUnits }
 
 /** A price object `{ amount, currency }` in minor units, as a value and a code; null without both. */

@@ -740,6 +740,13 @@ export const STORE_CONTRACT: readonly StoreContractCase[] = [
         at: MID,
       })
       same(await store.deleteOccurrence(busy, { lastEventId: seen }), false, "a later event")
+      // An id the store cannot find proves nothing about what was seen: refuse, even on a run
+      // with no events.
+      same(
+        await store.deleteOccurrence(await make("ghost"), { lastEventId: "no-such-event" }),
+        false,
+        "an event id the store cannot find",
+      )
       check((await store.getOccurrence(busy)) !== null, "the run with a later event is kept")
       const later = (await store.listEvents(busy)).at(-1)?.id ?? null
       same(await store.deleteOccurrence(busy, { lastEventId: later }), true, "all seen: deleted")

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 
-import { createTask } from "../src/index.js"
+import { createTask, DISPATCHER, Lanes, type Store, SUBMITTED_EVENT } from "../src/index.js"
 import { actor } from "./helpers.js"
 import { setup } from "./run-helpers.js"
 
@@ -60,5 +60,32 @@ describe("a text reply (docket#54)", () => {
     expect(outcome).toBeNull()
     expect(called).toBe(0)
     expect((await store.getTask(task.id))?.status).toBe("active")
+  })
+
+  it("keeps a queued run whose Job went out while the task was completing (docket#55)", async () => {
+    const { store, clock, notifier, lanes, task, type, runId, larry } = await setup()
+    await lanes.tickNotify()
+    const id = await runId()
+    type.onReply = async () => ({ complete: true })
+    // A lane submits the next run's Job inside complete's window: its event lands just before
+    // the delete, so the guarded delete must keep the run to be collected and charged.
+    const racing: Store = Object.assign(Object.create(store), {
+      async deleteOccurrence(...args: Parameters<Store["deleteOccurrence"]>) {
+        await store.addEvent({
+          occurrenceId: args[0],
+          agent: DISPATCHER,
+          type: "status",
+          text: SUBMITTED_EVENT,
+          at: clock.now().toISOString(),
+        })
+        return store.deleteOccurrence(...args)
+      },
+    })
+    const raced = new Lanes({ store: racing, clock, types: { crossing: type }, notifier })
+    const queued = await store.listOccurrences({ taskId: task.id, status: "queued" })
+    expect(queued).toHaveLength(1)
+    await raced.reply({ taskId: task.id, occurrenceId: id, userId: larry.id, kind: "done" })
+    expect((await store.getTask(task.id))?.status).toBe("done")
+    expect(await store.getOccurrence(queued[0]?.id ?? "")).not.toBeNull()
   })
 })
