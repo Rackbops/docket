@@ -39,9 +39,9 @@ for the plain-code types (the price tracker reads pages through it, via `RunCont
 every model call runs in the runner, through the Claude Code CLI on roshne's subscription, never an
 API key.
 
-## Adopting the audit fixes (the release after 0.15.0)
+## Adopting 0.16.0
 
-The fixes for roshne's 2026-10-23 audit (#73, #74) tighten three Store rules and add two calls a
+The fixes for roshne's 2026-10-23 audit (#73, #74, #75) tighten three Store rules and add two calls a
 host should make. Run `STORE_CONTRACT` against the Store: each rule below is a case there, and a
 store that skips one fails it.
 
@@ -62,6 +62,9 @@ store that skips one fails it.
   schedule kinds the type takes, as `createTask` checks a new task (#50).
 - Call docket-types' `patternProblem` when a price watch with a pattern is saved, so the owner
   hears at once rather than on the third miss (#45).
+
+**Removed** (#75; unused by the tracker): `manualKey` and `deliveredTo` from docket-core, and
+`listingsFromJsonLd` from docket-types.
 
 ## Adopting 0.5.0
 

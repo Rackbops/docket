@@ -225,6 +225,16 @@ epic is Rackbops/Tooling#816.
   send the person off to look it up, with at most two searches, the person's own details kept out of
   them and no link copied into the reply. Its caps rise to 8 turns, 0.25 USD and 120 s, inside the
   tracker's 5-minute wait. Release order: docket 0.15.0 first, then the tracker bump that pins it. No core change.
+- **0.16.0 -- the rest of the 2026-10-23 audit** (Rod, 2026-10-28, "Release both now"). Breaking:
+  `manualKey`, `deliveredTo` (core) and `listingsFromJsonLd` (types) are removed, unused by the
+  tracker (#75). The Store tightens three rules a host's store must follow, each a
+  `STORE_CONTRACT` case: an expected-status `settleDelivery`, a guarded `deleteOccurrence`, and
+  `listSeries` ordering and limits; `reschedule` takes the task's type (the core README's
+  "Adopting 0.16.0"). Fall-back local times, the calendar horizon, owner patterns, eBay and price
+  currencies, the reply guard and money digits are fixed (#73, #74); currencies are read one way
+  (`currencyCode`), one retry policy serves research, scout and the judge, and a period schedule
+  starts its walk near now (#75). The tracker adopts the Store rules before it pins 0.16.0
+  (rackbops-bot-plugins#364).
 
 ## Use
 
