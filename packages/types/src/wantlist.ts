@@ -6,11 +6,9 @@ import {
   type RunContext,
   type TaskType,
 } from "@rackbops/docket-core"
-import { money } from "./money.js"
+import { currencyCode, money } from "./money.js"
 import { MISSES_BEFORE_TELLING } from "./price.js"
-import { BGG_ATTRIBUTION } from "./want-bgg.js"
-import { EBAY_ATTRIBUTION, EBAY_CURRENCY } from "./want-ebay.js"
-import { SHOPIFY_ATTRIBUTION } from "./want-shopify.js"
+import { EBAY_CURRENCY } from "./want-ebay.js"
 import {
   type Listing,
   listingKey,
@@ -19,6 +17,7 @@ import {
   SourceMiss,
   SourceUnavailableError,
 } from "./want-sources.js"
+import { sourceText } from "./want-text.js"
 
 /**
  * The want-list watcher (category 2, plan 1.2 row 2; rackbops-bot-plugins#83): one task per wanted
@@ -107,13 +106,13 @@ export function wantState(value: unknown): WantState {
 
 /**
  * Whether a listing is within the owner's limits: an unknown price never passes a top price, a
- * negative one never passes at all, whatever the source (docket#57); currencies compare without
- * case.
+ * negative one never passes at all, whatever the source (docket#57); currencies compare as codes
+ * (`currencyCode`), so an invalid one on the watch limits nothing (docket#58).
  */
 export function withinLimits(l: Listing, config: WantConfig): boolean {
   if (l.price !== undefined && !(l.price >= 0)) return false
-  const want = config.currency?.trim().toUpperCase()
-  if (want && l.currency && l.currency.toUpperCase() !== want) return false
+  const want = currencyCode(config.currency)
+  if (want && l.currency && currencyCode(l.currency) !== want) return false
   if (config.maxPrice === undefined) return true
   return l.price !== undefined && l.price <= config.maxPrice + 1e-9
 }
@@ -132,14 +131,8 @@ export function listingLine(l: Listing, config: WantConfig): string {
     ...(l.condition ? [inert(l.condition)] : []),
     ...(l.seller ? [`sold by ${inert(l.seller)}`] : []),
   ]
-  const via =
-    config.source === "bgg"
-      ? ` (${BGG_ATTRIBUTION})`
-      : config.source === "shopify"
-        ? ` (${SHOPIFY_ATTRIBUTION})`
-        : config.source === "ebay"
-          ? ` (${EBAY_ATTRIBUTION})`
-          : ""
+  const attribution = sourceText(config.source).attribution
+  const via = attribution ? ` (${attribution})` : ""
   return `- ${parts.join(" -- ")} <${l.url}>${via}`
 }
 
@@ -172,16 +165,7 @@ export function miss<S extends WantState>(
     summary: `nothing read: ${reason}`,
   }
   if (tell) {
-    const where =
-      ctx.config.source === "bgg"
-        ? "BoardGameGeek"
-        : ctx.config.source === "shopify"
-          ? "Shopify's store search"
-          : ctx.config.source === "ebay"
-            ? "eBay's search"
-            : ctx.config.source === "inbox"
-              ? "what was sent in"
-              : ctx.config.target
+    const where = sourceText(ctx.config.source).where ?? ctx.config.target
     outcome.notify = {
       text: clip(
         `${ctx.task.title}: I could read no listings from ${where} ${misses === 1 ? "just now" : `${misses} times in a row`} (${reason}). ` +
@@ -231,16 +215,15 @@ export async function pollWant(
       outcome: miss(
         ctx,
         state,
-        new SourceUnavailableError(
-          `this bot has no ${ctx.config.source === "bgg" ? "BoardGameGeek access" : ctx.config.source === "shopify" ? "Shopify search (no Firecrawl key)" : ctx.config.source === "ebay" ? "eBay search (no eBay keys)" : "such source"}`,
-        ),
+        new SourceUnavailableError(`this bot has no ${sourceText(ctx.config.source).missing}`),
       ),
     }
   }
   // The eBay source searches eBay US, which lists prices in USD only, so a watch in any other
   // currency would read fine every time and drop every listing on currency: say so at once
   // rather than look healthy forever.
-  const currency = ctx.config.currency?.trim().toUpperCase()
+  // An invalid code counts as none named, as everywhere (`currencyCode`, docket#58).
+  const currency = currencyCode(ctx.config.currency)
   if (ctx.config.source === "ebay" && currency && currency !== EBAY_CURRENCY) {
     return {
       kind: "done",

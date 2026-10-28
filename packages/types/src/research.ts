@@ -46,6 +46,7 @@ import {
   firecrawlLines,
   WEB_ALLOWED_TOOLS,
 } from "./research-web.js"
+import { retryOutcome } from "./retry.js"
 
 /**
  * Category 5 (plan section 1.2 row 5): "look into X and report back once". Execute lane, a `once`
@@ -163,10 +164,7 @@ export interface ResearchState {
 
 export const MAX_QUESTION_CHARS = 1000
 export const MAX_CONTEXT_CHARS = 2000
-/** Tries per phase: the first, and one retry. */
-export const MAX_TRIES = 2
-/** How long an auth failure waits before its one retry. */
-export const AUTH_RETRY_MS = 3_600_000
+export { AUTH_RETRY_MS, MAX_TRIES } from "./retry.js"
 
 /**
  * Item 61, proposed and not yet decided: research about 15 turns and 1 USD per run, past the
@@ -187,14 +185,6 @@ export const RESEARCH_TIMEOUT_MS = 600_000
 export const REVIEW_MAX_TURNS = 8
 export const REVIEW_MAX_BUDGET_USD = 0.5
 export const REVIEW_TIMEOUT_MS = 300_000
-
-const RETRIED: ReadonlySet<string> = new Set([
-  "schema_miss",
-  "malformed",
-  "timeout",
-  "error",
-  "auth_failed",
-])
 
 const FRESH: ResearchState = { phase: "research", failures: 0, draft: null }
 
@@ -624,14 +614,8 @@ function failed(
     state.phase === "review" || state.phase === "awaiting-pages" ? state.phase : "research"
   const failures = state.failures + 1
   const summary = clean(`${phase} ${kind} (try ${failures}): ${detail}`, 300, true)
-  if (RETRIED.has(kind) && failures < MAX_TRIES) {
-    const wait = kind === "auth_failed" ? AUTH_RETRY_MS : 0
-    return {
-      state: { ...state, phase, failures },
-      followUp: wait > 0 ? { at: new Date(ctx.now.getTime() + wait).toISOString() } : {},
-      summary,
-    }
-  }
+  const retry = retryOutcome(kind, failures, ctx.now)
+  if (retry) return { state: { ...state, phase, failures }, followUp: retry.followUp, summary }
   const said = SAID[kind] ?? "something went wrong"
   if (secondPass(state)) {
     // The first answer went out and was saved: the person hears one line, not a failure notice.

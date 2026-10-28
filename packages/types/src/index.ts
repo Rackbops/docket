@@ -57,7 +57,7 @@ export {
   readIntake,
   transcriptLines,
 } from "./intake.js"
-export { money } from "./money.js"
+export { currencyCode, money } from "./money.js"
 export {
   BASELINE_RULES,
   type BaselineRule,
@@ -79,7 +79,6 @@ export {
   type RenewalState,
   renewal,
 } from "./renewal.js"
-
 export {
   AUTH_RETRY_MS,
   deadlineOf,
@@ -159,6 +158,7 @@ export {
   FIRECRAWL_TOOLS,
   WEB_ALLOWED_TOOLS,
 } from "./research-web.js"
+export { RETRIED, type Retry, retryOutcome } from "./retry.js"
 export {
   itemKey,
   LENS_TEXT,
@@ -235,7 +235,6 @@ export {
   isEbayHost,
   type Listing,
   listingKey,
-  listingsFromJsonLd,
   MAX_LISTINGS,
   NEVER_EBAY,
   pageSource,
@@ -250,6 +249,7 @@ export {
   type Submitted,
   submittedListing,
 } from "./want-sources.js"
+export { SOURCE_TEXT, type SourceText, sourceText } from "./want-text.js"
 export {
   FITS,
   type Fit,

@@ -8,7 +8,6 @@ import {
   type JobResult,
   type JobSpec,
   Lanes,
-  manualKey,
   respondToInvite,
   type Schedule,
   type TaskType,
@@ -125,7 +124,7 @@ describe("two lanes", () => {
       taskId: agentTask.id,
       lane: "execute",
       dueAt: T0,
-      dedupeKey: manualKey(agentTask.id, 1),
+      dedupeKey: `manual:${agentTask.id}:1`,
       at: T0,
     })
     // A reminder due at 09:00 EST today.

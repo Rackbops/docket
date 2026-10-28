@@ -5,6 +5,7 @@ import {
   ExecutorUnavailableError,
   type FailureKind,
   type Finding,
+  FOLLOW_UP_PREFIX,
   type JobResult,
   type JobSpec,
   type NoJob,
@@ -13,11 +14,19 @@ import {
   type RunContext,
   type TaskType,
 } from "@rackbops/docket-core"
-import { money } from "./money.js"
-import { AUTH_RETRY_MS, MAX_TRIES } from "./research.js"
+import { currencyCode, money } from "./money.js"
 import { safeUrl } from "./research-answer.js"
+import { retryOutcome } from "./retry.js"
 import { BGG_HOST, BGG_SPACING_MS } from "./want-bgg.js"
-import { isEbayHost, type Listing, listingKey, type Source, type SourceId } from "./want-sources.js"
+import {
+  isEbayHost,
+  isObj,
+  type Listing,
+  listingKey,
+  type Source,
+  type SourceId,
+} from "./want-sources.js"
+import { sourceText } from "./want-text.js"
 import {
   clip,
   inert,
@@ -118,8 +127,6 @@ export const JUDGE_SCHEMA = {
   required: ["verdicts"],
 } as const
 
-const isObj = (v: unknown): v is Record<string, unknown> =>
-  typeof v === "object" && v !== null && !Array.isArray(v)
 const str = (v: unknown, max: number): string => (typeof v === "string" ? clean(v, max, true) : "")
 
 /** One stored listing, re-checked as stored data must be; null when unusable. */
@@ -213,25 +220,17 @@ function closedSource(config: WantConfig): boolean {
 }
 
 function limitsText(config: WantConfig): string {
-  if (config.maxPrice !== undefined)
-    return `at or under ${money(config.maxPrice, config.currency ?? "")}`
-  return config.currency ? `any price, in ${config.currency}` : "any price"
+  // As `withinLimits` reads it: an invalid code is no currency (docket#58).
+  const currency = currencyCode(config.currency) ?? ""
+  if (config.maxPrice !== undefined) return `at or under ${money(config.maxPrice, currency)}`
+  return currency ? `any price, in ${currency}` : "any price"
 }
 
 /** The judge Job: the want, the listings numbered (shop text, inert, marked as data), and the rules. */
 export function judgeJob(title: string, config: WantConfig, pending: readonly Listing[]): JobSpec {
   // An inbox, Shopify or eBay watch's listings are on sites the tracker never reads: the judge opens none.
   const closed = closedSource(config)
-  const where =
-    config.source === "bgg"
-      ? "BoardGameGeek's marketplace"
-      : config.source === "ebay"
-        ? "a search of eBay's listings, through eBay's own API"
-        : config.source === "shopify"
-          ? "a search of Shopify stores' catalogs (new copies in stock)"
-          : config.source === "inbox"
-            ? "alert emails and searches sent in for them (from eBay, BoardGameGeek or a shop)"
-            : "a shop page they gave"
+  const where = sourceText(config.source).judgeWhere
   const lines = pending.map((l, i) => {
     const parts = [
       inert(l.title),
@@ -365,14 +364,6 @@ function settled(state: JudgeState, told: number): JudgeState {
   }
 }
 
-const RETRIED: ReadonlySet<string> = new Set([
-  "schema_miss",
-  "malformed",
-  "timeout",
-  "error",
-  "auth_failed",
-])
-
 const SAID: Readonly<Partial<Record<FailureKind | "malformed", string>>> = {
   auth_failed: "the model runner could not sign in",
   turn_cap: "the check needed more steps than it is allowed",
@@ -391,10 +382,9 @@ function judgeFailed(
 ): Outcome {
   const failures = state.failures + 1
   const summary = clean(`judge ${kind} (try ${failures}): ${detail}`, 300, true)
-  if (RETRIED.has(kind) && failures < MAX_TRIES) {
-    const wait = kind === "auth_failed" ? AUTH_RETRY_MS : 0
-    const at = new Date(ctx.now.getTime() + wait).toISOString()
-    return { state: { ...state, failures, retryAt: at }, followUp: wait > 0 ? { at } : {}, summary }
+  const retry = retryOutcome(kind, failures, ctx.now)
+  if (retry) {
+    return { state: { ...state, failures, retryAt: retry.at }, followUp: retry.followUp, summary }
   }
   const reason = SAID[kind] ?? "the check failed"
   // As `judged`: a listing an edit put outside the limits is neither sent nor remembered.
@@ -515,7 +505,7 @@ export function wantjudgeType(
     },
     async prepare(ctx: RunContext<WantConfig>): Promise<JobSpec | NoJob> {
       const state = judgeState(ctx.state)
-      const followUp = ctx.occurrence.dedupeKey.startsWith("followup:")
+      const followUp = ctx.occurrence.dedupeKey.startsWith(FOLLOW_UP_PREFIX)
       if (state.pending.length > 0) {
         // A retry waits for its own follow-up (an auth failure's is an hour off): a scheduled run
         // that comes first leaves it be, so the backoff holds and the retry count stays true.

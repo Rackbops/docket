@@ -192,6 +192,19 @@ describe("price", () => {
     })
   })
 
+  it("keeps no invalid config currency as the watch's own (docket#58)", async () => {
+    const t = await tracked({ currency: "dollars" })
+    const bare = { "@type": "Product", offers: { "@type": "Offer", price: 100 } }
+    t.fetch.set(URL, `<script type="application/ld+json">${JSON.stringify(bare)}</script>`)
+    await t.lanes.tickNotify()
+    t.clock.advance(6 * HOUR)
+    expect((await t.store.getTask(t.task.id))?.state).not.toHaveProperty("currency")
+    // So a page that later declares USD is read, and a real drop alerts.
+    t.fetch.set(URL, page(85, "USD"))
+    await t.lanes.tickNotify()
+    expect((await t.store.getTask(t.task.id))?.state).toMatchObject({ last: 85, alerts: 1 })
+  })
+
   it("stops tracking on done", async () => {
     const t = await tracked()
     await observe(t, [10])

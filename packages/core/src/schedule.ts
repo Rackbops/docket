@@ -1,3 +1,4 @@
+import { dayNumber, daysInMonth, fromDayNumber, type LocalDate } from "./local-date.js"
 import { wallClock, zonedInstant } from "./zoned.js"
 
 /**
@@ -93,7 +94,6 @@ export interface ScheduleContext {
 export const MIN_POLL_MINUTES = 5
 
 const MINUTE_MS = 60_000
-const DAY_MS = 86_400_000
 /** How far ahead `nextDue` searches before giving up on a calendar schedule. */
 const HORIZON_DAYS = 366 * 3
 /**
@@ -111,12 +111,6 @@ export const MAX_CALENDAR_EVERY: Readonly<Record<CalendarSchedule["unit"], numbe
 /** How many periods ahead `nextDue` searches before giving up on a period schedule. */
 const HORIZON_PERIODS = 100_000
 
-interface LocalDate {
-  year: number
-  month: number
-  day: number
-}
-
 function parseLocalDate(value: string): LocalDate | null {
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value)
   if (!m) return null
@@ -131,20 +125,6 @@ function formatLocalDate(d: LocalDate): string {
   const mm = String(d.month).padStart(2, "0")
   const dd = String(d.day).padStart(2, "0")
   return `${d.year}-${mm}-${dd}`
-}
-
-function daysInMonth(year: number, month: number): number {
-  return new Date(Date.UTC(year, month, 0)).getUTCDate()
-}
-
-/** Whole days between two local dates, counted on a pure calendar (no zone). */
-function dayNumber(d: LocalDate): number {
-  return Math.floor(Date.UTC(d.year, d.month - 1, d.day) / DAY_MS)
-}
-
-function fromDayNumber(n: number): LocalDate {
-  const dt = new Date(n * DAY_MS)
-  return { year: dt.getUTCFullYear(), month: dt.getUTCMonth() + 1, day: dt.getUTCDate() }
 }
 
 function weekdayOf(d: LocalDate): number {
@@ -347,11 +327,33 @@ function nextPollDue(schedule: PollSchedule, after: Date): Date | null {
   return new Date(due)
 }
 
+/** The most days one period can span: a month is at most 31, a year at most 366. */
+const LONGEST_PERIOD_DAYS = { day: 1, week: 7, month: 31, year: 366 } as const
+
+/**
+ * A period index at or before the first one due after `after`, so an old anchor does not walk
+ * every period since it (docket#62). Period `n` falls at most `n * longest` days after the
+ * anchor, so the index one short of `floor(elapsed / longest)` lands on a date at least a whole
+ * period before `after`'s local day; with `leadDays >= 0` it fires earlier still, so nothing
+ * due is skipped. 0 when the anchor is unreadable or not yet passed.
+ */
+function firstPeriod(schedule: PeriodSchedule, after: Date, zone: string): number {
+  const anchor = parseLocalDate(schedule.anchor)
+  if (!anchor) return 0
+  const local = wallClock(after, zone)
+  const elapsed =
+    dayNumber({ year: local.year, month: local.month, day: local.day }) - dayNumber(anchor)
+  const longest = LONGEST_PERIOD_DAYS[schedule.unit] * schedule.every
+  // A schedule `scheduleProblems` refuses (every below 1, a negative lead) walks from 0 as before.
+  if (!(longest >= 1) || (schedule.leadDays ?? 0) < 0) return 0
+  return Math.max(0, Math.floor(elapsed / longest) - 1)
+}
+
 function nextPeriodDue(schedule: PeriodSchedule, after: Date, ctx: ScheduleContext): Date | null {
   const hour = schedule.hour ?? ctx.preferredHour
   const minute = schedule.minute ?? 0
   const lead = schedule.leadDays ?? 0
-  for (let n = 0; n < HORIZON_PERIODS; n++) {
+  for (let n = firstPeriod(schedule, after, ctx.zone); n < HORIZON_PERIODS; n++) {
     const date = periodDateAt(schedule, n)
     if (!date) return null
     const fire = fromDayNumber(dayNumber(date) - lead)
