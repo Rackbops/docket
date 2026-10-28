@@ -53,5 +53,6 @@ export const SOURCE_TEXT: Readonly<Record<SourceId, SourceText>> = {
 
 /** The row for `source`; a page's for a source this release does not know (a stored watch). */
 export function sourceText(source: string): SourceText {
-  return SOURCE_TEXT[source as SourceId] ?? SOURCE_TEXT.page
+  // Own keys only: a stored `"constructor"` must not read Object.prototype.
+  return Object.hasOwn(SOURCE_TEXT, source) ? SOURCE_TEXT[source as SourceId] : SOURCE_TEXT.page
 }

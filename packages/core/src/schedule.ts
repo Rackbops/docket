@@ -344,6 +344,8 @@ function firstPeriod(schedule: PeriodSchedule, after: Date, zone: string): numbe
   const elapsed =
     dayNumber({ year: local.year, month: local.month, day: local.day }) - dayNumber(anchor)
   const longest = LONGEST_PERIOD_DAYS[schedule.unit] * schedule.every
+  // A schedule `scheduleProblems` refuses (every below 1, a negative lead) walks from 0 as before.
+  if (!(longest >= 1) || (schedule.leadDays ?? 0) < 0) return 0
   return Math.max(0, Math.floor(elapsed / longest) - 1)
 }
 

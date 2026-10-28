@@ -44,6 +44,9 @@ describe("currencyCode (docket#58)", () => {
     expect(withinLimits(listing, watch("dollars"))).toBe(true)
     expect(withinLimits(listing, watch("eur"))).toBe(false)
     expect(withinLimits(listing, watch(" usd"))).toBe(true)
+    // The listing's side is read as a code too.
+    expect(withinLimits({ ...listing, currency: "usd" }, watch("USD"))).toBe(true)
+    expect(withinLimits({ ...listing, currency: "eur" }, watch("USD"))).toBe(false)
     expect(shopifyRequest({ query: "wingspan", currency: "dollars" }).options.currency).toBe("USD")
   })
 })

@@ -14,7 +14,7 @@ import {
   type RunContext,
   type TaskType,
 } from "@rackbops/docket-core"
-import { money } from "./money.js"
+import { currencyCode, money } from "./money.js"
 import { safeUrl } from "./research-answer.js"
 import { retryOutcome } from "./retry.js"
 import { BGG_HOST, BGG_SPACING_MS } from "./want-bgg.js"
@@ -220,9 +220,10 @@ function closedSource(config: WantConfig): boolean {
 }
 
 function limitsText(config: WantConfig): string {
-  if (config.maxPrice !== undefined)
-    return `at or under ${money(config.maxPrice, config.currency ?? "")}`
-  return config.currency ? `any price, in ${config.currency}` : "any price"
+  // As `withinLimits` reads it: an invalid code is no currency (docket#58).
+  const currency = currencyCode(config.currency) ?? ""
+  if (config.maxPrice !== undefined) return `at or under ${money(config.maxPrice, currency)}`
+  return currency ? `any price, in ${currency}` : "any price"
 }
 
 /** The judge Job: the want, the listings numbered (shop text, inert, marked as data), and the rules. */
