@@ -5,6 +5,7 @@ import {
   ExecutorUnavailableError,
   type FailureKind,
   type Finding,
+  FOLLOW_UP_PREFIX,
   type JobResult,
   type JobSpec,
   type NoJob,
@@ -14,8 +15,8 @@ import {
   type TaskType,
 } from "@rackbops/docket-core"
 import { money } from "./money.js"
-import { AUTH_RETRY_MS, MAX_TRIES } from "./research.js"
 import { safeUrl } from "./research-answer.js"
+import { retryOutcome } from "./retry.js"
 import { BGG_HOST, BGG_SPACING_MS } from "./want-bgg.js"
 import { isEbayHost, type Listing, listingKey, type Source, type SourceId } from "./want-sources.js"
 import {
@@ -365,14 +366,6 @@ function settled(state: JudgeState, told: number): JudgeState {
   }
 }
 
-const RETRIED: ReadonlySet<string> = new Set([
-  "schema_miss",
-  "malformed",
-  "timeout",
-  "error",
-  "auth_failed",
-])
-
 const SAID: Readonly<Partial<Record<FailureKind | "malformed", string>>> = {
   auth_failed: "the model runner could not sign in",
   turn_cap: "the check needed more steps than it is allowed",
@@ -391,10 +384,9 @@ function judgeFailed(
 ): Outcome {
   const failures = state.failures + 1
   const summary = clean(`judge ${kind} (try ${failures}): ${detail}`, 300, true)
-  if (RETRIED.has(kind) && failures < MAX_TRIES) {
-    const wait = kind === "auth_failed" ? AUTH_RETRY_MS : 0
-    const at = new Date(ctx.now.getTime() + wait).toISOString()
-    return { state: { ...state, failures, retryAt: at }, followUp: wait > 0 ? { at } : {}, summary }
+  const retry = retryOutcome(kind, failures, ctx.now)
+  if (retry) {
+    return { state: { ...state, failures, retryAt: retry.at }, followUp: retry.followUp, summary }
   }
   const reason = SAID[kind] ?? "the check failed"
   // As `judged`: a listing an edit put outside the limits is neither sent nor remembered.
@@ -515,7 +507,7 @@ export function wantjudgeType(
     },
     async prepare(ctx: RunContext<WantConfig>): Promise<JobSpec | NoJob> {
       const state = judgeState(ctx.state)
-      const followUp = ctx.occurrence.dedupeKey.startsWith("followup:")
+      const followUp = ctx.occurrence.dedupeKey.startsWith(FOLLOW_UP_PREFIX)
       if (state.pending.length > 0) {
         // A retry waits for its own follow-up (an auth failure's is an hour off): a scheduled run
         // that comes first leaves it be, so the backoff holds and the retry count stays true.

@@ -79,7 +79,6 @@ export {
   type RenewalState,
   renewal,
 } from "./renewal.js"
-
 export {
   AUTH_RETRY_MS,
   deadlineOf,
@@ -159,6 +158,7 @@ export {
   FIRECRAWL_TOOLS,
   WEB_ALLOWED_TOOLS,
 } from "./research-web.js"
+export { RETRIED, type Retry, retryOutcome } from "./retry.js"
 export {
   itemKey,
   LENS_TEXT,

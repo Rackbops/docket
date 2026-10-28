@@ -6,13 +6,14 @@ import {
   defineTaskType,
   type FailureKind,
   type Finding,
+  FOLLOW_UP_PREFIX,
   type JobResult,
   type JobSpec,
   type Outcome,
   type RunContext,
 } from "@rackbops/docket-core"
-import { AUTH_RETRY_MS, MAX_TRIES } from "./research.js"
 import { fitMessage, safeUrl } from "./research-answer.js"
+import { retryOutcome } from "./retry.js"
 import { withoutPerView } from "./want-sources.js"
 
 /**
@@ -263,14 +264,6 @@ export function renderScout(
   return fitMessage(lines)
 }
 
-const RETRIED: ReadonlySet<string> = new Set([
-  "schema_miss",
-  "malformed",
-  "timeout",
-  "error",
-  "auth_failed",
-])
-
 const SAID: Readonly<Partial<Record<FailureKind | "malformed", string>>> = {
   auth_failed: "the runner could not sign in",
   turn_cap: "it needed more steps than one run is allowed",
@@ -289,14 +282,8 @@ function failed(
 ): Outcome {
   const failures = state.failures + 1
   const summary = clean(`scout ${kind} (try ${failures}): ${detail}`, 300, true)
-  if (RETRIED.has(kind) && failures < MAX_TRIES) {
-    const wait = kind === "auth_failed" ? AUTH_RETRY_MS : 0
-    return {
-      state: { ...state, failures },
-      followUp: wait > 0 ? { at: new Date(ctx.now.getTime() + wait).toISOString() } : {},
-      summary,
-    }
-  }
+  const retry = retryOutcome(kind, failures, ctx.now)
+  if (retry) return { state: { ...state, failures }, followUp: retry.followUp, summary }
   const narrower =
     kind === "turn_cap" || kind === "budget_cap" ? " Fewer or narrower interests may help." : ""
   return {
@@ -386,7 +373,7 @@ export const scout = defineTaskType<ScoutConfig>({
   async finish(ctx: RunContext<ScoutConfig>, result: JobResult): Promise<Outcome> {
     const stored = scoutState(ctx.state)
     // Only a retry (a follow-up) carries the count on: a scheduled run starts its own.
-    const state = ctx.occurrence.dedupeKey.startsWith("followup:")
+    const state = ctx.occurrence.dedupeKey.startsWith(FOLLOW_UP_PREFIX)
       ? stored
       : { ...stored, failures: 0 }
     if (result.kind !== "success") return failed(ctx, state, result.kind, result.detail)
