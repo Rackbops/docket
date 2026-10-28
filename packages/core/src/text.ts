@@ -37,5 +37,8 @@ export function clean(text: string, max: number, oneLine = false): string {
     .replace(/\]\(/g, "] (")
   if (oneLine) out = out.replace(/\s+/g, " ")
   out = out.trim()
-  return out.length > max ? `${out.slice(0, max - 3).trimEnd()}...` : out
+  if (out.length <= max) return out
+  // Too short for an ellipsis (docket#63): cut to `max` and add none.
+  if (max < 4) return out.slice(0, Math.max(0, max))
+  return `${out.slice(0, max - 3).trimEnd()}...`
 }

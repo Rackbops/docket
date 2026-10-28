@@ -61,6 +61,16 @@ describe("the scout's Job and answer", () => {
     expect(parsed?.items[0]?.why).toContain("] (")
     expect(parseScout({ nope: true })).toBeNull()
     expect(itemKey("https://example.org/kataba#top")).toBe(itemKey("https://example.org/kataba"))
+    // Tracking parameters never make a new item (docket#64); a real query still does.
+    expect(itemKey("https://example.org/kataba?utm_source=a&utm_medium=b")).toBe(
+      itemKey("https://example.org/kataba?utm_source=c&fbclid=x"),
+    )
+    expect(itemKey("https://example.org/kataba?utm_source=a")).toBe(
+      itemKey("https://example.org/kataba"),
+    )
+    expect(itemKey("https://example.org/kataba?id=2&utm_source=a")).not.toBe(
+      itemKey("https://example.org/kataba?id=3"),
+    )
   })
 
   it("says when there is nothing new, and when everything was shown before", () => {

@@ -1,4 +1,5 @@
 import { clean } from "@rackbops/docket-core"
+import { minorUnits } from "./money.js"
 import { safeUrl } from "./research-answer.js"
 import {
   type Listing,
@@ -130,16 +131,7 @@ function listingUrl(raw: unknown): string | null {
 }
 
 /** ISO 4217 currencies whose minor unit is not a hundredth: none (JPY, KRW, ...) or a thousandth (KWD, ...). */
-const ZERO_DECIMAL = new Set(
-  "BIF CLP DJF GNF ISK JPY KMF KRW PYG RWF UGX UYI VND VUV XAF XOF XPF".split(" "),
-)
-const THREE_DECIMAL = new Set("BHD IQD JOD KWD LYD OMR TND".split(" "))
-
-/** How many minor units make one of `currency` (100 for USD, 1 for JPY, 1000 for KWD). */
-export function minorUnits(currency: string): number {
-  const c = currency.toUpperCase()
-  return ZERO_DECIMAL.has(c) ? 1 : THREE_DECIMAL.has(c) ? 1000 : 100
-}
+export { minorUnits }
 
 /** A price object `{ amount, currency }` in minor units, as a value and a code; null without both. */
 function priceOf(v: unknown): { value: number; currency: string } | null {

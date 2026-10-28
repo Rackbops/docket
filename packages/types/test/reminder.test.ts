@@ -65,6 +65,11 @@ describe("reminder", () => {
       "2026-03-03T14:00:00.000Z",
     )
     expect(snoozeUntil({ until: "soon" }, now).toISOString()).toBe("2026-03-02T15:00:00.000Z")
+    // A past (or present) instant would fire again at once: the default hour (docket#60).
+    expect(snoozeUntil({ until: "2020-01-01" }, now).toISOString()).toBe("2026-03-02T15:00:00.000Z")
+    expect(snoozeUntil({ until: now.toISOString() }, now).toISOString()).toBe(
+      "2026-03-02T15:00:00.000Z",
+    )
   })
 
   it("records done without a follow-up", async () => {

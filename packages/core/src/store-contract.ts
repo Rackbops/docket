@@ -712,6 +712,46 @@ export const STORE_CONTRACT: readonly StoreContractCase[] = [
     },
   },
   {
+    // A lane that submits a Job writes an event; a cancel guarded by the last event it read must
+    // then delete nothing, in one statement (docket#55).
+    name: "a guarded delete refuses a run with a later event or a record, and deletes an idle one",
+    async run(store) {
+      const u = await owner(store)
+      const t = await task(store, u.id)
+      const make = async (k: string) =>
+        (await store.createOccurrence({ ...occurrence(t.id, AT, k), lane: "execute" }))?.id ?? ""
+      const idle = await make("idle")
+      same(await store.deleteOccurrence(idle, { lastEventId: null }), true, "no events: deleted")
+      const busy = await make("busy")
+      await store.addEvent({
+        occurrenceId: busy,
+        agent: "docket",
+        type: "status",
+        text: "a",
+        at: AT,
+      })
+      const seen = (await store.listEvents(busy)).at(-1)?.id ?? null
+      same(await store.deleteOccurrence(busy, { lastEventId: null }), false, "an unseen event")
+      await store.addEvent({
+        occurrenceId: busy,
+        agent: "docket",
+        type: "status",
+        text: "b",
+        at: MID,
+      })
+      same(await store.deleteOccurrence(busy, { lastEventId: seen }), false, "a later event")
+      check((await store.getOccurrence(busy)) !== null, "the run with a later event is kept")
+      const later = (await store.listEvents(busy)).at(-1)?.id ?? null
+      same(await store.deleteOccurrence(busy, { lastEventId: later }), true, "all seen: deleted")
+      const fired = await make("fired")
+      await store.updateOccurrence(fired, {
+        record: { outcome: {}, costUsd: null, firedAt: MID, appliedAt: null, resumes: 0 },
+      })
+      same(await store.deleteOccurrence(fired, { lastEventId: null }), false, "a fired run")
+      same(await store.deleteOccurrence(fired), true, "unguarded: queued is enough, as before")
+    },
+  },
+  {
     name: "a series point with a stored key is not added again",
     async run(store) {
       const u = await owner(store)
@@ -730,6 +770,27 @@ export const STORE_CONTRACT: readonly StoreContractCase[] = [
         ],
         "keyless points are always added",
       )
+    },
+  },
+  {
+    // Same-instant points are normal (an outcome's series defaults to the run's now), and ids
+    // compared as strings put s10 before s9 (docket#48).
+    name: "series points at one instant list in insertion order; a limit keeps the newest",
+    async run(store) {
+      const u = await owner(store)
+      const t = await task(store, u.id)
+      for (let v = 0; v < 12; v++) await store.addSeriesPoint({ taskId: t.id, at: AT, value: v })
+      same(
+        (await store.listSeries(t.id)).map((p) => p.value),
+        [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
+        "ties keep insertion order",
+      )
+      same(
+        (await store.listSeries(t.id, { limit: 2 })).map((p) => p.value),
+        [10, 11],
+        "limit 2: the two newest, oldest first",
+      )
+      same((await store.listSeries(t.id, { limit: 0 })).length, 0, "limit 0 keeps none")
     },
   },
   {

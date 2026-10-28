@@ -13,6 +13,7 @@ import {
 } from "@rackbops/docket-core"
 import { AUTH_RETRY_MS, MAX_TRIES } from "./research.js"
 import { fitMessage, safeUrl } from "./research-answer.js"
+import { withoutPerView } from "./want-sources.js"
 
 /**
  * Category 1, the interest scout (plan 1.2 row 1; E9, rackbops-bot-plugins#83): a recurring model
@@ -136,10 +137,13 @@ function isObj(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v)
 }
 
-/** The key an item is remembered by: a digest of its URL without the fragment. */
+/**
+ * The key an item is remembered by: a digest of its URL without the fragment or the per-view
+ * parameters the want sources drop (`utm_*`, the click ids; docket#64), so one item linked two
+ * ways is one item. A URL with none of them keys as it always did.
+ */
 export function itemKey(url: string): string {
-  const u = new URL(url)
-  u.hash = ""
+  const u = withoutPerView(new URL(url))
   return createHash("sha256").update(u.toString()).digest("hex").slice(0, 32)
 }
 

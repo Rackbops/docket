@@ -47,6 +47,12 @@ export interface PriceState {
   /** Consecutive polls that yielded no price. */
   misses: number
   alerts: number
+  /**
+   * The currency the prices above are in, upper-cased, when the page or the config named one. A
+   * read in another currency is a miss, never a drop (docket#59). Absent in a state from before
+   * 0.16.0; the next read fills it in.
+   */
+  currency?: string
 }
 
 const FRESH: PriceState = {
@@ -68,6 +74,7 @@ function stateOf(value: unknown): PriceState {
     below: s.below ?? false,
     misses: s.misses,
     alerts: s.alerts ?? 0,
+    ...(typeof s.currency === "string" && s.currency !== "" ? { currency: s.currency } : {}),
   }
 }
 
@@ -158,12 +165,14 @@ export const price = defineTaskType<PriceConfig>({
     const point: SeriesObservation = currency
       ? { value: seen, unit: currency, note: "observed" }
       : { value: seen, note: "observed" }
+    const code = currency.trim().toUpperCase()
+    const kept = code === "" ? {} : { currency: code }
     const rule = baselineRule(ctx.config)
     const drop = dropPercent(ctx.config)
     const ref = reference(state, rule)
     if (ref === null) {
       return {
-        state: { first: seen, last: seen, peak: seen, below: false, misses: 0, alerts: 0 },
+        state: { first: seen, last: seen, peak: seen, below: false, misses: 0, alerts: 0, ...kept },
         series: [point],
         notify: {
           text:
@@ -173,6 +182,11 @@ export const price = defineTaskType<PriceConfig>({
         },
         summary: `baseline ${money(seen, currency)}`,
       }
+    }
+    // A geo-switched page (EUR against a USD baseline) is no drop: a miss, so the owner hears
+    // after a few and the baseline stays as it was.
+    if (state.currency && code !== "" && code !== state.currency) {
+      return miss(ctx, state, `the page now prices in ${code}, not ${state.currency}`)
     }
     const line = ref * (1 - drop / 100)
     const below = seen <= line + 1e-9
@@ -184,6 +198,7 @@ export const price = defineTaskType<PriceConfig>({
       below,
       misses: 0,
       alerts: state.alerts + (crossing ? 1 : 0),
+      ...(state.currency ? { currency: state.currency } : kept),
     }
     if (!crossing) {
       return {

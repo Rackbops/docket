@@ -18,11 +18,15 @@ export interface ReminderConfig {
 
 export const DEFAULT_SNOOZE_MS = 60 * 60_000
 
-/** The snooze a reply asks for: `{ until }` as an instant, `{ minutes }`, or the default hour. */
+/**
+ * The snooze a reply asks for: `{ until }` as an instant, `{ minutes }`, or the default hour. An
+ * `until` not after `now` would fire the reminder again at once (docket#60): it gets the default.
+ */
 export function snoozeUntil(payload: unknown, now: Date): Date {
   if (typeof payload === "object" && payload !== null) {
     const p = payload as { until?: unknown; minutes?: unknown }
-    if (typeof p.until === "string" && !Number.isNaN(Date.parse(p.until))) return new Date(p.until)
+    const until = typeof p.until === "string" ? Date.parse(p.until) : Number.NaN
+    if (!Number.isNaN(until) && until > now.getTime()) return new Date(until)
     if (typeof p.minutes === "number" && Number.isFinite(p.minutes) && p.minutes > 0) {
       return new Date(now.getTime() + p.minutes * 60_000)
     }

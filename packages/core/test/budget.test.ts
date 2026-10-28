@@ -48,6 +48,52 @@ describe("ceilings", () => {
     expect(reached({ usd: 1e6, calls: 1e6 }, { usd: null, calls: null })).toBeNull()
   })
 
+  it("are reached by float sums that land a hair under the USD limit (docket#51)", async () => {
+    const store = new MemoryStore()
+    const { larry } = await people(store)
+    const now = new Date(T0)
+    const limits = { ...DEFAULT_BUDGET, person: { usd: 2, calls: 100 } }
+    for (let i = 0; i < 10; i++) {
+      await charge(store, {
+        userId: larry.id,
+        taskId: null,
+        source: "run",
+        calls: 1,
+        costUsd: 0.2,
+        at: now,
+      })
+    }
+    expect(await budgetHold(store, limits, larry, now)).toMatchObject({ limit: "usd" })
+  })
+
+  it("never lets a negative or broken cost lower the day's spend (docket#51)", async () => {
+    const store = new MemoryStore()
+    const { larry } = await people(store)
+    const now = new Date(T0)
+    const limits = { ...DEFAULT_BUDGET, person: { usd: 2, calls: 100 } }
+    const run = (costUsd: number) =>
+      charge(store, { userId: larry.id, taskId: null, source: "run", calls: 1, costUsd, at: now })
+    await run(2)
+    expect((await run(-5)).costUsd).toBe(0)
+    expect((await run(Number.NaN)).costUsd).toBe(0)
+    expect(await budgetHold(store, limits, larry, now)).toMatchObject({
+      limit: "usd",
+      used: { usd: 2, calls: 3 },
+    })
+    // A negative cost a store already holds counts as nothing too.
+    await store.addUsage({
+      userId: larry.id,
+      taskId: null,
+      occurrenceId: null,
+      source: "run",
+      key: null,
+      calls: 0,
+      costUsd: -5,
+      at: now.toISOString(),
+    })
+    expect(await budgetHold(store, limits, larry, now)).toMatchObject({ used: { usd: 2 } })
+  })
+
   it("are the decided defaults: 2 USD and 20 calls a person, 10 USD and 100 calls in all", () => {
     expect(DEFAULT_BUDGET.person).toEqual({ usd: 2, calls: 20 })
     expect(DEFAULT_BUDGET.global).toEqual({ usd: 10, calls: 100 })

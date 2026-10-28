@@ -144,13 +144,17 @@ function firstOffer(offers: unknown): Json | null {
 const PER_VIEW =
   /^(utm_[a-z]+|_pos|_sid|_ss|_psq|srsltid|gclid|gbraid|wbraid|fbclid|msclkid|mc_cid|mc_eid|pf_rd_[a-z]+|pd_rd_[a-z]+)$/i
 
+/** Drops `u`'s fragment and its per-view parameters (`PER_VIEW`), in place; returns it. */
+export function withoutPerView(u: URL): URL {
+  u.hash = ""
+  for (const key of [...u.searchParams.keys()]) if (PER_VIEW.test(key)) u.searchParams.delete(key)
+  return u
+}
+
 function absolute(raw: unknown, base: string): string | null {
   if (typeof raw !== "string" || raw.trim() === "") return null
   try {
-    const u = new URL(raw.trim(), base)
-    u.hash = ""
-    for (const key of [...u.searchParams.keys()]) if (PER_VIEW.test(key)) u.searchParams.delete(key)
-    return safeUrl(u.toString())
+    return safeUrl(withoutPerView(new URL(raw.trim(), base)).toString())
   } catch {
     return null
   }

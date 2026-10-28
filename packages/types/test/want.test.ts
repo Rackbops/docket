@@ -310,6 +310,14 @@ describe("the wantlist type's pieces", () => {
     expect(withinLimits(l("f"), { source: "page", target: SHOP })).toBe(true)
   })
 
+  it("never passes a negative price, from any source, with or without a top price (docket#57)", () => {
+    expect(withinLimits(l("g", -5, "USD"), { source: "page", target: SHOP, maxPrice: 20 })).toBe(
+      false,
+    )
+    expect(withinLimits(l("h", -0.01), { source: "bgg", target: "1" })).toBe(false)
+    expect(withinLimits(l("i", 0), { source: "page", target: SHOP, maxPrice: 20 })).toBe(true)
+  })
+
   it("breaks any address in a shop's text, so only the listing's own link is a link", () => {
     const text = renderWant(
       "W",

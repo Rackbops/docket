@@ -79,7 +79,11 @@ function isRecord(value: unknown): value is Json {
   return typeof value === "object" && value !== null && !Array.isArray(value)
 }
 
-/** The first price found walking a JSON value, offers before anything else at each level. */
+/**
+ * The first price found walking a JSON value. At each level: the record's own `price` or
+ * `lowPrice` (with its `priceCurrency` or `currency`), then its `priceSpecification`, then its
+ * `offers`, then every other child in order (docket#56 pinned this order and this comment).
+ */
 export function priceFromJson(value: unknown, depth = 0): ExtractedPrice | null {
   if (depth > 12) return null
   if (Array.isArray(value)) {
@@ -114,7 +118,9 @@ export function priceFromJson(value: unknown, depth = 0): ExtractedPrice | null 
   return null
 }
 
-const JSON_LD = /<script[^>]*type\s*=\s*["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi
+// The type may be unquoted (`type=application/ld+json`), as minified pages write it (docket#56).
+const JSON_LD =
+  /<script[^>]*type\s*=\s*(?:["']application\/ld\+json["']|application\/ld\+json(?=[\s>]))[^>]*>([\s\S]*?)<\/script>/gi
 
 /** JSON-LD blocks in a page, parsed; broken blocks are skipped. */
 export function jsonLdBlocks(html: string): unknown[] {

@@ -138,6 +138,24 @@ describe("price", () => {
     )
   })
 
+  it("takes a read in another currency as a miss, never a drop (docket#59)", async () => {
+    const t = await tracked()
+    expect(await observe(t, [100])).toHaveLength(1) // the baseline, in USD
+    t.fetch.set(URL, page(50, "EUR"))
+    await t.lanes.tickNotify()
+    t.clock.advance(6 * HOUR)
+    expect(t.notifier.sent).toHaveLength(1)
+    expect((await t.store.getTask(t.task.id))?.state).toMatchObject({
+      currency: "USD",
+      last: 100,
+      misses: 1,
+    })
+    // Back in USD, a real drop still alerts.
+    expect(await observe(t, [85])).toEqual([
+      "widget: 85.00 USD, down 15% from 100.00 USD (last seen). https://shop.example/widget",
+    ])
+  })
+
   it("stops tracking on done", async () => {
     const t = await tracked()
     await observe(t, [10])

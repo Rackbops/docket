@@ -145,6 +145,12 @@ export class ExecutorUnavailableError extends Error {
   override name = "ExecutorUnavailableError"
 }
 
+/** What a guarded `deleteOccurrence` checks: the last of the run's events the caller read. */
+export interface DeleteGuard {
+  /** That event's id; null when the caller read none. */
+  lastEventId: string | null
+}
+
 export interface FetchResponse {
   status: number
   body: string
@@ -295,7 +301,7 @@ export interface NewSeriesPoint {
 export interface SeriesFilter {
   /** Inclusive: points at or after this instant. */
   since?: string
-  /** Keep only the most recent N points (the result stays oldest first). */
+  /** Keep only the most recent N points (the result stays oldest first); 0 keeps none. */
   limit?: number
 }
 
@@ -399,9 +405,13 @@ export interface Store {
   updateOccurrence(id: string, patch: OccurrencePatch): Promise<Occurrence>
   /**
    * Deletes the occurrence if it is still `queued`; true when it did. A schedule edit cancels and
-   * replaces through it (`reschedule`), one row at a time, so a snooze's run survives.
+   * replaces through it (`reschedule`), one row at a time, so a snooze's run survives. With
+   * `guard`, it also refuses -- in the same one statement -- a row that has fired (`record` set)
+   * or has any event after `guard.lastEventId` (any event at all when that is null): a lane that
+   * submitted a Job between the caller's read and this call wrote an event, so a run whose Job is
+   * out is never deleted (docket#55).
    */
-  deleteOccurrence(id: string): Promise<boolean>
+  deleteOccurrence(id: string, guard?: DeleteGuard): Promise<boolean>
   /**
    * Compare-and-set: applies `patch` only while the row's status is `expected`, and returns the
    * row as patched, or null -- changing nothing -- when it is not. Atomic, so two lanes or two
@@ -428,7 +438,7 @@ export interface Store {
   listReplies(taskId: string): Promise<Reply[]>
 
   addSeriesPoint(point: NewSeriesPoint): Promise<SeriesPoint>
-  /** Oldest first. */
+  /** Oldest first (by `at`, then insertion). */
   listSeries(taskId: string, filter?: SeriesFilter): Promise<SeriesPoint[]>
 
   /**
