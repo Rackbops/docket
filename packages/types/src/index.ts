@@ -249,6 +249,7 @@ export {
   type Submitted,
   submittedListing,
 } from "./want-sources.js"
+export { SOURCE_TEXT, type SourceText, sourceText } from "./want-text.js"
 export {
   FITS,
   type Fit,

@@ -3,12 +3,16 @@ import { currencyCode, minorUnits } from "./money.js"
 import { safeUrl } from "./research-answer.js"
 import { matchesWords, searchWords, shopifyQuery } from "./want-shopify.js"
 import {
+  CONDITION_CHARS,
+  checkSearchStatus,
   isEbayHost,
+  isObj,
   type Listing,
   MAX_LISTINGS,
+  SELLER_CHARS,
   type Source,
   SourceMiss,
-  SourceUnavailableError,
+  TITLE_CHARS,
 } from "./want-sources.js"
 
 /**
@@ -37,9 +41,6 @@ export const EBAY_MARKETPLACE = "EBAY_US"
 export const EBAY_CURRENCY = "USD"
 export const EBAY_LIMIT = 50
 export const EBAY_ATTRIBUTION = "via eBay"
-const TITLE_CHARS = 150
-const CONDITION_CHARS = 40
-const SELLER_CHARS = 80
 
 /** One Browse API search: the path, its query parameters, and the marketplace to send as `X-EBAY-C-MARKETPLACE-ID`. */
 export interface EbayRequest {
@@ -82,9 +83,6 @@ export function ebayRequest(s: EbaySearch): EbayRequest {
   }
   return { path: EBAY_SEARCH_PATH, params, marketplace: EBAY_MARKETPLACE }
 }
-
-type Json = Record<string, unknown>
-const isObj = (v: unknown): v is Json => typeof v === "object" && v !== null && !Array.isArray(v)
 
 /** eBay's `{ value, currency }`, value a decimal string: as a number and a code; null without both. */
 function amountOf(v: unknown): { value: number; currency: string } | null {
@@ -186,10 +184,7 @@ export function ebaySource(browse: EbayBrowse): Source {
         )
       }
       // Keys eBay refuses, or an app without Browse access: no later look succeeds until someone acts.
-      if (status === 401 || status === 403)
-        throw new SourceUnavailableError("eBay refused the app's keys")
-      if (status === 429 || status >= 500) throw new SourceMiss(`eBay is busy (HTTP ${status})`)
-      if (status !== 200) throw new SourceMiss(`eBay answered HTTP ${status}`)
+      checkSearchStatus(status, "eBay", "eBay refused the app's keys")
       return parseEbayAnswer(body, target)
     },
   }

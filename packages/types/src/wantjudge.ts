@@ -19,6 +19,7 @@ import { safeUrl } from "./research-answer.js"
 import { retryOutcome } from "./retry.js"
 import { BGG_HOST, BGG_SPACING_MS } from "./want-bgg.js"
 import { isEbayHost, type Listing, listingKey, type Source, type SourceId } from "./want-sources.js"
+import { sourceText } from "./want-text.js"
 import {
   clip,
   inert,
@@ -223,16 +224,7 @@ function limitsText(config: WantConfig): string {
 export function judgeJob(title: string, config: WantConfig, pending: readonly Listing[]): JobSpec {
   // An inbox, Shopify or eBay watch's listings are on sites the tracker never reads: the judge opens none.
   const closed = closedSource(config)
-  const where =
-    config.source === "bgg"
-      ? "BoardGameGeek's marketplace"
-      : config.source === "ebay"
-        ? "a search of eBay's listings, through eBay's own API"
-        : config.source === "shopify"
-          ? "a search of Shopify stores' catalogs (new copies in stock)"
-          : config.source === "inbox"
-            ? "alert emails and searches sent in for them (from eBay, BoardGameGeek or a shop)"
-            : "a shop page they gave"
+  const where = sourceText(config.source).judgeWhere
   const lines = pending.map((l, i) => {
     const parts = [
       inert(l.title),

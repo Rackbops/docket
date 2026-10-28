@@ -67,9 +67,28 @@ export class SourceUnavailableError extends SourceMiss {
 }
 
 export const MAX_LISTINGS = 100
-const TITLE_CHARS = 150
-const CONDITION_CHARS = 40
-const SELLER_CHARS = 80
+/** The longest listing title, condition and seller kept, for every source (docket#68). */
+export const TITLE_CHARS = 150
+export const CONDITION_CHARS = 40
+export const SELLER_CHARS = 80
+
+/**
+ * What a search source's HTTP status means, for every source that searches through the host
+ * (docket#68): 401 and 403, and any status in `unavailable`, are a `SourceUnavailableError` (no
+ * later look succeeds until someone acts); 429 and 5xx are `who` being busy; anything else but
+ * 200 is a plain miss. Returns on 200.
+ */
+export function checkSearchStatus(
+  status: number,
+  who: string,
+  refused: string,
+  unavailable: Readonly<Record<number, string>> = {},
+): void {
+  const said = unavailable[status] ?? (status === 401 || status === 403 ? refused : undefined)
+  if (said !== undefined) throw new SourceUnavailableError(said)
+  if (status === 429 || status >= 500) throw new SourceMiss(`${who} is busy (HTTP ${status})`)
+  if (status !== 200) throw new SourceMiss(`${who} answered HTTP ${status}`)
+}
 const MAX_DEPTH = 8
 
 /** The key a listing is remembered by: a digest of its id, so the state stays small whatever the URLs. */
@@ -96,8 +115,9 @@ export function isEbayHost(host: string): boolean {
   return EBAY_HOST.test(host.replace(/\.$/, ""))
 }
 
-type Json = Record<string, unknown>
-const isObj = (v: unknown): v is Json => typeof v === "object" && v !== null && !Array.isArray(v)
+export type Json = Record<string, unknown>
+export const isObj = (v: unknown): v is Json =>
+  typeof v === "object" && v !== null && !Array.isArray(v)
 
 function typesOf(node: Json): string[] {
   const t = node["@type"]

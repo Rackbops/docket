@@ -2,12 +2,16 @@ import { clean } from "@rackbops/docket-core"
 import { currencyCode, minorUnits } from "./money.js"
 import { safeUrl } from "./research-answer.js"
 import {
+  checkSearchStatus,
+  isObj,
+  type Json,
   type Listing,
   MAX_LISTINGS,
+  SELLER_CHARS,
   type SearchLimits,
   type Source,
   SourceMiss,
-  SourceUnavailableError,
+  TITLE_CHARS,
 } from "./want-sources.js"
 
 /**
@@ -37,8 +41,6 @@ export const SHOPIFY_COUNTRY = "US"
 export const SHOPIFY_CURRENCY = "USD"
 export const SHOPIFY_ATTRIBUTION = "via Shopify"
 const MAX_VARIANTS = 20
-const TITLE_CHARS = 150
-const SELLER_CHARS = 80
 
 /** The Alexandria call for one look: `{ provider, capability, options }`, sent as the `alexandria` field of Firecrawl's `POST /v2/scrape`. */
 export interface ShopifyRequest {
@@ -78,9 +80,6 @@ export function shopifyRequest(s: ShopifySearch): ShopifyRequest {
     },
   }
 }
-
-type Json = Record<string, unknown>
-const isObj = (v: unknown): v is Json => typeof v === "object" && v !== null && !Array.isArray(v)
 
 /** The words as sent to Shopify: one line, at most `QUERY_CHARS` and cut at a word, never with an ellipsis. */
 const QUERY_CHARS = 200
@@ -228,13 +227,9 @@ export function shopifySource(scrape: ShopifyScrape): Source {
         )
       }
       // A bad key, or no credits left: no later look succeeds until someone acts.
-      if (status === 401 || status === 402 || status === 403)
-        throw new SourceUnavailableError(
-          status === 402 ? "the Firecrawl account is out of credits" : "Firecrawl refused the key",
-        )
-      if (status === 429 || status >= 500)
-        throw new SourceMiss(`Firecrawl is busy (HTTP ${status})`)
-      if (status !== 200) throw new SourceMiss(`Firecrawl answered HTTP ${status}`)
+      checkSearchStatus(status, "Firecrawl", "Firecrawl refused the key", {
+        402: "the Firecrawl account is out of credits",
+      })
       return parseShopifyAnswer(body, target)
     },
   }
