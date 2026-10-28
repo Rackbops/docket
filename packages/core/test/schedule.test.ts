@@ -8,6 +8,7 @@ import {
   periodDate,
   type Schedule,
   scheduleProblems,
+  zonedInstant,
 } from "../src/index.js"
 
 const ctx = { zone: "America/New_York", preferredHour: 9 }
@@ -131,6 +132,57 @@ describe("nextDue: poll", () => {
 })
 
 describe("nextDue: period", () => {
+  it("gives an old anchor the due dates a walk from its first period gives (docket#62)", () => {
+    // The reference walks every period from the anchor, as nextDue did before it skipped ahead;
+    // only dates near the sweep are turned into instants.
+    const from = Date.parse("2026-02-01T00:00:00Z")
+    const to = from + 800 * 86_400_000
+    const fires = (s: PeriodSchedule): number[] => {
+      const [y, m, d] = s.anchor.split("-").map(Number) as [number, number, number]
+      const out: number[] = []
+      for (let n = 0; ; n++) {
+        const k = n * s.every
+        let date: Date
+        if (s.unit === "day" || s.unit === "week") {
+          date = new Date(Date.UTC(y, m - 1, d + k * (s.unit === "week" ? 7 : 1)))
+        } else {
+          const months = k * (s.unit === "year" ? 12 : 1)
+          const last = new Date(Date.UTC(y, m - 1 + months + 1, 0)).getUTCDate()
+          date = new Date(Date.UTC(y, m - 1 + months, Math.min(d, last)))
+        }
+        const fire = date.getTime() - (s.leadDays ?? 0) * 86_400_000
+        if (fire > to + 400 * 86_400_000) return out
+        if (fire < from - 2 * 86_400_000) continue
+        const f = new Date(fire)
+        out.push(
+          zonedInstant(
+            f.getUTCFullYear(),
+            f.getUTCMonth() + 1,
+            f.getUTCDate(),
+            s.hour ?? ctx.preferredHour,
+            s.minute ?? 0,
+            ctx.zone,
+          ).getTime(),
+        )
+      }
+    }
+    const old: PeriodSchedule[] = [
+      { kind: "period", every: 1, unit: "day", anchor: "1900-01-01" },
+      { kind: "period", every: 2, unit: "week", anchor: "1900-01-01", hour: 18 },
+      { kind: "period", every: 1, unit: "month", anchor: "1900-01-31", leadDays: 3 },
+      { kind: "period", every: 3, unit: "month", anchor: "1901-02-28" },
+      { kind: "period", every: 1, unit: "year", anchor: "1904-02-29", leadDays: 14 },
+    ]
+    for (const s of old) {
+      const all = fires(s)
+      for (let t = from; t < to; t += 37 * 3_600_000) {
+        const want = all.find((f) => f > t)
+        const got = nextDue(s, new Date(t), ctx)?.getTime()
+        expect(got, `${s.unit} ${s.anchor} after ${new Date(t).toISOString()}`).toBe(want)
+      }
+    }
+  })
+
   it("rolls a yearly renewal from its anchor, asking at lead time in the owner's zone", () => {
     const s: PeriodSchedule = {
       kind: "period",
