@@ -7,12 +7,12 @@ import {
   inboxSource,
   isEbayHost,
   type Listing,
-  listingsFromJsonLd,
   MAX_REPORTED,
   NEVER_EBAY,
   pageSource,
   parseBggThingId,
   parseMarketplace,
+  readListings,
   renderWant,
   SourceMiss,
   SourceUnavailableError,
@@ -21,6 +21,8 @@ import {
   withinLimits,
 } from "../src/index.js"
 import { BGG_THING, shopSearch } from "./want-fixtures.js"
+
+const listings = (html: string, pageUrl: string) => readListings(html, pageUrl).listings
 
 /**
  * The want-list watcher's sources and pieces (category 2): the page source's JSON-LD reading, the
@@ -63,9 +65,9 @@ function shop(items: Item[]) {
   return { s, fetch }
 }
 
-describe("listingsFromJsonLd", () => {
+describe("readListings", () => {
   it("reads an ItemList's products with their prices, conditions and sellers, resolving relative addresses", () => {
-    const got = listingsFromJsonLd(shopSearch([OCEANIA, EUROPE, NESTS]), SHOP)
+    const got = listings(shopSearch([OCEANIA, EUROPE, NESTS]), SHOP)
     expect(got).toEqual([
       {
         id: "https://shop.example/p/oceania",
@@ -121,7 +123,7 @@ describe("listingsFromJsonLd", () => {
     }
     const page = `<script type="application/ld+json">${JSON.stringify(product)}</script><script type="application/ld+json">${JSON.stringify(list)}</script>`
     expect(
-      listingsFromJsonLd(page, "https://x.example/game#top").map((l) => [l.title, l.url, l.price]),
+      listings(page, "https://x.example/game#top").map((l) => [l.title, l.url, l.price]),
     ).toEqual([
       ["A game", "https://x.example/game", 12.5],
       ["Twice", "https://x.example/2", undefined],
@@ -129,9 +131,7 @@ describe("listingsFromJsonLd", () => {
   })
 
   it("finds nothing on a page without structured data, and the page source counts that as a miss", async () => {
-    expect(
-      listingsFromJsonLd("<html><body><div class=price>$30</div></body></html>", SHOP),
-    ).toEqual([])
+    expect(listings("<html><body><div class=price>$30</div></body></html>", SHOP)).toEqual([])
     const { s, fetch } = shop([])
     s.body = "<html></html>"
     await expect(pageSource.search(SHOP, fetch)).rejects.toThrow(SourceMiss)
@@ -140,11 +140,11 @@ describe("listingsFromJsonLd", () => {
   })
 
   it("keeps one id for a listing whose address carries per-view parameters, and an empty search is no miss", async () => {
-    const a = listingsFromJsonLd(
+    const a = listings(
       shopSearch([{ name: "A", url: "/p/a?variant=2&_pos=1&_sid=abc&_ss=r&utm_source=x" }]),
       SHOP,
     )
-    const b = listingsFromJsonLd(
+    const b = listings(
       shopSearch([{ name: "A", url: "/p/a?variant=2&_pos=7&_sid=def&srsltid=zz" }]),
       SHOP,
     )

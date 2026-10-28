@@ -3,6 +3,16 @@ const ZERO_DECIMAL = new Set(
 )
 const THREE_DECIMAL = new Set("BHD IQD JOD KWD LYD OMR TND".split(" "))
 
+/**
+ * A currency as a code: the three letters trimmed and upper-cased, or undefined when the text is
+ * empty or not three letters ("dollars"). Every want source and the limits read a watch's
+ * currency through this, so an invalid one counts as none named, everywhere (docket#58).
+ */
+export function currencyCode(raw: string | undefined): string | undefined {
+  const c = (raw ?? "").trim().toUpperCase()
+  return /^[A-Z]{3}$/.test(c) ? c : undefined
+}
+
 /** How many minor units make one of `currency` (100 for USD, 1 for JPY, 1000 for KWD). */
 export function minorUnits(currency: string): number {
   const c = currency.trim().toUpperCase()

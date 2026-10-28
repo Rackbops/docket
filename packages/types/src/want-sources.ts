@@ -183,13 +183,9 @@ function listingOf(node: Json, base: string, fallbackUrl: unknown): Listing | nu
 /**
  * The listings in a page's JSON-LD: each `ItemList`'s elements (a `ListItem`'s `item`, or the
  * element itself) and each standalone product, in page order, without repeats. A product with no
- * address of its own is the page itself (a product page). Pure.
+ * address of its own is the page itself (a product page). Also how many `ItemList`s the page
+ * declares: an empty one is a search with no results, not an unreadable page. Pure.
  */
-export function listingsFromJsonLd(html: string, pageUrl: string): Listing[] {
-  return readListings(html, pageUrl).listings
-}
-
-/** `listingsFromJsonLd`, and how many `ItemList`s the page declares: an empty one is a search with no results, not an unreadable page. */
 export function readListings(
   html: string,
   pageUrl: string,

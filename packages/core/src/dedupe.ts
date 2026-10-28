@@ -10,11 +10,6 @@ export function scheduledKey(taskId: string, dueAt: Date | string): string {
   return `sched:${taskId}:${iso}`
 }
 
-/** An on-demand run, or anything else a person asked for outside the schedule. */
-export function manualKey(taskId: string, seq: number): string {
-  return `manual:${taskId}:${seq}`
-}
-
 /**
  * The run a snooze of `occurrenceId` queues: one per snoozed run, so a double-tapped Snooze that
  * gets past every other check still queues one reminder.

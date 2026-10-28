@@ -6,7 +6,7 @@ import {
   type RunContext,
   type TaskType,
 } from "@rackbops/docket-core"
-import { money } from "./money.js"
+import { currencyCode, money } from "./money.js"
 import { MISSES_BEFORE_TELLING } from "./price.js"
 import { BGG_ATTRIBUTION } from "./want-bgg.js"
 import { EBAY_ATTRIBUTION, EBAY_CURRENCY } from "./want-ebay.js"
@@ -107,13 +107,13 @@ export function wantState(value: unknown): WantState {
 
 /**
  * Whether a listing is within the owner's limits: an unknown price never passes a top price, a
- * negative one never passes at all, whatever the source (docket#57); currencies compare without
- * case.
+ * negative one never passes at all, whatever the source (docket#57); currencies compare as codes
+ * (`currencyCode`), so an invalid one on the watch limits nothing (docket#58).
  */
 export function withinLimits(l: Listing, config: WantConfig): boolean {
   if (l.price !== undefined && !(l.price >= 0)) return false
-  const want = config.currency?.trim().toUpperCase()
-  if (want && l.currency && l.currency.toUpperCase() !== want) return false
+  const want = currencyCode(config.currency)
+  if (want && l.currency && currencyCode(l.currency) !== want) return false
   if (config.maxPrice === undefined) return true
   return l.price !== undefined && l.price <= config.maxPrice + 1e-9
 }
@@ -240,7 +240,8 @@ export async function pollWant(
   // The eBay source searches eBay US, which lists prices in USD only, so a watch in any other
   // currency would read fine every time and drop every listing on currency: say so at once
   // rather than look healthy forever.
-  const currency = ctx.config.currency?.trim().toUpperCase()
+  // An invalid code counts as none named, as everywhere (`currencyCode`, docket#58).
+  const currency = currencyCode(ctx.config.currency)
   if (ctx.config.source === "ebay" && currency && currency !== EBAY_CURRENCY) {
     return {
       kind: "done",

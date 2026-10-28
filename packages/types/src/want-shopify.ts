@@ -1,5 +1,5 @@
 import { clean } from "@rackbops/docket-core"
-import { minorUnits } from "./money.js"
+import { currencyCode, minorUnits } from "./money.js"
 import { safeUrl } from "./research-answer.js"
 import {
   type Listing,
@@ -62,8 +62,7 @@ export interface ShopifySearch extends SearchLimits {
 
 /** The request for a search: in stock, at or under the top price (minor units, rounded down), in USD unless the watch names a valid three-letter code. Pure. */
 export function shopifyRequest(s: ShopifySearch): ShopifyRequest {
-  const asked = (s.currency ?? "").trim().toUpperCase()
-  const currency = /^[A-Z]{3}$/.test(asked) ? asked : SHOPIFY_CURRENCY
+  const currency = currencyCode(s.currency) ?? SHOPIFY_CURRENCY
   const filters: ShopifyRequest["options"]["filters"] = { available: true }
   if (s.maxPrice !== undefined && Number.isFinite(s.maxPrice) && s.maxPrice >= 0)
     filters.price = { max: Math.floor(s.maxPrice * minorUnits(currency) + 1e-6) }

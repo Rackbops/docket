@@ -1,6 +1,7 @@
 import { clean } from "@rackbops/docket-core"
+import { currencyCode, minorUnits } from "./money.js"
 import { safeUrl } from "./research-answer.js"
-import { matchesWords, minorUnits, searchWords, shopifyQuery } from "./want-shopify.js"
+import { matchesWords, searchWords, shopifyQuery } from "./want-shopify.js"
 import {
   isEbayHost,
   type Listing,
@@ -59,13 +60,12 @@ export interface EbaySearch {
 /**
  * The request for a search: the words as sent (cut at a word, like Shopify's), newest first, at
  * most `EBAY_LIMIT`, and at or under the top price. eBay US prices in USD, so the price filter is
- * sent only for a watch in USD (or naming no currency); a watch in another currency gets no filter
- * here, and the want-list type never searches for one (`pollWant` answers it with a miss the
- * owner hears, docket#41). The filter is in whole units with decimals. Pure.
+ * sent only for a watch in USD (or naming no valid currency, `currencyCode`); a watch in another
+ * currency gets no filter here, and the want-list type never searches for one (`pollWant` answers
+ * it with a miss the owner hears, docket#41). The filter is in whole units with decimals. Pure.
  */
 export function ebayRequest(s: EbaySearch): EbayRequest {
-  const asked = (s.currency ?? "").trim().toUpperCase()
-  const currency = asked === "" ? EBAY_CURRENCY : asked
+  const currency = currencyCode(s.currency) ?? EBAY_CURRENCY
   const params: Record<string, string> = {
     q: shopifyQuery(s.query),
     limit: String(EBAY_LIMIT),

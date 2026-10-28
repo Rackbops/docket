@@ -1,4 +1,5 @@
-import { wallClock, zonedInstant } from "./zoned.js"
+import { addDays, daysInMonth, type LocalDate } from "./local-date.js"
+import { isTimeZone, wallClock, zonedInstant } from "./zoned.js"
 
 /**
  * Reading a person's "when" (plan section 1.4, the reminder's `at` option): the words a person
@@ -53,42 +54,18 @@ const TIME_DAY_RE = new RegExp(`^(?:at )?(${TIME})(?: (?:on )?(${DAY}))?$`)
 const MAX_AHEAD_YEARS = 5
 const MAX_AHEAD_MS = MAX_AHEAD_YEARS * 365.25 * 86_400_000
 
-function knownZone(zone: string): boolean {
-  try {
-    new Intl.DateTimeFormat("en-US", { timeZone: zone })
-    return true
-  } catch {
-    return false
-  }
-}
-
 const HINT = `Try "in 2 hours", "9am", "tomorrow 9am", "friday 17:30" or "2026-10-01 9:00".`
-
-interface CalendarDate {
-  year: number
-  month: number
-  day: number
-}
 
 function fail(text: string, why?: string): WhenResult {
   return { ok: false, error: `${why ?? `I couldn't read "${text}" as a time.`} ${HINT}` }
 }
 
-function daysIn(year: number, month: number): number {
-  return new Date(Date.UTC(year, month, 0)).getUTCDate()
-}
-
-function addDays(date: CalendarDate, days: number): CalendarDate {
-  const d = new Date(Date.UTC(date.year, date.month - 1, date.day + days))
-  return { year: d.getUTCFullYear(), month: d.getUTCMonth() + 1, day: d.getUTCDate() }
-}
-
-function validDate(date: CalendarDate): boolean {
+function validDate(date: LocalDate): boolean {
   return (
     date.month >= 1 &&
     date.month <= 12 &&
     date.day >= 1 &&
-    date.day <= daysIn(date.year, date.month)
+    date.day <= daysInMonth(date.year, date.month)
   )
 }
 
@@ -151,7 +128,7 @@ function resolve(text: string, now: Date, options: WhenOptions): WhenResult {
     return { ok: true, at: new Date(now.getTime() + n * unit) }
   }
 
-  if (!knownZone(options.zone)) return fail(text, `I don't know the time zone ${options.zone}.`)
+  if (!isTimeZone(options.zone)) return fail(text, `I don't know the time zone ${options.zone}.`)
 
   let dayWord: string | undefined
   let timeWord: string | undefined
@@ -172,8 +149,8 @@ function resolve(text: string, now: Date, options: WhenOptions): WhenResult {
   if (!time) return fail(text)
 
   const clock = wallClock(now, options.zone)
-  const today: CalendarDate = { year: clock.year, month: clock.month, day: clock.day }
-  const at = (date: CalendarDate) =>
+  const today: LocalDate = { year: clock.year, month: clock.month, day: clock.day }
+  const at = (date: LocalDate) =>
     zonedInstant(date.year, date.month, date.day, time.hour, time.minute, options.zone)
 
   if (dayWord === undefined) {

@@ -78,9 +78,12 @@ describe("the eBay request", () => {
     expect(ebayRequest({ query: QUERY, maxPrice: 20.5, currency: "usd" }).params.filter).toBe(
       "price:[..20.50],priceCurrency:USD",
     )
-    expect(
-      ebayRequest({ query: QUERY, maxPrice: 20, currency: "dollars" }).params.filter,
-    ).toBeUndefined()
+  })
+
+  it("reads an invalid currency as none named, as Shopify and the limits do (docket#58)", () => {
+    expect(ebayRequest({ query: QUERY, maxPrice: 20, currency: "dollars" }).params.filter).toBe(
+      "price:[..20.00],priceCurrency:USD",
+    )
   })
 
   it("is a source id", () => {

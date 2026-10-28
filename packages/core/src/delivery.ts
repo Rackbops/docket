@@ -74,12 +74,6 @@ export interface DeliverOptions {
   signal?: AbortSignal
 }
 
-/** Who an occurrence has been delivered to. */
-export async function deliveredTo(store: Store, occurrenceId: string): Promise<Set<string>> {
-  const sent = await store.listDeliveries({ occurrenceId, status: "sent" })
-  return new Set(sent.map((d) => d.userId))
-}
-
 /**
  * The copy one target receives, with the reply reference. The owner's carries the run's actions
  * and never an opt-out; a recipient's (anyone but `ownerId`) drops what only the owner answers

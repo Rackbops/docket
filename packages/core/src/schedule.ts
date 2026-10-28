@@ -1,3 +1,4 @@
+import { dayNumber, daysInMonth, fromDayNumber, type LocalDate } from "./local-date.js"
 import { wallClock, zonedInstant } from "./zoned.js"
 
 /**
@@ -93,7 +94,6 @@ export interface ScheduleContext {
 export const MIN_POLL_MINUTES = 5
 
 const MINUTE_MS = 60_000
-const DAY_MS = 86_400_000
 /** How far ahead `nextDue` searches before giving up on a calendar schedule. */
 const HORIZON_DAYS = 366 * 3
 /**
@@ -111,12 +111,6 @@ export const MAX_CALENDAR_EVERY: Readonly<Record<CalendarSchedule["unit"], numbe
 /** How many periods ahead `nextDue` searches before giving up on a period schedule. */
 const HORIZON_PERIODS = 100_000
 
-interface LocalDate {
-  year: number
-  month: number
-  day: number
-}
-
 function parseLocalDate(value: string): LocalDate | null {
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value)
   if (!m) return null
@@ -131,20 +125,6 @@ function formatLocalDate(d: LocalDate): string {
   const mm = String(d.month).padStart(2, "0")
   const dd = String(d.day).padStart(2, "0")
   return `${d.year}-${mm}-${dd}`
-}
-
-function daysInMonth(year: number, month: number): number {
-  return new Date(Date.UTC(year, month, 0)).getUTCDate()
-}
-
-/** Whole days between two local dates, counted on a pure calendar (no zone). */
-function dayNumber(d: LocalDate): number {
-  return Math.floor(Date.UTC(d.year, d.month - 1, d.day) / DAY_MS)
-}
-
-function fromDayNumber(n: number): LocalDate {
-  const dt = new Date(n * DAY_MS)
-  return { year: dt.getUTCFullYear(), month: dt.getUTCMonth() + 1, day: dt.getUTCDate() }
 }
 
 function weekdayOf(d: LocalDate): number {
