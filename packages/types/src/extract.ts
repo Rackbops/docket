@@ -177,8 +177,9 @@ export const MAX_PATTERN_BODY_CHARS = 500_000
  * branches overlap (`(a|a)*`, `(\s| )*`, `(.|\s)*`), the shapes that backtrack catastrophically
  * on about thirty characters. A heuristic, not a proof: it reads the pattern's text, skipping
  * escapes and character classes, so it also refuses safe shapes whose parts cannot overlap
- * (`(?:\d+,)*\d+`, `(?:\s|&nbsp;)*`), which a character class says as well (`[\d,]+`). A host checks it when a pattern is saved;
- * `priceFromPattern` refuses such a pattern too, and the price type never fetches with one.
+ * (`(?:\d+,)*\d+`, `(?:\s|&nbsp;)*`); the first is better said as a character class
+ * (`[\d,]+`). A host checks it when a pattern is saved; `priceFromPattern` refuses such a
+ * pattern too, and the price type never fetches with one.
  */
 export function patternProblem(pattern: string): string | null {
   if (pattern.length > MAX_PATTERN_CHARS) {
