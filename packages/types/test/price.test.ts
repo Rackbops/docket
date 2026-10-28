@@ -166,7 +166,8 @@ describe("price", () => {
     // A stored state with no currency (written before the field existed), on a USD watch.
     const t = await tracked({ currency: "USD" })
     expect(await observe(t, [100])).toHaveLength(1)
-    const { currency: _, ...legacy } = (await t.store.getTask(t.task.id))?.state as PriceState
+    const stored = (await t.store.getTask(t.task.id))?.state as PriceState
+    const { currency: _, ...legacy } = stored
     await t.store.updateTask(t.task.id, { state: legacy, at: t.clock.now().toISOString() })
     t.fetch.set(URL, page(50, "EUR"))
     await t.lanes.tickNotify()
