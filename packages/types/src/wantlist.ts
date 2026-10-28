@@ -232,8 +232,9 @@ export async function pollWant(
       ),
     }
   }
-  // eBay US lists prices in USD only, so a watch in any other currency would read fine every time
-  // and drop every listing on currency: say so at once rather than look healthy forever.
+  // The eBay source searches eBay US, which lists prices in USD only, so a watch in any other
+  // currency would read fine every time and drop every listing on currency: say so at once
+  // rather than look healthy forever.
   const currency = ctx.config.currency?.trim().toUpperCase()
   if (ctx.config.source === "ebay" && currency && currency !== EBAY_CURRENCY) {
     return {
@@ -242,7 +243,7 @@ export async function pollWant(
         ctx,
         state,
         new SourceUnavailableError(
-          `eBay lists prices in ${EBAY_CURRENCY} only, so a watch in ${currency} never matches; ` +
+          `eBay US lists prices in ${EBAY_CURRENCY} only, so a watch in ${currency} never matches; ` +
             `set the currency to ${EBAY_CURRENCY} or leave it out`,
         ),
       ),

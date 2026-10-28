@@ -221,18 +221,41 @@ describe("scheduleProblems", () => {
     // A step longer than nextDue's search horizon would be accepted and then never fire.
     expect(
       scheduleProblems({ kind: "calendar", every: 48, unit: "month", start: "2026-01-15" }),
-    ).toEqual(["calendar.every must be at most 34 for unit month"])
+    ).toEqual(["calendar.every must be at most 36 for unit month"])
     expect(
       scheduleProblems({ kind: "calendar", every: 200, unit: "week", start: "2026-01-15" }),
-    ).toEqual(["calendar.every must be at most 152 for unit week"])
-    // The largest accepted step still fires within the horizon.
-    for (const s of [
-      { kind: "calendar", every: 34, unit: "month", start: "2026-01-31" },
-      { kind: "calendar", every: 152, unit: "week", weekdays: [6], start: "2026-01-04" },
-      { kind: "calendar", every: 1067, unit: "day", start: "2026-01-15" },
-    ] as Schedule[]) {
+    ).toEqual(["calendar.every must be at most 156 for unit week"])
+    expect(
+      scheduleProblems({ kind: "calendar", every: 1098, unit: "day", start: "2026-01-15" }),
+    ).toEqual(["calendar.every must be at most 1097 for unit day"])
+    // The largest accepted step still fires, from just after each run, across the widest gaps:
+    // a clamped Feb 28 to a leap Feb 29, the far ends of a week, a 1097-day step.
+    const cases: [Schedule, string][] = [
+      [
+        { kind: "calendar", every: 36, unit: "month", start: "2029-02-28", dayOfMonth: 31 },
+        "month",
+      ],
+      [{ kind: "calendar", every: 36, unit: "month", start: "2026-01-31" }, "month"],
+      [
+        { kind: "calendar", every: 156, unit: "week", weekdays: [0, 6], start: "2026-01-04" },
+        "week",
+      ],
+      [{ kind: "calendar", every: 156, unit: "week", weekdays: [6], start: "2026-01-04" }, "week"],
+      [{ kind: "calendar", every: 1097, unit: "day", start: "2026-01-15" }, "day"],
+    ]
+    const zones = ["America/New_York", "Pacific/Kiritimati", "Pacific/Pago_Pago"]
+    for (const [s] of cases) {
       expect(scheduleProblems(s)).toEqual([])
-      expect(nextDue(s, new Date("2026-02-01T00:00:00Z"), ctx)).not.toBeNull()
+      for (const zone of zones) {
+        for (const hour of [0, 23]) {
+          let at = new Date("2025-12-01T00:00:00Z")
+          for (let i = 0; i < 3; i++) {
+            const next = nextDue(s, at, { zone, preferredHour: hour })
+            expect(next, `${JSON.stringify(s)} ${zone} ${hour} run ${i}`).not.toBeNull()
+            at = next ?? at
+          }
+        }
+      }
     }
     expect(
       scheduleProblems({ kind: "poll", every: 1, unit: "minute", start: "2026-03-02T12:00:00Z" }),

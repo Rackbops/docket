@@ -96,8 +96,18 @@ const MINUTE_MS = 60_000
 const DAY_MS = 86_400_000
 /** How far ahead `nextDue` searches before giving up on a calendar schedule. */
 const HORIZON_DAYS = 366 * 3
-/** The longest a calendar unit can be, in days, for the `every` bound in `calendarProblems`. */
-const UNIT_DAYS: Record<CalendarSchedule["unit"], number> = { day: 1, week: 7, month: 31 }
+/**
+ * The largest calendar `every` per unit whose longest gap between two runs stays inside the days
+ * `nextDue` searches (offsets 0 to `HORIZON_DAYS - 1` from the day it starts on): 1097 days; 156
+ * weeks, whose runs fall at most 1092 days apart whichever weekdays are set; 36 months, which span
+ * at most 1097 days (three years with a leap day, from a day clamped to the month's end). One more
+ * of any would be accepted and could then never fire (docket#46).
+ */
+export const MAX_CALENDAR_EVERY: Readonly<Record<CalendarSchedule["unit"], number>> = {
+  day: HORIZON_DAYS - 1,
+  week: Math.floor((HORIZON_DAYS - 1) / 7),
+  month: 36,
+}
 /** How many periods ahead `nextDue` searches before giving up on a period schedule. */
 const HORIZON_PERIODS = 100_000
 
@@ -197,9 +207,7 @@ function calendarProblems(schedule: CalendarSchedule): string[] {
   if (!["day", "week", "month"].includes(schedule.unit)) {
     problems.push("calendar.unit is unknown")
   } else if (Number.isInteger(schedule.every) && schedule.every >= 1) {
-    // nextDue looks HORIZON_DAYS ahead; a longer step would be accepted and then never fire.
-    // A month counts as 31 days, and the slack covers the days inside a matching week or month.
-    const max = Math.floor((HORIZON_DAYS - 31) / UNIT_DAYS[schedule.unit])
+    const max = MAX_CALENDAR_EVERY[schedule.unit]
     if (schedule.every > max) {
       problems.push(`calendar.every must be at most ${max} for unit ${schedule.unit}`)
     }

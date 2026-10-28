@@ -262,7 +262,9 @@ describe("an eBay watch", () => {
     const type = wantlistType({ ebay: source })
     const out = await type.run(ctx(null, { currency: "eur" }))
     expect(asked).toEqual([])
-    expect(out.summary).toContain("eBay lists prices in USD only, so a watch in EUR never matches")
+    expect(out.summary).toContain(
+      "eBay US lists prices in USD only, so a watch in EUR never matches",
+    )
     expect(out.notify?.text).toContain("eBay's search")
     // A USD watch, in any case, still searches.
     const usd = await type.run(ctx(null, { currency: " usd " }))

@@ -160,7 +160,7 @@ export interface FetchResponse {
  * - refuse the read when the host name is, or resolves to, a loopback, private, link-local,
  *   carrier-grade NAT, multicast or reserved address (IPv4 or IPv6, a mapped IPv4 read as the
  *   address inside it), and check each redirect hop the same way;
- * - give up after a time limit, and cap the body it hands back.
+ * - give up after a time limit, and cap how much of the body it reads.
  *
  * A refusal is thrown, and the type counts it as a miss like any failed read. This library cannot
  * resolve a name, so the rule lives in the adapter: the tracker plugin's `createPageFetch`

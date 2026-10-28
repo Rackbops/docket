@@ -139,8 +139,9 @@ export async function deliver(
     }
     const target = targets.get(row.userId)
     if (!target) {
-      await finalFail(store, row, "no longer a recipient", now())
-      report.failed.push(row.userId)
+      // Another sender's claim got there first: theirs stands, and this call tried nothing.
+      const ended = await finalFail(store, row, "no longer a recipient", now())
+      ;(ended ? report.failed : report.untried).push(row.userId)
       continue
     }
     const claim = await store.claimDelivery(occurrence.id, row.userId, now().toISOString())
@@ -213,11 +214,12 @@ async function sendOne(
 }
 
 /**
- * Ends `row` for good, unsent. Like every sweep here it settles only while the row still has the
- * status it was read with (docket#47): a claim or send that got there first stands.
+ * Ends `row` for good, unsent; true when it did. Like every sweep here it settles only while the
+ * row still has the status it was read with (docket#47): a claim or send that got there first
+ * stands.
  */
-async function finalFail(store: Store, row: Delivery, error: string, at: Date): Promise<void> {
-  await store.settleDelivery(
+async function finalFail(store: Store, row: Delivery, error: string, at: Date): Promise<boolean> {
+  const after = await store.settleDelivery(
     row.occurrenceId,
     row.userId,
     {
@@ -230,16 +232,21 @@ async function finalFail(store: Store, row: Delivery, error: string, at: Date): 
     },
     row.status,
   )
+  return after.status === "failed" && after.settledAt === at.toISOString()
 }
 
-/** Ends every owed row of a run that can no longer be delivered (its task or run is gone). */
+/**
+ * Ends every owed row (`retryAt` set) of a run that can no longer be delivered (its task or run
+ * is gone). Any other row in `rows` is left as it is: a `sent` copy stays sent, a held claim is
+ * the stale sweep's.
+ */
 export async function dropOwed(
   store: Store,
   rows: readonly Delivery[],
   error: string,
   at: Date,
 ): Promise<void> {
-  for (const row of rows) await finalFail(store, row, error, at)
+  for (const row of rows) if (row.retryAt !== null) await finalFail(store, row, error, at)
 }
 
 /**
@@ -265,8 +272,8 @@ export async function settleStaleClaims(store: Store, now: Date, all = false): P
       },
       "claimed",
     )
-    // The send settled between the read and here: its outcome stands.
-    if (after.status === "unconfirmed") settled += 1
+    // The send settled between the read and here: its outcome stands, and is not counted.
+    if (after.status === "unconfirmed" && after.settledAt === now.toISOString()) settled += 1
   }
   return settled
 }

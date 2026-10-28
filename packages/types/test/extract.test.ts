@@ -89,6 +89,16 @@ describe("the owner's pattern (docket#45)", () => {
     for (const p of ["(a+)+b", "(x*)*", "(?:a|b+){2,}", "((a+))*", "(\\d+\\s*)+$", "(a+){2,5}"]) {
       expect(patternProblem(p), p).toMatch(/repeats a group that itself repeats/)
     }
+    // A repeated alternation stalls as surely (the review's probes: 37 s, 75 s, 1.8 s).
+    for (const p of [
+      "(a|a)*b",
+      "(?:\\s|&nbsp;| )*\\$(\\d+)",
+      "(.|\\s)*Price: \\$(\\d+)",
+      "(?:(a|b))+",
+      "(a|b){3}",
+    ]) {
+      expect(patternProblem(p), p).toMatch(/or has a \|/)
+    }
     expect(patternProblem("[")).toBe("the pattern is not a valid regular expression")
     expect(patternProblem("a".repeat(MAX_PATTERN_CHARS + 1))).toMatch(/longer than/)
   })
@@ -102,7 +112,9 @@ describe("the owner's pattern (docket#45)", () => {
       "[(+*]+(\\d+)",
       "(\\(+)?(\\d+)",
       "(a+)?b",
-      "(a|b){3}",
+      "(?:USD|EUR)\\s*(\\d+)",
+      "(?:Price|Now):?\\s*\\$([\\d,.]+)",
+      "(a+){,3}",
     ]) {
       expect(patternProblem(p), p).toBeNull()
     }
@@ -111,6 +123,7 @@ describe("the owner's pattern (docket#45)", () => {
   it("never runs a refused pattern, and runs a taken one on the capped length only", () => {
     const start = Date.now()
     expect(priceFromPattern(`${"a".repeat(40)}!`, "(a+)+b")).toBeNull()
+    expect(priceFromPattern(" ".repeat(40), "(?:\\s|&nbsp;| )*\\$(\\d+)")).toBeNull()
     expect(Date.now() - start).toBeLessThan(100)
     const past = `${"x".repeat(MAX_PATTERN_BODY_CHARS)}price: 9`
     expect(priceFromPattern(past, "price: (\\d+)")).toBeNull()

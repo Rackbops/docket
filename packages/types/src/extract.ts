@@ -169,10 +169,13 @@ export const MAX_PATTERN_BODY_CHARS = 500_000
 
 /**
  * Why the owner's pattern is refused, or null when it is taken: it must parse, stay under
- * `MAX_PATTERN_CHARS`, and not repeat a group that itself repeats without bound (`(a+)+`,
- * `(x*)*`, `(?:a|b+){2,}`), the shape that backtracks catastrophically (docket#45). A heuristic,
- * not a proof: it reads the pattern's text, skipping escapes and character classes. A host
- * checks it when a pattern is saved; `priceFromPattern` refuses such a pattern too.
+ * `MAX_PATTERN_CHARS`, and repeat no group that could match one stretch of text in many ways
+ * (docket#45) -- a group that itself repeats (`(a+)+`, `(x*)*`, `(?:\d+,)*`) or holds an
+ * alternation (`(a|a)*`, `(?:\s|&nbsp;)*`, `(.|\s)*`), the shapes that backtrack catastrophically
+ * on about thirty characters. A heuristic, not a proof: it reads the pattern's text, skipping
+ * escapes and character classes, and refuses some safe patterns (`(?:\d+,)*\d+`), which a
+ * character class says as well (`[\d,]+`). A host checks it when a pattern is saved;
+ * `priceFromPattern` refuses such a pattern too, and the price type never fetches with one.
  */
 export function patternProblem(pattern: string): string | null {
   if (pattern.length > MAX_PATTERN_CHARS) {
@@ -183,32 +186,33 @@ export function patternProblem(pattern: string): string | null {
   } catch {
     return "the pattern is not a valid regular expression"
   }
-  return repeatsARepeat(pattern)
-    ? "the pattern repeats a group that itself repeats, like (a+)+, which can stall the tracker"
+  return repeatsAnAmbiguousGroup(pattern)
+    ? "the pattern repeats a group that itself repeats or has a |, like (a+)+ or (a|b)*, " +
+        "which can stall the tracker; use a character class, like [\\d,]+"
     : null
 }
 
-/** An unbounded quantifier at `i` in `p`: `*`, `+` or `{n,}`; its length, or 0. */
-function unboundedAt(p: string, i: number): number {
+/** An unbounded quantifier at `i` in `p`: `*`, `+` or `{n,}`. */
+function unboundedAt(p: string, i: number): boolean {
   const c = p[i]
-  if (c === "*" || c === "+") return 1
-  if (c === "{") {
-    const m = /^\{\d*,\}/.exec(p.slice(i))
-    if (m) return m[0].length
-  }
-  return 0
+  return c === "*" || c === "+" || /^\{\d+,\}/.test(p.slice(i))
 }
 
-/** A repeating quantifier at `i`: unbounded, or `{n,m}` with m above 1. */
+/**
+ * A repeating quantifier at `i`: unbounded, or `{n}` / `{n,m}` above 1. (`{,3}` is no quantifier
+ * in a pattern without the `u` flag: it matches itself.)
+ */
 function repeatsAt(p: string, i: number): boolean {
-  if (unboundedAt(p, i) > 0) return true
-  const m = /^\{\d*,?(\d+)?\}/.exec(p.slice(i))
-  return m !== null && Number(m[1] ?? m[0].slice(1, -1)) > 1
+  if (unboundedAt(p, i)) return true
+  const m = /^\{(\d+)(?:,(\d+))?\}/.exec(p.slice(i))
+  return m !== null && Number(m[2] ?? m[1]) > 1
 }
 
-function repeatsARepeat(p: string): boolean {
-  // One entry per open group: whether anything inside it repeats without bound.
-  const open: boolean[] = []
+function repeatsAnAmbiguousGroup(p: string): boolean {
+  // One entry per open group: whether anything inside it repeats without bound, and whether it
+  // holds an alternation (its own `|`, or one in an unrepeated group inside it).
+  const open: { repeats: boolean; alt: boolean }[] = []
+  const top = () => open[open.length - 1]
   let inside = false
   for (let i = 0; i < p.length; i++) {
     const c = p[i]
@@ -226,17 +230,27 @@ function repeatsARepeat(p: string): boolean {
       continue
     }
     if (c === "(") {
-      open.push(false)
+      open.push({ repeats: false, alt: false })
+      continue
+    }
+    if (c === "|") {
+      const g = top()
+      if (g) g.alt = true
       continue
     }
     if (c === ")") {
-      const repeats = open.pop() ?? false
-      if (repeats && repeatsAt(p, i + 1)) return true
-      if (repeats && open.length > 0) open[open.length - 1] = true
-      if (unboundedAt(p, i + 1) > 0 && open.length > 0) open[open.length - 1] = true
+      const g = open.pop() ?? { repeats: false, alt: false }
+      const repeated = repeatsAt(p, i + 1)
+      if (repeated && (g.repeats || g.alt)) return true
+      const parent = top()
+      if (parent) {
+        if (g.repeats || unboundedAt(p, i + 1)) parent.repeats = true
+        if (g.alt && !repeated) parent.alt = true
+      }
       continue
     }
-    if (unboundedAt(p, i) > 0 && open.length > 0) open[open.length - 1] = true
+    const g = top()
+    if (g && unboundedAt(p, i)) g.repeats = true
   }
   return false
 }
