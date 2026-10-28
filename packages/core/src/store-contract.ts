@@ -798,6 +798,12 @@ export const STORE_CONTRACT: readonly StoreContractCase[] = [
         "limit 2: the two newest, oldest first",
       )
       same((await store.listSeries(t.id, { limit: 0 })).length, 0, "limit 0 keeps none")
+      same((await store.listSeries(t.id, { limit: -1 })).length, 0, "a negative limit keeps none")
+      same(
+        (await store.listSeries(t.id, { limit: Number.NaN })).length,
+        0,
+        "a NaN limit keeps none",
+      )
     },
   },
   {

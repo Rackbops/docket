@@ -61,8 +61,10 @@ describe("a text reply (docket#54)", () => {
     expect(called).toBe(0)
     expect((await store.getTask(task.id))?.status).toBe("active")
   })
+})
 
-  it("keeps a queued run whose Job went out while the task was completing (docket#55)", async () => {
+describe("completing a task (docket#55)", () => {
+  it("keeps a queued run whose Job went out while the task was completing", async () => {
     const { store, clock, notifier, lanes, task, type, runId, larry } = await setup()
     await lanes.tickNotify()
     const id = await runId()
