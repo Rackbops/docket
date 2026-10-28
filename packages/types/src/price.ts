@@ -49,8 +49,9 @@ export interface PriceState {
   alerts: number
   /**
    * The currency the prices above are in, upper-cased, when the page or the config named one. A
-   * read in another currency is a miss, never a drop (docket#59). Absent in a state from before
-   * docket#59; the next read fills it in.
+   * read the page declares in another currency is a miss, never a drop (docket#59). Absent in a
+   * state from before docket#59: such a state is held to the config's currency, if any, and the
+   * next good read fills it in.
    */
   currency?: string
 }
@@ -184,9 +185,13 @@ export const price = defineTaskType<PriceConfig>({
       }
     }
     // A geo-switched page (EUR against a USD baseline) is no drop: a miss, so the owner hears
-    // after a few and the baseline stays as it was.
-    if (state.currency && code !== "" && code !== state.currency) {
-      return miss(ctx, state, `the page now prices in ${code}, not ${state.currency}`)
+    // after a few and the baseline stays as it was. Only a currency the page itself declares
+    // counts (the config's is a fallback for a page that names none), and a state from before
+    // docket#59 is held to the config's currency when it has one.
+    const declared = (found.currency ?? "").trim().toUpperCase()
+    const known = state.currency ?? (ctx.config.currency ?? "").trim().toUpperCase()
+    if (known !== "" && declared !== "" && declared !== known) {
+      return miss(ctx, state, `the page now prices in ${declared}, not ${known}`)
     }
     const line = ref * (1 - drop / 100)
     const below = seen <= line + 1e-9

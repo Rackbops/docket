@@ -358,7 +358,7 @@ export class MemoryStore implements Store {
       .sort((a, b) => a.p.at.localeCompare(b.p.at) || a.i - b.i)
       .map(({ p }) => p)
     const limit = filter.limit
-    const kept = limit === undefined ? points : limit < 1 ? [] : points.slice(-limit)
+    const kept = limit === undefined ? points : !(limit >= 1) ? [] : points.slice(-limit)
     return kept.map((p) => MemoryStore.copy(p))
   }
 

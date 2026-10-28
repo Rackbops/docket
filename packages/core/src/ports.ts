@@ -301,7 +301,7 @@ export interface NewSeriesPoint {
 export interface SeriesFilter {
   /** Inclusive: points at or after this instant. */
   since?: string
-  /** Keep only the most recent N points (the result stays oldest first); 0 keeps none. */
+  /** Keep only the most recent N points (the result stays oldest first); below 1 keeps none. */
   limit?: number
 }
 

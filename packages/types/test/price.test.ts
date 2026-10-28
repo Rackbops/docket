@@ -1,7 +1,13 @@
 import { createTask, type PollSchedule } from "@rackbops/docket-core"
 import { describe, expect, it } from "vitest"
 
-import { MISSES_BEFORE_TELLING, type PriceConfig, price, reference } from "../src/index.js"
+import {
+  MISSES_BEFORE_TELLING,
+  type PriceConfig,
+  type PriceState,
+  price,
+  reference,
+} from "../src/index.js"
 import { actor, FakeFetch, tracker } from "./helpers.js"
 
 const URL = "https://shop.example/widget"
@@ -154,6 +160,35 @@ describe("price", () => {
     expect(await observe(t, [85])).toEqual([
       "widget: 85.00 USD, down 15% from 100.00 USD (last seen). https://shop.example/widget",
     ])
+  })
+
+  it("holds a state from before docket#59 to the config's currency, and ignores the fallback", async () => {
+    // A stored state with no currency (written before the field existed), on a USD watch.
+    const t = await tracked({ currency: "USD" })
+    expect(await observe(t, [100])).toHaveLength(1)
+    const { currency: _, ...legacy } = (await t.store.getTask(t.task.id))?.state as PriceState
+    await t.store.updateTask(t.task.id, { state: legacy, at: t.clock.now().toISOString() })
+    t.fetch.set(URL, page(50, "EUR"))
+    await t.lanes.tickNotify()
+    t.clock.advance(6 * HOUR)
+    expect(t.notifier.sent).toHaveLength(1)
+    expect((await t.store.getTask(t.task.id))?.state).toMatchObject({ last: 100, misses: 1 })
+
+    // A EUR baseline, then a page that names no currency on a USD watch: the config's USD is
+    // only a fallback for showing the price, so the read counts and a real drop alerts.
+    const e = await tracked({ currency: "USD" })
+    e.fetch.set(URL, page(100, "EUR"))
+    await e.lanes.tickNotify()
+    e.clock.advance(6 * HOUR)
+    const bare = { "@type": "Product", offers: { "@type": "Offer", price: 80 } }
+    e.fetch.set(URL, `<script type="application/ld+json">${JSON.stringify(bare)}</script>`)
+    await e.lanes.tickNotify()
+    expect((await e.store.getTask(e.task.id))?.state).toMatchObject({
+      currency: "EUR",
+      last: 80,
+      misses: 0,
+      alerts: 1,
+    })
   })
 
   it("stops tracking on done", async () => {
