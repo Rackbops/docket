@@ -505,6 +505,106 @@ export const STORE_CONTRACT: readonly StoreContractCase[] = [
     },
   },
   {
+    // Same floor as the claim above: one guarded write each, never a read then a write
+    // (docket#53). `ports.ts` promises two lanes never both start one run.
+    name: "two starts of one run at once: exactly one wins",
+    async run(store) {
+      const u = await owner(store)
+      const t = await task(store, u.id)
+      const id = (await store.createOccurrence(occurrence(t.id, AT, "k")))?.id ?? ""
+      const both = await Promise.all([
+        store.updateOccurrenceIf(id, "queued", { status: "running", startedAt: AT }),
+        store.updateOccurrenceIf(id, "queued", { status: "running", startedAt: MID }),
+      ])
+      same(both.filter((o) => o !== null).length, 1, "one start")
+    },
+  },
+  {
+    name: "two occurrences with one dedupe key at once: exactly one is created",
+    async run(store) {
+      const u = await owner(store)
+      const t = await task(store, u.id)
+      const both = await Promise.all([
+        store.createOccurrence(occurrence(t.id, AT, "sched:once")),
+        store.createOccurrence(occurrence(t.id, LATER, "sched:once")),
+      ])
+      same(both.filter((o) => o !== null).length, 1, "one created")
+      same((await store.listOccurrences({ taskId: t.id })).length, 1, "one stored")
+    },
+  },
+  {
+    name: "two claims of one notice key at once: exactly one wins",
+    async run(store) {
+      const both = await Promise.all([
+        store.claimNotice("budget:u1:2026-03-02", AT),
+        store.claimNotice("budget:u1:2026-03-02", AT),
+      ])
+      same(both.filter((c) => c).length, 1, "one claim")
+    },
+  },
+  {
+    // `dropOwed` and `freshRoundForPause` settle rows that were planned and never claimed: a
+    // Store whose settle only writes a `claimed` row would leave them owed forever (docket#53).
+    name: "a planned row that was never claimed is settled as told",
+    async run(store) {
+      const u = await owner(store)
+      const t = await task(store, u.id)
+      const id = (await store.createOccurrence(occurrence(t.id, AT, "k")))?.id ?? ""
+      await store.planDelivery(id, u.id, AT)
+      const failed = await store.settleDelivery(
+        id,
+        u.id,
+        { status: "failed", error: "gone", attempts: 0, deferrals: 0, retryAt: null, at: MID },
+        "pending",
+      )
+      same(
+        [failed.status, failed.error, failed.retryAt, failed.settledAt],
+        ["failed", "gone", null, MID],
+        "settled while pending",
+      )
+      same(await store.claimDelivery(id, u.id, LATER), null, "and no longer owed")
+    },
+  },
+  {
+    // A sweeper passes the status it read; a send that settled since must stand (docket#47).
+    name: "a settle that expects a status the row no longer has changes nothing",
+    async run(store) {
+      const u = await owner(store)
+      const t = await task(store, u.id)
+      const id = (await store.createOccurrence(occurrence(t.id, AT, "k")))?.id ?? ""
+      await store.planDelivery(id, u.id, AT)
+      await store.claimDelivery(id, u.id, AT)
+      await store.settleDelivery(id, u.id, {
+        status: "sent",
+        messageId: "m1",
+        attempts: 0,
+        deferrals: 0,
+        retryAt: null,
+        at: MID,
+      })
+      const swept = await store.settleDelivery(
+        id,
+        u.id,
+        {
+          status: "unconfirmed",
+          error: "claimed, never settled",
+          attempts: 0,
+          deferrals: 0,
+          retryAt: null,
+          at: LATER,
+        },
+        "claimed",
+      )
+      same(
+        [swept.status, swept.messageId, swept.error, swept.settledAt],
+        ["sent", "m1", null, MID],
+        "the stale settle returns the row as it stands",
+      )
+      const stored = (await store.listDeliveries({ occurrenceId: id }))[0]
+      same([stored?.status, stored?.messageId], ["sent", "m1"], "and the send stands")
+    },
+  },
+  {
     name: "deliveries planned at the same instant list in the order they were planned",
     async run(store) {
       const a = await owner(store)

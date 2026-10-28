@@ -395,6 +395,12 @@ describe("withBarredSites, the belt", () => {
       findings: [{ claim: "Sold for 40 GBP.", sources: ["https://www.ebay.co.uk/itm/1"] }],
     }
     expect(withBarredSites(ukOnly, [])).toEqual([ebay])
+    // A fully qualified host is the same site.
+    const dotted = {
+      ...PLAIN,
+      findings: [{ claim: "About 40 USD.", sources: ["https://www.ebay.com./itm/1"] }],
+    }
+    expect(withBarredSites(dotted, [])).toEqual([ebay])
   })
 
   it("leaves a passing mention of eBay alone, and gives eBay no cited exemption", () => {
@@ -446,6 +452,12 @@ describe("withBarredSites, the belt", () => {
 describe("one entry per page", () => {
   it("keys an entry by its page when it has a URL, by its site when not", () => {
     expect(blockedKey({ site: "BoardGameGeek", why: "" })).toBe("boardgamegeek.com")
+    // A fully qualified host is the same site and the same page (docket#52).
+    expect(blockedKey({ site: "shop.example.", why: "" })).toBe("shop.example")
+    expect(blockedKey({ site: "ebay.com.", why: "" })).toBe("ebay.com")
+    expect(blockedKey({ site: "x", url: "https://shop.example./a", why: "" })).toBe(
+      blockedKey({ site: "x", url: "https://shop.example/a", why: "" }),
+    )
     expect(blockedKey({ site: "BGG", why: "" })).toBe("boardgamegeek.com")
     expect(blockedKey({ site: "boardgamegeek.com", why: "" })).toBe("boardgamegeek.com")
     expect(blockedKey({ site: "eBay", why: "" })).toBe("ebay.com")

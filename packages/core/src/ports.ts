@@ -151,7 +151,21 @@ export interface FetchResponse {
   headers: Record<string, string>
 }
 
-/** Plain HTTP reads for the plain-code types (price, market adapters). */
+/**
+ * Plain HTTP reads for the plain-code types (price, market adapters). The URL is often one a
+ * person typed (a price watch, a want-list page), and the host runs on its owner's own network,
+ * so an adapter must fence every read to the public internet (docket#65):
+ *
+ * - `http:` or `https:` only, with no user name or password in the URL;
+ * - refuse the read when the host name is, or resolves to, a loopback, private, link-local,
+ *   carrier-grade NAT, multicast or reserved address (IPv4 or IPv6, a mapped IPv4 read as the
+ *   address inside it), and check each redirect hop the same way;
+ * - give up after a time limit, and cap how much of the body it reads.
+ *
+ * A refusal is thrown, and the type counts it as a miss like any failed read. This library cannot
+ * resolve a name, so the rule lives in the adapter: the tracker plugin's `createPageFetch`
+ * (Rackbops/rackbops-bot-plugins `plugins/tracker/src/fetch.ts`) is the one that keeps it.
+ */
 export interface Fetch {
   get(url: string, headers?: Record<string, string>): Promise<FetchResponse>
 }
@@ -450,8 +464,18 @@ export interface Store {
    * owed. Atomic: two callers never both get the claim.
    */
   claimDelivery(occurrenceId: string, userId: string, at: string): Promise<Delivery | null>
-  /** Writes a row's outcome (`settledAt` = `settle.at`). Throws when there is no row. */
-  settleDelivery(occurrenceId: string, userId: string, settle: DeliverySettle): Promise<Delivery>
+  /**
+   * Writes a row's outcome (`settledAt` = `settle.at`). Throws when there is no row. With
+   * `expected`, writes only while the row's status is still `expected` (`WHERE status = ?`) and
+   * otherwise changes nothing, returning the row as it stands: a sweeper passes the status it
+   * read, so a send that settled in between is never undone (docket#47). Atomic, like the claim.
+   */
+  settleDelivery(
+    occurrenceId: string,
+    userId: string,
+    settle: DeliverySettle,
+    expected?: DeliveryStatus,
+  ): Promise<Delivery>
   /** Oldest row first (by `createdAt`, then insertion). */
   listDeliveries(filter?: DeliveryFilter): Promise<Delivery[]>
   /** Forget-me: deletes every delivery row for this person. Returns how many. */

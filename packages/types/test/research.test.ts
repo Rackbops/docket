@@ -21,6 +21,7 @@ import {
   draftJson,
   FIRECRAWL_TOOLS,
   MAX_MESSAGE_CHARS,
+  NOT_OPENED_WHY,
   parseAnswer,
   parseReview,
   RESEARCH_MAX_BUDGET_USD,
@@ -35,6 +36,7 @@ import {
   safeUrl,
   TASK_TYPES,
   WEB_DISALLOWED_TOOLS,
+  withBarredSites,
   ZWSP,
 } from "../src/index.js"
 import { actor, FakeClock, FakeNotifier, T0 } from "./helpers.js"
@@ -509,11 +511,31 @@ describe("what the model returns", () => {
       [`Line one line two @${ZWSP}here`, ["https://ok.example/a"]],
     ])
     expect(answer?.uncertain).toEqual([
+      "real doubt",
       "No source at all (no source given)",
       "Has credentials (no source given)",
-      "real doubt",
     ])
     expect(answer?.summary.length).toBeLessThanOrEqual(1200)
+  })
+
+  it("keeps the model's own uncertain lines ahead of the no-source markers under the cap", () => {
+    const answer = parseAnswer({
+      summary: "s",
+      findings: Array.from({ length: 6 }, (_, i) => ({ claim: `Claim ${i}`, sources: [] })),
+      uncertain: ["BoardGameGeek refused the request"],
+    })
+    expect(answer?.uncertain).toHaveLength(6)
+    expect(answer?.uncertain[0]).toBe("BoardGameGeek refused the request")
+    // The second-pass wait starts from that line.
+    expect(answer && withBarredSites(answer, [])).toEqual([
+      { site: "boardgamegeek.com", why: NOT_OPENED_WHY },
+    ])
+  })
+
+  it("refuses a source URL that closes a masked link", () => {
+    expect(safeUrl("https://a.com/](https://evil.com)")).toBeNull()
+    expect(safeUrl("https://a.com/%5D%28https://evil.com%29")).toBeNull()
+    expect(safeUrl("https://a.com/wiki/Foo_(bar)")).toBe("https://a.com/wiki/Foo_(bar)")
   })
 
   it("is null when it is not an answer or a verdict", () => {

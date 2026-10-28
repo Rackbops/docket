@@ -125,6 +125,19 @@ describe("price", () => {
     expect(t.notifier.sent[0]?.message.text).toMatch(/^Now tracking widget at 12.50 GBP\./)
   })
 
+  it("never fetches with a pattern that could stall the notify lane (docket#45)", async () => {
+    const fetch = new FakeFetch({ [URL]: "a".repeat(40) })
+    const t = await tracked({ pattern: "(a+)+b" }, fetch)
+    for (let i = 0; i < MISSES_BEFORE_TELLING; i++) {
+      await t.lanes.tickNotify()
+      t.clock.advance(6 * HOUR)
+    }
+    expect(fetch.requests).toEqual([])
+    expect(t.notifier.sent[0]?.message.text).toContain(
+      "pattern refused: the pattern repeats a group",
+    )
+  })
+
   it("stops tracking on done", async () => {
     const t = await tracked()
     await observe(t, [10])

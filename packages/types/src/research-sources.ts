@@ -1,5 +1,6 @@
 import { clean } from "@rackbops/docket-core"
 import { type BlockedPage, MAX_BLOCKED, type ResearchAnswer, safeUrl } from "./research-answer.js"
+import { EBAY_HOST } from "./want-sources.js"
 
 /**
  * Pages gathered for a research request by the person's own browser (rackbops-bot-plugins#125,
@@ -63,7 +64,7 @@ export const BARRED_SITES: readonly {
   {
     site: "ebay.com",
     domains: ["ebay.*", "ebay.co.*", "ebay.com.*"],
-    host: /(^|\.)ebay(\.[a-z]{2,3}){1,2}$/i,
+    host: EBAY_HOST,
     names: "ebay",
     everywhere: true,
   },
@@ -176,7 +177,8 @@ export const WEB_DISALLOWED_TOOLS = barredDomains(true).map((host) => `WebFetch(
 
 function hostOf(url: string): string {
   try {
-    return new URL(url).hostname
+    // A fully qualified host (`www.ebay.com.`) is the same site; the patterns expect no end dot.
+    return new URL(url).hostname.replace(/\.$/, "")
   } catch {
     return ""
   }
@@ -192,6 +194,7 @@ function siteOf(text: string): string {
     .trim()
     .toLowerCase()
     .replace(/^www\./, "")
+    .replace(/\.$/, "")
   for (const b of BARRED_SITES) if (b.host.test(t) || namedIn(b).test(t)) return b.site
   return t
 }

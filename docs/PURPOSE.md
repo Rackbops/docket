@@ -5,8 +5,9 @@
 roshne and friends on Discord want one place that keeps track of repeatable and one-off tasks:
 "remind me", "watch for this", "search for that every day", and a record of what got done.
 The tracker is a Rackbops bot plugin (the tracker plugin in Rackbops/rackbops-bot-plugins, on a
-rackbops-discord-bot instance logged in as Rackbops Clerk); Lepid-Labs/city-hall only queues and
-runs its model Jobs, through Rackbops/docket-runner (plan rev17). Its core -- who owns what, when
+rackbops-discord-bot instance logged in as Rackbops Clerk); Rackbops/city-hall only queues and
+runs its model Jobs, through Rackbops/docket-runner (plan rev17); Lepid-Labs/city-hall is its
+upstream. Its core -- who owns what, when
 it is due, what went out, what came back -- must be importable by any host, so by Nazu's project
 standard it is a library from the start: this one.
 

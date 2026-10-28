@@ -1,5 +1,5 @@
 /**
- * Price extraction from a fetched page, structured sources first (city-hall#11): JSON-LD
+ * Price extraction from a fetched page, structured sources first (Lepid-Labs/city-hall#11): JSON-LD
  * `Product` / `Offer` blocks, then the product and Open Graph price meta tags, then any JSON
  * body, then a pattern the owner supplied. Pure string work on plain text, no DOM, no model;
  * the model fallback the plan budgets for (section 6) is a later type, not this one.
@@ -158,15 +158,115 @@ export function priceFromMeta(html: string): ExtractedPrice | null {
   return null
 }
 
-/** The first capture group of the owner's pattern, read as a price. */
-export function priceFromPattern(body: string, pattern: string): ExtractedPrice | null {
-  let re: RegExp
-  try {
-    re = new RegExp(pattern, "i")
-  } catch {
-    return null
+/** The longest owner pattern taken. */
+export const MAX_PATTERN_CHARS = 300
+/**
+ * How much of a body an owner's pattern runs over. The price type runs on the notify lane, which
+ * never waits (plan 5.3), and a pattern runs on the event loop. `patternProblem` refuses the
+ * exponential shapes; the cap only limits the rest. It does not bound a polynomial one: an
+ * unanchored `.*\$(\d+)` over a one-line body with no `$` grows with the square of the length
+ * (about 6 s at 80,000 characters in review). A host that needs a hard bound runs the pattern
+ * off the loop, with a timeout.
+ */
+export const MAX_PATTERN_BODY_CHARS = 500_000
+
+/**
+ * Why the owner's pattern is refused, or null when it is taken: it must parse, stay under
+ * `MAX_PATTERN_CHARS`, and repeat no group that could match one stretch of text in many ways
+ * (docket#45) -- a group that itself repeats (`(a+)+`, `(x*)*`) or holds an alternation whose
+ * branches overlap (`(a|a)*`, `(\s| )*`, `(.|\s)*`), the shapes that backtrack catastrophically
+ * on about thirty characters. A heuristic, not a proof: it reads the pattern's text, skipping
+ * escapes and character classes, so it also refuses safe shapes whose parts cannot overlap
+ * (`(?:\d+,)*\d+`, `(?:\s|&nbsp;)*`); the first is better said as a character class
+ * (`[\d,]+`). A host checks it when a pattern is saved; `priceFromPattern` refuses such a
+ * pattern too, and the price type never fetches with one.
+ */
+export function patternProblem(pattern: string): string | null {
+  if (pattern.length > MAX_PATTERN_CHARS) {
+    return `the pattern is longer than ${MAX_PATTERN_CHARS} characters`
   }
-  const m = re.exec(body)
+  try {
+    new RegExp(pattern, "i")
+  } catch {
+    return "the pattern is not a valid regular expression"
+  }
+  return repeatsAnAmbiguousGroup(pattern)
+    ? "the pattern repeats a group that itself repeats or has a |, like (a+)+ or (a|b)*, " +
+        "which can stall the tracker; use a character class, like [\\d,]+"
+    : null
+}
+
+/** An unbounded quantifier at `i` in `p`: `*`, `+` or `{n,}`. */
+function unboundedAt(p: string, i: number): boolean {
+  const c = p[i]
+  return c === "*" || c === "+" || /^\{\d+,\}/.test(p.slice(i))
+}
+
+/**
+ * A repeating quantifier at `i`: unbounded, or `{n}` / `{n,m}` above 1. (`{,3}` is no quantifier
+ * in a pattern without the `u` flag: it matches itself.)
+ */
+function repeatsAt(p: string, i: number): boolean {
+  if (unboundedAt(p, i)) return true
+  const m = /^\{(\d+)(?:,(\d+))?\}/.exec(p.slice(i))
+  return m !== null && Number(m[2] ?? m[1]) > 1
+}
+
+function repeatsAnAmbiguousGroup(p: string): boolean {
+  // One entry per open group: whether anything inside it repeats without bound, and whether it
+  // holds an alternation (its own `|`, or one in an unrepeated group inside it).
+  const open: { repeats: boolean; alt: boolean }[] = []
+  const top = () => open[open.length - 1]
+  let inside = false
+  for (let i = 0; i < p.length; i++) {
+    const c = p[i]
+    if (c === "\\") {
+      i++
+      continue
+    }
+    if (inside) {
+      if (c === "]") inside = false
+      continue
+    }
+    if (c === "[") {
+      inside = true
+      if (p[i + 1] === "]") i++
+      continue
+    }
+    if (c === "(") {
+      open.push({ repeats: false, alt: false })
+      continue
+    }
+    if (c === "|") {
+      const g = top()
+      if (g) g.alt = true
+      continue
+    }
+    if (c === ")") {
+      const g = open.pop() ?? { repeats: false, alt: false }
+      const repeated = repeatsAt(p, i + 1)
+      if (repeated && (g.repeats || g.alt)) return true
+      const parent = top()
+      if (parent) {
+        if (g.repeats || unboundedAt(p, i + 1)) parent.repeats = true
+        if (g.alt && !repeated) parent.alt = true
+      }
+      continue
+    }
+    const g = top()
+    if (g && unboundedAt(p, i)) g.repeats = true
+  }
+  return false
+}
+
+/**
+ * The first capture group of the owner's pattern, read as a price, over at most
+ * `MAX_PATTERN_BODY_CHARS` of the body. A pattern `patternProblem` refuses reads nothing.
+ */
+export function priceFromPattern(body: string, pattern: string): ExtractedPrice | null {
+  if (patternProblem(pattern) !== null) return null
+  const re = new RegExp(pattern, "i")
+  const m = re.exec(body.slice(0, MAX_PATTERN_BODY_CHARS))
   const captured = m?.[1] ?? m?.[0]
   if (captured === undefined) return null
   const value = parsePrice(captured)

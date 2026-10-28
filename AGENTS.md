@@ -4,10 +4,11 @@ The core of the task tracker for roshne and friends on Discord: `@rackbops/docke
 scheduler, lanes, task-type contract, ports) and `@rackbops/docket-types` (the task types: the six categories, plus the judged want-list watch).
 The host is the tracker plugin in Rackbops/rackbops-bot-plugins (`plugins/tracker`), running on
 a rackbops-discord-bot instance logged in as Rackbops Clerk; people live in the tracker's own
-store, and nothing goes to recall. Lepid-Labs/city-hall only queues and runs the tracker's model
-Jobs, which Rackbops/docket-runner executes (plan rev17, items 36 to 40). The plan of record is
-Rackbops/Tooling `research/city-hall-task-tracker.md` (section 0 is the goal in one page, section
-5 the architecture); the epic is Rackbops/Tooling#816; this repo's own scaffold is #1.
+store, and nothing goes to recall. Rackbops/city-hall only queues and runs the tracker's model
+Jobs, which Rackbops/docket-runner executes (plan rev17, items 36 to 40); Lepid-Labs/city-hall is
+its upstream, and its issues are cited as `Lepid-Labs/city-hall#N`, never by bare number. The plan
+of record is Rackbops/Tooling `research/city-hall-task-tracker.md` (section 0 is the goal in one
+page, section 5 the architecture); the epic is Rackbops/Tooling#816; this repo's own scaffold is #1.
 
 My personal global instructions govern *how I work* -- the review gate, escalation, git and
 shipping, tool routing, shell choice. Claude Code loads them from `~/.claude/CLAUDE.md`; Codex

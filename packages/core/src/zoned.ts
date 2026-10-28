@@ -90,12 +90,16 @@ export function zonedInstant(
   zone: string,
 ): Date {
   const wanted = Date.UTC(year, month - 1, day, hour, minute)
-  const offset1 = zoneOffsetMinutes(new Date(wanted), zone)
-  const candidate1 = wanted - offset1 * 60_000
-  if (reads(candidate1, zone, day, hour, minute)) return new Date(candidate1)
-  const offset2 = zoneOffsetMinutes(new Date(candidate1), zone)
-  const candidate2 = wanted - offset2 * 60_000
-  if (reads(candidate2, zone, day, hour, minute)) return new Date(candidate2)
-  // Neither offset reads back the wanted time: it fell into a gap. Resolve forward.
-  return new Date(Math.max(candidate1, candidate2))
+  // Sample the zone's offset a day either side as well as at the wanted time: east of UTC both
+  // samples near an ambiguous fall-back time land after the switch, so only the day-before
+  // offset finds the first occurrence.
+  const offsets = new Set<number>()
+  for (const at of [wanted - 86_400_000, wanted, wanted + 86_400_000]) {
+    offsets.add(zoneOffsetMinutes(new Date(at), zone))
+  }
+  const candidates = [...offsets].map((offset) => wanted - offset * 60_000)
+  const matching = candidates.filter((c) => reads(c, zone, day, hour, minute))
+  if (matching.length > 0) return new Date(Math.min(...matching))
+  // No offset reads back the wanted time: it fell into a gap. Resolve forward.
+  return new Date(Math.max(...candidates))
 }

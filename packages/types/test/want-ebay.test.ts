@@ -220,13 +220,13 @@ describe("an eBay watch", () => {
   const config: WantConfig = { source: "ebay", target: QUERY, maxPrice: 35 }
   const owner = { id: "u1", timeZone: "America/New_York", preferredHour: 9 } as User
   const task = { id: "t6", ownerId: "u1", type: "wantlist", title: QUERY, config } as Task
-  function ctx(state: unknown = null): RunContext<WantConfig> {
+  function ctx(state: unknown = null, over: Partial<WantConfig> = {}): RunContext<WantConfig> {
     return {
       task,
       occurrence: { id: "o1", taskId: "t6" } as Occurrence,
       owner,
       recipients: [],
-      config,
+      config: { ...config, ...over },
       state,
       now: new Date("2026-10-20T15:00:00Z"),
       ports: {},
@@ -255,6 +255,20 @@ describe("an eBay watch", () => {
     const out = await wantlistType({}).run(ctx())
     expect(out.summary).toContain("no eBay search")
     expect(out.notify?.text).toContain("eBay's search")
+  })
+
+  it("refuses a watch in a currency eBay never lists in, without searching", async () => {
+    const { asked, source } = browse(200, answer([item()]))
+    const type = wantlistType({ ebay: source })
+    const out = await type.run(ctx(null, { currency: "eur" }))
+    expect(asked).toEqual([])
+    expect(out.summary).toContain(
+      "eBay US lists prices in USD only, so a watch in EUR never matches",
+    )
+    expect(out.notify?.text).toContain("eBay's search")
+    // A USD watch, in any case, still searches.
+    const usd = await type.run(ctx(null, { currency: " usd " }))
+    expect(usd.summary).toBe("1 listed, 1 within limits, 1 new")
   })
 
   it("opens no eBay page for the judge", () => {

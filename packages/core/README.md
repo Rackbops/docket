@@ -3,7 +3,8 @@
 The tracker's domain, scheduler, two lanes, task-type contract and ports, with no platform code:
 no Hono, no discord.js, no sqlite, no fetch. A host -- the tracker plugin in
 Rackbops/rackbops-bot-plugins (`plugins/tracker`) -- supplies the adapters behind the ports and
-gets a tracker; Lepid-Labs/city-hall only queues and runs its model Jobs. Design:
+gets a tracker; Rackbops/city-hall (upstream: Lepid-Labs/city-hall) only queues and runs its
+model Jobs. Design:
 Rackbops/Tooling, `research/city-hall-task-tracker.md`, section 5 (plan rev17).
 
 | Module | What it holds |

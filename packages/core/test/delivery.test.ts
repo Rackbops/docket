@@ -3,8 +3,13 @@ import { describe, expect, it } from "vitest"
 import {
   DEFAULT_DELIVERY_POLICY,
   deliver,
+  dropOwed,
   ExecutorUnavailableError,
+  freshRoundForPause,
+  MemoryStore,
   STALE_CLAIM_MS,
+  type Store,
+  settleStaleClaims,
   visibleDeliveries,
   visibleEvents,
   visibleOccurrences,
@@ -13,6 +18,43 @@ import { actor, FakeNotifier, T0 } from "./helpers.js"
 import { closed, flaky, setup } from "./run-helpers.js"
 
 const MIN = 60_000
+
+/** A store with one task, one run and one planned delivery row. */
+async function oneRow() {
+  const store = new MemoryStore()
+  const u = await store.createUser({ discordId: "d1", at: T0 })
+  const t = await store.createTask({
+    ownerId: u.id,
+    type: "reminder",
+    title: "t",
+    config: {},
+    schedule: null,
+    lane: "notify",
+    capabilities: ["notify"],
+    at: T0,
+  })
+  const occurrence = await store.createOccurrence({
+    taskId: t.id,
+    lane: "notify",
+    dueAt: T0,
+    dedupeKey: "k",
+    at: T0,
+  })
+  if (!occurrence) throw new Error("no run")
+  await store.planDelivery(occurrence.id, u.id, T0)
+  return { store, id: occurrence.id, userId: u.id, occurrence }
+}
+
+/** `store`, with `meanwhile` run right after each `listDeliveries` read and before it returns. */
+function between(store: MemoryStore, meanwhile: () => Promise<unknown>): Store {
+  return Object.assign(Object.create(store), {
+    async listDeliveries(...args: Parameters<Store["listDeliveries"]>) {
+      const rows = await store.listDeliveries(...args)
+      await meanwhile()
+      return rows
+    },
+  })
+}
 
 describe("delivery per recipient", () => {
   it("never lets one recipient who cannot be messaged block the others", async () => {
@@ -154,6 +196,116 @@ describe("delivery per recipient", () => {
     expect((await store.listDeliveries({ status: "unconfirmed" })).map((d) => d.userId)).toEqual([
       moe.id,
     ])
+  })
+
+  it("keeps a send that settles between a sweep's read and its write (docket#47)", async () => {
+    const { store, id, userId } = await oneRow()
+    await store.claimDelivery(id, userId, T0)
+    // The sweep reads the claim; the slow send settles `sent` before the sweep writes.
+    const interleaved = between(store, () =>
+      store.settleDelivery(id, userId, {
+        status: "sent",
+        messageId: "m1",
+        attempts: 0,
+        deferrals: 0,
+        retryAt: null,
+        at: T0,
+      }),
+    )
+    const later = new Date(Date.parse(T0) + STALE_CLAIM_MS + MIN)
+    expect(await settleStaleClaims(interleaved, later, true)).toBe(0)
+    const [row] = await store.listDeliveries({ occurrenceId: id })
+    expect([row?.status, row?.messageId]).toEqual(["sent", "m1"])
+  })
+
+  it("never fails or resets a row another sender claimed after the read (docket#47)", async () => {
+    const { store, id, userId, occurrence } = await oneRow()
+    // Not a recipient any more, but another sender claims the row between the read and the fail.
+    const claimed = between(store, () => store.claimDelivery(id, userId, T0))
+    const report = await deliver(
+      claimed,
+      new FakeNotifier(),
+      occurrence,
+      "owner",
+      new Map(),
+      {
+        text: "hi",
+      },
+      { now: () => new Date(T0) },
+    )
+    expect(report.failed).toEqual([])
+    expect(report.untried).toEqual([userId])
+    expect((await store.listDeliveries({ occurrenceId: id }))[0]?.status).toBe("claimed")
+    // A pause's fresh round, read before the same claim, leaves the claim alone too.
+    const again = await oneRow()
+    await again.store.settleDelivery(again.id, again.userId, {
+      status: "deferred",
+      attempts: 0,
+      deferrals: 2,
+      retryAt: T0,
+      at: T0,
+    })
+    const rows = await again.store.listDeliveries({ occurrenceId: again.id })
+    await again.store.claimDelivery(again.id, again.userId, T0)
+    await freshRoundForPause(again.store, rows)
+    const [row] = await again.store.listDeliveries({ occurrenceId: again.id })
+    expect([row?.status, row?.deferrals]).toEqual(["claimed", 2])
+  })
+
+  it("counts only its own write when two sweeps race on one row (docket#47)", async () => {
+    // Another sweep (or a tick that failed the same row) writes the same status first, at its own
+    // time: this call wrote nothing, so it neither counts the row nor reports it failed.
+    const stale = await oneRow()
+    await stale.store.claimDelivery(stale.id, stale.userId, T0)
+    const swept = between(stale.store, () =>
+      stale.store.settleDelivery(stale.id, stale.userId, {
+        status: "unconfirmed",
+        attempts: 0,
+        deferrals: 0,
+        retryAt: null,
+        at: "2026-01-01T00:00:00.000Z",
+      }),
+    )
+    const later = new Date(Date.parse(T0) + STALE_CLAIM_MS + MIN)
+    expect(await settleStaleClaims(swept, later, true)).toBe(0)
+
+    const gone = await oneRow()
+    const failed = between(gone.store, () =>
+      gone.store.settleDelivery(gone.id, gone.userId, {
+        status: "failed",
+        error: "elsewhere",
+        attempts: 0,
+        deferrals: 0,
+        retryAt: null,
+        at: "2026-01-01T00:00:00.000Z",
+      }),
+    )
+    const report = await deliver(
+      failed,
+      new FakeNotifier(),
+      gone.occurrence,
+      "owner",
+      new Map(),
+      { text: "hi" },
+      { now: () => new Date(T0) },
+    )
+    expect([report.failed, report.untried]).toEqual([[], [gone.userId]])
+  })
+
+  it("drops only owed rows: a sent copy stays sent", async () => {
+    const { store, id, userId } = await oneRow()
+    await store.claimDelivery(id, userId, T0)
+    await store.settleDelivery(id, userId, {
+      status: "sent",
+      messageId: "m1",
+      attempts: 0,
+      deferrals: 0,
+      retryAt: null,
+      at: T0,
+    })
+    await dropOwed(store, await store.listDeliveries({ occurrenceId: id }), "gone", new Date(T0))
+    const [row] = await store.listDeliveries({ occurrenceId: id })
+    expect([row?.status, row?.messageId, row?.error]).toEqual(["sent", "m1", null])
   })
 
   it("never sends on a claim another sender holds", async () => {

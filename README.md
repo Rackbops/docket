@@ -12,8 +12,9 @@ docket is a **library**, never a service: it imports no Hono, discord.js, sqlite
 never calls a model. A host supplies the adapters and the surfaces. The host is the tracker plugin in
 [Rackbops/rackbops-bot-plugins](https://github.com/Rackbops/rackbops-bot-plugins) (`plugins/tracker`),
 on a rackbops-discord-bot instance logged in as Rackbops Clerk, with people in its own store;
-[Lepid-Labs/city-hall](https://github.com/Lepid-Labs/city-hall) only queues and runs the model Jobs,
-which [Rackbops/docket-runner](https://github.com/Rackbops/docket-runner) executes through the
+[Rackbops/city-hall](https://github.com/Rackbops/city-hall) only queues and runs the model Jobs
+([Lepid-Labs/city-hall](https://github.com/Lepid-Labs/city-hall) is its upstream), which
+[Rackbops/docket-runner](https://github.com/Rackbops/docket-runner) executes through the
 Claude Code CLI on roshne's subscription, never an API key (plan rev17). The plan of record is
 Rackbops/Tooling, `research/city-hall-task-tracker.md` (section 0 is the goal in one page); the
 epic is Rackbops/Tooling#816.

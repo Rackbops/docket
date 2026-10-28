@@ -60,7 +60,8 @@ import { clean } from "./text.js"
  * The two lanes (plan section 5.3). `tickNotify` runs every due notify-lane occurrence and never
  * waits on a model; `tickExecute` runs due execute-lane occurrences one at a time through the
  * Executor. A lane whose runtime is missing is skipped -- its items stay queued -- and never ends
- * the other lane's drain, which is the starvation city-hall's single drain had (city-hall#7).
+ * the other lane's drain, which is the starvation city-hall's single drain had
+ * (Lepid-Labs/city-hall#7).
  *
  * The dispatcher owns status and applies what a type's Outcome asks for: state is stored on
  * the task, series points are appended, `complete` finishes the task. A failed run still

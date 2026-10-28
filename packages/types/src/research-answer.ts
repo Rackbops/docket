@@ -105,8 +105,12 @@ export function safeUrl(value: unknown): string | null {
   if (url.protocol !== "https:" && url.protocol !== "http:") return null
   if (url.username || url.password) return null
   const text = url.toString()
+  const decoded = decodeURIComponentSafe(text)
   // A URL is shown as is, so one that spells a mention could ping; it is no source.
-  if (/@(everyone|here)\b|<[@#]/i.test(decodeURIComponentSafe(text))) return null
+  if (/@(everyone|here)\b|<[@#]/i.test(decoded)) return null
+  // Nor one that closes a masked link (`](`): beside a claim that opens one with `[`, it would
+  // render as a link to whatever follows, the pattern `clean` breaks in text.
+  if (decoded.includes("](")) return null
   return text
 }
 
@@ -134,22 +138,26 @@ export function parseAnswer(value: unknown): ResearchAnswer | null {
   const summary = clean(value.summary, MAX_SUMMARY_CHARS)
   if (summary.length === 0) return null
   const findings: ResearchFinding[] = []
-  const uncertain: string[] = []
+  const unsourced: string[] = []
   for (const f of value.findings) {
     if (!isObj(f) || typeof f.claim !== "string") continue
     const claim = clean(f.claim, MAX_CLAIM_CHARS, true)
     if (claim.length === 0) continue
     const raw = Array.isArray(f.sources) ? f.sources : []
     const sources = [...new Set(raw.map(safeUrl).filter((u): u is string => u !== null))]
-    if (sources.length === 0) uncertain.push(`${claim} (no source given)`)
+    if (sources.length === 0) unsourced.push(`${claim} (no source given)`)
     else findings.push({ claim, sources: sources.slice(0, MAX_SOURCES_PER_FINDING) })
   }
+  // The model's own lines come first, so the cap drops markers before them: `withBarredSites`
+  // reads these lines to tell a site was not opened.
+  const uncertain: string[] = []
   const said = Array.isArray(value.uncertain) ? value.uncertain : []
   for (const u of said) {
     if (typeof u !== "string") continue
     const line = clean(u, MAX_UNCERTAIN_CHARS, true)
     if (line.length > 0) uncertain.push(line)
   }
+  uncertain.push(...unsourced)
   const blocked = parseBlocked(value.blocked)
   return {
     summary,

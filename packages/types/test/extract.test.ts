@@ -1,6 +1,14 @@
 import { describe, expect, it } from "vitest"
 
-import { extractPrice, parsePrice, priceFromJson } from "../src/index.js"
+import {
+  extractPrice,
+  MAX_PATTERN_BODY_CHARS,
+  MAX_PATTERN_CHARS,
+  parsePrice,
+  patternProblem,
+  priceFromJson,
+  priceFromPattern,
+} from "../src/index.js"
 
 describe("parsePrice", () => {
   it("reads the common shapes of a price string", () => {
@@ -73,5 +81,52 @@ describe("extractPrice", () => {
     expect(extractPrice(html, 'class="price">\\$([\\d.]+)')).toEqual({ value: 42 })
     expect(extractPrice(html, "[")).toBeNull() // a broken pattern is a miss, not a crash
     expect(extractPrice("<p>Coming soon</p>")).toBeNull()
+  })
+})
+
+describe("the owner's pattern (docket#45)", () => {
+  it("refuses a group that repeats a repeat, an invalid pattern and an overlong one", () => {
+    for (const p of ["(a+)+b", "(x*)*", "(?:a|b+){2,}", "((a+))*", "(\\d+\\s*)+$", "(a+){2,5}"]) {
+      expect(patternProblem(p), p).toMatch(/repeats a group that itself repeats/)
+    }
+    // A repeated alternation whose branches overlap stalls as surely.
+    for (const p of [
+      "(a|a)*b",
+      "(?:\\s|&nbsp;| )*\\$(\\d+)",
+      "(.|\\s)*Price: \\$(\\d+)",
+      "(?:(a|b))+",
+      "(a|b){3}",
+    ]) {
+      expect(patternProblem(p), p).toMatch(/or has a \|/)
+    }
+    expect(patternProblem("[")).toBe("the pattern is not a valid regular expression")
+    expect(patternProblem("a".repeat(MAX_PATTERN_CHARS + 1))).toMatch(/longer than/)
+  })
+
+  it("takes the patterns owners write", () => {
+    for (const p of [
+      'class="price">\\$([\\d.]+)',
+      "only &pound;([\\d.]+)",
+      "(\\d+)\\.(\\d+)",
+      "([\\d,]+)(?:\\.\\d+)?",
+      "[(+*]+(\\d+)",
+      "(\\(+)?(\\d+)",
+      "(a+)?b",
+      "(?:USD|EUR)\\s*(\\d+)",
+      "(?:Price|Now):?\\s*\\$([\\d,.]+)",
+      "(a+){,3}",
+    ]) {
+      expect(patternProblem(p), p).toBeNull()
+    }
+  })
+
+  it("never runs a refused pattern, and runs a taken one on the capped length only", () => {
+    const start = Date.now()
+    expect(priceFromPattern(`${"a".repeat(40)}!`, "(a+)+b")).toBeNull()
+    expect(priceFromPattern(" ".repeat(40), "(?:\\s|&nbsp;| )*\\$(\\d+)")).toBeNull()
+    expect(Date.now() - start).toBeLessThan(100)
+    const past = `${"x".repeat(MAX_PATTERN_BODY_CHARS)}price: 9`
+    expect(priceFromPattern(past, "price: (\\d+)")).toBeNull()
+    expect(priceFromPattern(`price: 9${past}`, "price: (\\d+)")).toEqual({ value: 9 })
   })
 })

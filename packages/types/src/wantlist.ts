@@ -9,7 +9,7 @@ import {
 import { money } from "./money.js"
 import { MISSES_BEFORE_TELLING } from "./price.js"
 import { BGG_ATTRIBUTION } from "./want-bgg.js"
-import { EBAY_ATTRIBUTION } from "./want-ebay.js"
+import { EBAY_ATTRIBUTION, EBAY_CURRENCY } from "./want-ebay.js"
 import { SHOPIFY_ATTRIBUTION } from "./want-shopify.js"
 import {
   type Listing,
@@ -228,6 +228,23 @@ export async function pollWant(
         state,
         new SourceUnavailableError(
           `this bot has no ${ctx.config.source === "bgg" ? "BoardGameGeek access" : ctx.config.source === "shopify" ? "Shopify search (no Firecrawl key)" : ctx.config.source === "ebay" ? "eBay search (no eBay keys)" : "such source"}`,
+        ),
+      ),
+    }
+  }
+  // The eBay source searches eBay US, which lists prices in USD only, so a watch in any other
+  // currency would read fine every time and drop every listing on currency: say so at once
+  // rather than look healthy forever.
+  const currency = ctx.config.currency?.trim().toUpperCase()
+  if (ctx.config.source === "ebay" && currency && currency !== EBAY_CURRENCY) {
+    return {
+      kind: "done",
+      outcome: miss(
+        ctx,
+        state,
+        new SourceUnavailableError(
+          `eBay US lists prices in ${EBAY_CURRENCY} only, so a watch in ${currency} never matches; ` +
+            `set the currency to ${EBAY_CURRENCY} or leave it out`,
         ),
       ),
     }

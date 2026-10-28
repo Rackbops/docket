@@ -24,7 +24,7 @@ The design represents the service people encounter as **Rackbops Clerk**, across
 | Tracker plugin in Rackbops/rackbops-bot-plugins | Discord commands, people, persistence, notifications, and web area | Main user-facing use of the Clerk |
 | Rackbops/rackbops-discord-bot | Generic modular bot host | Clerk identifies this tracker instance; does not replace the host's Luma mascot |
 | Rackbops/docket-runner | Claims model jobs, runs the CLI, and returns results | Supporting implementation, not a separate personality |
-| Lepid-Labs/city-hall | Queues and runs automated jobs, as described by Docket's documents | Infrastructure dependency; the Clerk does not claim to be its organization-wide mascot |
+| Rackbops/city-hall (upstream: Lepid-Labs/city-hall) | Queues and runs automated jobs, as described by Docket's documents | Infrastructure dependency; the Clerk does not claim to be its organization-wide mascot |
 | Rackbops/discord-mcp | Delivers agent messages through Discord | Related delivery service, not the tracker itself |
 
 The tracker covers reminders, renewals and expiries, price tracking, reviewed research, interest scouting, and want-list watching. Observe-and-notify is its baseline. Internal writes require grants; external or irreversible actions remain outside the current design.

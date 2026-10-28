@@ -2,6 +2,7 @@ import type { Lane } from "./lanes.js"
 import type {
   ConsentState,
   Delivery,
+  DeliveryStatus,
   InviteBlock,
   Occurrence,
   OccurrenceEvent,
@@ -441,10 +442,12 @@ export class MemoryStore implements Store {
     occurrenceId: string,
     userId: string,
     settle: DeliverySettle,
+    expected?: DeliveryStatus,
   ): Promise<Delivery> {
     const key = `${occurrenceId}:${userId}`
     const cur = this.deliveries.get(key)
     if (!cur) throw new Error(`no delivery ${key}`)
+    if (expected !== undefined && cur.status !== expected) return MemoryStore.copy(cur)
     const next: Delivery = {
       ...cur,
       status: settle.status,

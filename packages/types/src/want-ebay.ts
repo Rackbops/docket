@@ -59,9 +59,9 @@ export interface EbaySearch {
 /**
  * The request for a search: the words as sent (cut at a word, like Shopify's), newest first, at
  * most `EBAY_LIMIT`, and at or under the top price. eBay US prices in USD, so the price filter is
- * sent only for a watch in USD (or naming no currency); a watch in another currency gets no filter,
- * and the type's own limits drop what is not in its currency. The filter is in whole units with
- * decimals. Pure.
+ * sent only for a watch in USD (or naming no currency); a watch in another currency gets no filter
+ * here, and the want-list type never searches for one (`pollWant` answers it with a miss the
+ * owner hears, docket#41). The filter is in whole units with decimals. Pure.
  */
 export function ebayRequest(s: EbaySearch): EbayRequest {
   const asked = (s.currency ?? "").trim().toUpperCase()
