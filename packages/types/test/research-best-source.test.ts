@@ -395,6 +395,12 @@ describe("withBarredSites, the belt", () => {
       findings: [{ claim: "Sold for 40 GBP.", sources: ["https://www.ebay.co.uk/itm/1"] }],
     }
     expect(withBarredSites(ukOnly, [])).toEqual([ebay])
+    // A fully qualified host is the same site.
+    const dotted = {
+      ...PLAIN,
+      findings: [{ claim: "About 40 USD.", sources: ["https://www.ebay.com./itm/1"] }],
+    }
+    expect(withBarredSites(dotted, [])).toEqual([ebay])
   })
 
   it("leaves a passing mention of eBay alone, and gives eBay no cited exemption", () => {

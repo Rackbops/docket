@@ -12,7 +12,8 @@ import { money } from "./money.js"
 import { snoozeUntil } from "./reminder.js"
 
 /**
- * Category 6 (plan section 1.2, city-hall#11): subscriptions, warranties, domains, memberships.
+ * Category 6 (plan section 1.2, Lepid-Labs/city-hall#11): subscriptions, warranties, domains,
+ * memberships.
  * A `period` schedule rolls from the renewal date, firing `leadDays` before it; the reminder
  * asks keep / cancel / renewed; the decision and the amount are recorded per period -- the
  * current row in the task's state, the history in replies and the series -- and a cancel ends

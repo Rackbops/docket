@@ -1,5 +1,5 @@
 /**
- * Price extraction from a fetched page, structured sources first (city-hall#11): JSON-LD
+ * Price extraction from a fetched page, structured sources first (Lepid-Labs/city-hall#11): JSON-LD
  * `Product` / `Offer` blocks, then the product and Open Graph price meta tags, then any JSON
  * body, then a pattern the owner supplied. Pure string work on plain text, no DOM, no model;
  * the model fallback the plan budgets for (section 6) is a later type, not this one.
@@ -158,15 +158,97 @@ export function priceFromMeta(html: string): ExtractedPrice | null {
   return null
 }
 
-/** The first capture group of the owner's pattern, read as a price. */
-export function priceFromPattern(body: string, pattern: string): ExtractedPrice | null {
-  let re: RegExp
-  try {
-    re = new RegExp(pattern, "i")
-  } catch {
-    return null
+/** The longest owner pattern taken. */
+export const MAX_PATTERN_CHARS = 300
+/**
+ * How much of a body an owner's pattern runs over. The price type runs on the notify lane, which
+ * never waits (plan 5.3), and a pattern runs on the event loop: the cap bounds a slow pattern
+ * that `patternProblem` lets through. A host that wants a hard bound runs it off the loop.
+ */
+export const MAX_PATTERN_BODY_CHARS = 500_000
+
+/**
+ * Why the owner's pattern is refused, or null when it is taken: it must parse, stay under
+ * `MAX_PATTERN_CHARS`, and not repeat a group that itself repeats without bound (`(a+)+`,
+ * `(x*)*`, `(?:a|b+){2,}`), the shape that backtracks catastrophically (docket#45). A heuristic,
+ * not a proof: it reads the pattern's text, skipping escapes and character classes. A host
+ * checks it when a pattern is saved; `priceFromPattern` refuses such a pattern too.
+ */
+export function patternProblem(pattern: string): string | null {
+  if (pattern.length > MAX_PATTERN_CHARS) {
+    return `the pattern is longer than ${MAX_PATTERN_CHARS} characters`
   }
-  const m = re.exec(body)
+  try {
+    new RegExp(pattern, "i")
+  } catch {
+    return "the pattern is not a valid regular expression"
+  }
+  return repeatsARepeat(pattern)
+    ? "the pattern repeats a group that itself repeats, like (a+)+, which can stall the tracker"
+    : null
+}
+
+/** An unbounded quantifier at `i` in `p`: `*`, `+` or `{n,}`; its length, or 0. */
+function unboundedAt(p: string, i: number): number {
+  const c = p[i]
+  if (c === "*" || c === "+") return 1
+  if (c === "{") {
+    const m = /^\{\d*,\}/.exec(p.slice(i))
+    if (m) return m[0].length
+  }
+  return 0
+}
+
+/** A repeating quantifier at `i`: unbounded, or `{n,m}` with m above 1. */
+function repeatsAt(p: string, i: number): boolean {
+  if (unboundedAt(p, i) > 0) return true
+  const m = /^\{\d*,?(\d+)?\}/.exec(p.slice(i))
+  return m !== null && Number(m[1] ?? m[0].slice(1, -1)) > 1
+}
+
+function repeatsARepeat(p: string): boolean {
+  // One entry per open group: whether anything inside it repeats without bound.
+  const open: boolean[] = []
+  let inside = false
+  for (let i = 0; i < p.length; i++) {
+    const c = p[i]
+    if (c === "\\") {
+      i++
+      continue
+    }
+    if (inside) {
+      if (c === "]") inside = false
+      continue
+    }
+    if (c === "[") {
+      inside = true
+      if (p[i + 1] === "]") i++
+      continue
+    }
+    if (c === "(") {
+      open.push(false)
+      continue
+    }
+    if (c === ")") {
+      const repeats = open.pop() ?? false
+      if (repeats && repeatsAt(p, i + 1)) return true
+      if (repeats && open.length > 0) open[open.length - 1] = true
+      if (unboundedAt(p, i + 1) > 0 && open.length > 0) open[open.length - 1] = true
+      continue
+    }
+    if (unboundedAt(p, i) > 0 && open.length > 0) open[open.length - 1] = true
+  }
+  return false
+}
+
+/**
+ * The first capture group of the owner's pattern, read as a price, over at most
+ * `MAX_PATTERN_BODY_CHARS` of the body. A pattern `patternProblem` refuses reads nothing.
+ */
+export function priceFromPattern(body: string, pattern: string): ExtractedPrice | null {
+  if (patternProblem(pattern) !== null) return null
+  const re = new RegExp(pattern, "i")
+  const m = re.exec(body.slice(0, MAX_PATTERN_BODY_CHARS))
   const captured = m?.[1] ?? m?.[0]
   if (captured === undefined) return null
   const value = parsePrice(captured)

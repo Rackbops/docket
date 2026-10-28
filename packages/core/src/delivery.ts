@@ -212,15 +212,24 @@ async function sendOne(
   report.sent.push(claim.userId)
 }
 
+/**
+ * Ends `row` for good, unsent. Like every sweep here it settles only while the row still has the
+ * status it was read with (docket#47): a claim or send that got there first stands.
+ */
 async function finalFail(store: Store, row: Delivery, error: string, at: Date): Promise<void> {
-  await store.settleDelivery(row.occurrenceId, row.userId, {
-    status: "failed",
-    error,
-    attempts: row.attempts,
-    deferrals: row.deferrals,
-    retryAt: null,
-    at: at.toISOString(),
-  })
+  await store.settleDelivery(
+    row.occurrenceId,
+    row.userId,
+    {
+      status: "failed",
+      error,
+      attempts: row.attempts,
+      deferrals: row.deferrals,
+      retryAt: null,
+      at: at.toISOString(),
+    },
+    row.status,
+  )
 }
 
 /** Ends every owed row of a run that can no longer be delivered (its task or run is gone). */
@@ -243,15 +252,21 @@ export async function settleStaleClaims(store: Store, now: Date, all = false): P
   let settled = 0
   for (const row of await store.listDeliveries({ status: "claimed" })) {
     if (!all && (row.claimedAt ?? "") > cutoff) continue
-    await store.settleDelivery(row.occurrenceId, row.userId, {
-      status: "unconfirmed",
-      error: "claimed, never settled",
-      attempts: row.attempts,
-      deferrals: row.deferrals,
-      retryAt: null,
-      at: now.toISOString(),
-    })
-    settled += 1
+    const after = await store.settleDelivery(
+      row.occurrenceId,
+      row.userId,
+      {
+        status: "unconfirmed",
+        error: "claimed, never settled",
+        attempts: row.attempts,
+        deferrals: row.deferrals,
+        retryAt: null,
+        at: now.toISOString(),
+      },
+      "claimed",
+    )
+    // The send settled between the read and here: its outcome stands.
+    if (after.status === "unconfirmed") settled += 1
   }
   return settled
 }
@@ -265,14 +280,19 @@ export async function settleStaleClaims(store: Store, now: Date, all = false): P
 export async function freshRoundForPause(store: Store, rows: readonly Delivery[]): Promise<void> {
   for (const row of rows) {
     if (row.attempts === 0 && row.deferrals === 0) continue
-    await store.settleDelivery(row.occurrenceId, row.userId, {
-      status: row.status === "claimed" ? "pending" : row.status,
-      messageId: row.messageId,
-      error: row.error,
-      attempts: 0,
-      deferrals: 0,
-      retryAt: row.retryAt,
-      at: row.settledAt ?? row.createdAt,
-    })
+    await store.settleDelivery(
+      row.occurrenceId,
+      row.userId,
+      {
+        status: row.status === "claimed" ? "pending" : row.status,
+        messageId: row.messageId,
+        error: row.error,
+        attempts: 0,
+        deferrals: 0,
+        retryAt: row.retryAt,
+        at: row.settledAt ?? row.createdAt,
+      },
+      row.status,
+    )
   }
 }

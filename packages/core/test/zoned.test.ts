@@ -29,6 +29,31 @@ describe("zone arithmetic on Intl", () => {
     expect(zonedInstant(2026, 11, 1, 1, 30, NY).toISOString()).toBe("2026-11-01T05:30:00.000Z")
   })
 
+  it("resolves Berlin's fall-back to its first occurrence and its gap forward", () => {
+    // 02:30 happens twice on 2026-10-25 in Berlin; the first is CEST (UTC+2), the second CET.
+    expect(zonedInstant(2026, 10, 25, 2, 30, "Europe/Berlin").toISOString()).toBe(
+      "2026-10-25T00:30:00.000Z",
+    )
+    // Clocks jump 02:00 -> 03:00 on 2026-03-29; 02:30 becomes 03:30 CEST.
+    expect(zonedInstant(2026, 3, 29, 2, 30, "Europe/Berlin").toISOString()).toBe(
+      "2026-03-29T01:30:00.000Z",
+    )
+    // An ordinary time either side of the switch.
+    expect(zonedInstant(2026, 10, 25, 9, 0, "Europe/Berlin").toISOString()).toBe(
+      "2026-10-25T08:00:00.000Z",
+    )
+    expect(zonedInstant(2026, 10, 24, 9, 0, "Europe/Berlin").toISOString()).toBe(
+      "2026-10-24T07:00:00.000Z",
+    )
+  })
+
+  it("resolves Sydney's fall-back to its first occurrence", () => {
+    // 02:30 happens twice on 2026-04-05 in Sydney; the first is AEDT (UTC+11).
+    expect(zonedInstant(2026, 4, 5, 2, 30, "Australia/Sydney").toISOString()).toBe(
+      "2026-04-04T15:30:00.000Z",
+    )
+  })
+
   it("knows a zone from a typo", () => {
     expect(isTimeZone(NY)).toBe(true)
     expect(isTimeZone("America/Nowhere")).toBe(false)

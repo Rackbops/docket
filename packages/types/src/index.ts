@@ -3,9 +3,9 @@
  *
  * The six categories of the plan (section 1.2) as type identifiers, and the types shipped so far:
  * `reminder` with the reminder slice (Lepid-Labs/city-hall#7), `renewal` and `price` with the
- * renewal and price-tracker slice (city-hall#11), and `research` (category 5, E8), the first
- * execute-lane type: a research run and a reviewer run through the runner. `scout` (category 1),
- * `wantlist` and the judged `wantjudge` (category 2) came from the tracker plugin in 0.6.0 (E9,
+ * renewal and price-tracker slice (Lepid-Labs/city-hall#11), and `research` (category 5, E8), the
+ * first execute-lane type: a research run and a reviewer run through the runner. `scout` (category
+ * 1), `wantlist` and the judged `wantjudge` (category 2) came from the tracker plugin in 0.6.0 (E9,
  * plan item 104).
  */
 
@@ -24,7 +24,10 @@ export {
   type ExtractedPrice,
   extractPrice,
   jsonLdBlocks,
+  MAX_PATTERN_BODY_CHARS,
+  MAX_PATTERN_CHARS,
   parsePrice,
+  patternProblem,
   priceFromJson,
   priceFromMeta,
   priceFromPattern,

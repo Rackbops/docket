@@ -85,9 +85,15 @@ export function listingKey(id: string): string {
  */
 export const NEVER_EBAY = "x-tracker-never-ebay"
 
-/** eBay's own hosts (and its short links). */
+/**
+ * eBay's own hosts (and its short links), as a hostname with no trailing dot. The one pattern for
+ * eBay: `isEbayHost` and research's `BARRED_SITES` both test it.
+ */
+export const EBAY_HOST = /(^|\.)ebay\.[a-z]{2,3}(\.[a-z]{2})?$/i
+
+/** eBay's own hosts (and its short links). A fully qualified `ebay.com.` is eBay too. */
 export function isEbayHost(host: string): boolean {
-  return /(^|\.)ebay\.[a-z]{2,3}(\.[a-z]{2})?$/i.test(host.replace(/\.$/, ""))
+  return EBAY_HOST.test(host.replace(/\.$/, ""))
 }
 
 type Json = Record<string, unknown>

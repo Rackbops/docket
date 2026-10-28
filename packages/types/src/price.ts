@@ -5,12 +5,12 @@ import {
   type RunContext,
   type SeriesObservation,
 } from "@rackbops/docket-core"
-import { extractPrice } from "./extract.js"
+import { extractPrice, patternProblem } from "./extract.js"
 import { money } from "./money.js"
 
 /**
- * Category 3 (plan section 1.2, city-hall#11): track an item's price, record it, alert when it
- * drops by 10% or more. A `poll` schedule; each run reads the page through the Fetch port,
+ * Category 3 (plan section 1.2, Lepid-Labs/city-hall#11): track an item's price, record it, alert
+ * when it drops by 10% or more. A `poll` schedule; each run reads the page through the Fetch port,
  * extracts the price (structured sources first, `extract.ts`), appends it to the task's series
  * and compares it with the baseline the owner chose -- first seen, last seen or the peak --
  * alerting once per crossing of the line. Notify lane, tier 0, no model.
@@ -136,6 +136,9 @@ export const price = defineTaskType<PriceConfig>({
     const { fetch } = ctx.ports
     if (!fetch) throw new Error("the price type needs the Fetch port; the host configured none")
     const state = stateOf(ctx.state)
+    // A refused pattern never runs: it could stall the notify lane (docket#45).
+    const refused = ctx.config.pattern ? patternProblem(ctx.config.pattern) : null
+    if (refused) return miss(ctx, state, `pattern refused: ${refused}`)
     let body: string
     try {
       const response = await fetch.get(ctx.config.url)

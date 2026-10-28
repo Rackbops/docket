@@ -2,9 +2,10 @@ import { wallClock, zonedInstant } from "./zoned.js"
 
 /**
  * Schedule kinds (plan section 5.3). `once` and `calendar` shipped with the reminder slice
- * (city-hall#7); `poll` and `period` with the renewal and price types (city-hall#11). Catch-up
- * is per kind: a missed `once` fires late; a missed calendar or period occurrence fires once
- * late, then the next is computed from now; a missed poll is simply the next poll.
+ * (Lepid-Labs/city-hall#7); `poll` and `period` with the renewal and price types
+ * (Lepid-Labs/city-hall#11). Catch-up is per kind: a missed `once` fires late; a missed calendar or
+ * period occurrence fires once late, then the next is computed from now; a missed poll is simply
+ * the next poll.
  */
 export const SCHEDULE_KINDS = ["once", "calendar", "poll", "period"] as const
 
@@ -95,6 +96,8 @@ const MINUTE_MS = 60_000
 const DAY_MS = 86_400_000
 /** How far ahead `nextDue` searches before giving up on a calendar schedule. */
 const HORIZON_DAYS = 366 * 3
+/** The longest a calendar unit can be, in days, for the `every` bound in `calendarProblems`. */
+const UNIT_DAYS: Record<CalendarSchedule["unit"], number> = { day: 1, week: 7, month: 31 }
 /** How many periods ahead `nextDue` searches before giving up on a period schedule. */
 const HORIZON_PERIODS = 100_000
 
@@ -191,7 +194,16 @@ function calendarProblems(schedule: CalendarSchedule): string[] {
   if (!Number.isInteger(schedule.every) || schedule.every < 1) {
     problems.push("calendar.every must be a whole number >= 1")
   }
-  if (!["day", "week", "month"].includes(schedule.unit)) problems.push("calendar.unit is unknown")
+  if (!["day", "week", "month"].includes(schedule.unit)) {
+    problems.push("calendar.unit is unknown")
+  } else if (Number.isInteger(schedule.every) && schedule.every >= 1) {
+    // nextDue looks HORIZON_DAYS ahead; a longer step would be accepted and then never fire.
+    // A month counts as 31 days, and the slack covers the days inside a matching week or month.
+    const max = Math.floor((HORIZON_DAYS - 31) / UNIT_DAYS[schedule.unit])
+    if (schedule.every > max) {
+      problems.push(`calendar.every must be at most ${max} for unit ${schedule.unit}`)
+    }
+  }
   if (!parseLocalDate(schedule.start)) problems.push("calendar.start must be a YYYY-MM-DD date")
   if (schedule.weekdays !== undefined) {
     if (schedule.weekdays.length === 0) problems.push("calendar.weekdays must not be empty")

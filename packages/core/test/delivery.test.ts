@@ -4,7 +4,10 @@ import {
   DEFAULT_DELIVERY_POLICY,
   deliver,
   ExecutorUnavailableError,
+  MemoryStore,
   STALE_CLAIM_MS,
+  type Store,
+  settleStaleClaims,
   visibleDeliveries,
   visibleEvents,
   visibleOccurrences,
@@ -154,6 +157,50 @@ describe("delivery per recipient", () => {
     expect((await store.listDeliveries({ status: "unconfirmed" })).map((d) => d.userId)).toEqual([
       moe.id,
     ])
+  })
+
+  it("keeps a send that settles between a sweep's read and its write (docket#47)", async () => {
+    const store = new MemoryStore()
+    const u = await store.createUser({ discordId: "d1", at: T0 })
+    const t = await store.createTask({
+      ownerId: u.id,
+      type: "reminder",
+      title: "t",
+      config: {},
+      schedule: null,
+      lane: "notify",
+      capabilities: ["notify"],
+      at: T0,
+    })
+    const o = await store.createOccurrence({
+      taskId: t.id,
+      lane: "notify",
+      dueAt: T0,
+      dedupeKey: "k",
+      at: T0,
+    })
+    const id = o?.id ?? ""
+    await store.planDelivery(id, u.id, T0)
+    await store.claimDelivery(id, u.id, T0)
+    // The sweep reads the claim; the slow send settles `sent` before the sweep writes.
+    const interleaved: Store = Object.assign(Object.create(store), {
+      async listDeliveries(...args: Parameters<Store["listDeliveries"]>) {
+        const rows = await store.listDeliveries(...args)
+        await store.settleDelivery(id, u.id, {
+          status: "sent",
+          messageId: "m1",
+          attempts: 0,
+          deferrals: 0,
+          retryAt: null,
+          at: T0,
+        })
+        return rows
+      },
+    })
+    const later = new Date(Date.parse(T0) + STALE_CLAIM_MS + MIN)
+    expect(await settleStaleClaims(interleaved, later, true)).toBe(0)
+    const [row] = await store.listDeliveries({ occurrenceId: id })
+    expect([row?.status, row?.messageId]).toEqual(["sent", "m1"])
   })
 
   it("never sends on a claim another sender holds", async () => {

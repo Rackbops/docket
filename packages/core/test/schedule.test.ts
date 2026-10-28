@@ -218,6 +218,22 @@ describe("scheduleProblems", () => {
       start: "03/01/2026",
     }
     expect(scheduleProblems(bad)).toHaveLength(4)
+    // A step longer than nextDue's search horizon would be accepted and then never fire.
+    expect(
+      scheduleProblems({ kind: "calendar", every: 48, unit: "month", start: "2026-01-15" }),
+    ).toEqual(["calendar.every must be at most 34 for unit month"])
+    expect(
+      scheduleProblems({ kind: "calendar", every: 200, unit: "week", start: "2026-01-15" }),
+    ).toEqual(["calendar.every must be at most 152 for unit week"])
+    // The largest accepted step still fires within the horizon.
+    for (const s of [
+      { kind: "calendar", every: 34, unit: "month", start: "2026-01-31" },
+      { kind: "calendar", every: 152, unit: "week", weekdays: [6], start: "2026-01-04" },
+      { kind: "calendar", every: 1067, unit: "day", start: "2026-01-15" },
+    ] as Schedule[]) {
+      expect(scheduleProblems(s)).toEqual([])
+      expect(nextDue(s, new Date("2026-02-01T00:00:00Z"), ctx)).not.toBeNull()
+    }
     expect(
       scheduleProblems({ kind: "poll", every: 1, unit: "minute", start: "2026-03-02T12:00:00Z" }),
     ).toEqual([`poll interval must be at least ${MIN_POLL_MINUTES} minutes`])
