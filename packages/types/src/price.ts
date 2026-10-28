@@ -6,7 +6,7 @@ import {
   type SeriesObservation,
 } from "@rackbops/docket-core"
 import { extractPrice, patternProblem } from "./extract.js"
-import { money } from "./money.js"
+import { currencyCode, money } from "./money.js"
 
 /**
  * Category 3 (plan section 1.2, Lepid-Labs/city-hall#11): track an item's price, record it, alert
@@ -188,8 +188,8 @@ export const price = defineTaskType<PriceConfig>({
     // after a few and the baseline stays as it was. Only a currency the page itself declares
     // counts (the config's is a fallback for a page that names none), and a state from before
     // docket#59 is held to the config's currency when it has one.
-    const declared = (found.currency ?? "").trim().toUpperCase()
-    const known = state.currency ?? (ctx.config.currency ?? "").trim().toUpperCase()
+    const declared = currencyCode(found.currency) ?? ""
+    const known = state.currency ?? currencyCode(ctx.config.currency) ?? ""
     if (known !== "" && declared !== "" && declared !== known) {
       return miss(ctx, state, `the page now prices in ${declared}, not ${known}`)
     }
