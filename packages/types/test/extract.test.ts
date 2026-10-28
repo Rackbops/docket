@@ -89,7 +89,7 @@ describe("the owner's pattern (docket#45)", () => {
     for (const p of ["(a+)+b", "(x*)*", "(?:a|b+){2,}", "((a+))*", "(\\d+\\s*)+$", "(a+){2,5}"]) {
       expect(patternProblem(p), p).toMatch(/repeats a group that itself repeats/)
     }
-    // A repeated alternation stalls as surely (the review's probes: 37 s, 75 s, 1.8 s).
+    // A repeated alternation whose branches overlap stalls as surely.
     for (const p of [
       "(a|a)*b",
       "(?:\\s|&nbsp;| )*\\$(\\d+)",

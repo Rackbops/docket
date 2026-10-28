@@ -173,11 +173,11 @@ export const MAX_PATTERN_BODY_CHARS = 500_000
 /**
  * Why the owner's pattern is refused, or null when it is taken: it must parse, stay under
  * `MAX_PATTERN_CHARS`, and repeat no group that could match one stretch of text in many ways
- * (docket#45) -- a group that itself repeats (`(a+)+`, `(x*)*`, `(?:\d+,)*`) or holds an
- * alternation (`(a|a)*`, `(?:\s|&nbsp;)*`, `(.|\s)*`), the shapes that backtrack catastrophically
+ * (docket#45) -- a group that itself repeats (`(a+)+`, `(x*)*`) or holds an alternation whose
+ * branches overlap (`(a|a)*`, `(\s| )*`, `(.|\s)*`), the shapes that backtrack catastrophically
  * on about thirty characters. A heuristic, not a proof: it reads the pattern's text, skipping
- * escapes and character classes, and refuses some safe patterns (`(?:\d+,)*\d+`), which a
- * character class says as well (`[\d,]+`). A host checks it when a pattern is saved;
+ * escapes and character classes, so it also refuses safe shapes whose parts cannot overlap
+ * (`(?:\d+,)*\d+`, `(?:\s|&nbsp;)*`), which a character class says as well (`[\d,]+`). A host checks it when a pattern is saved;
  * `priceFromPattern` refuses such a pattern too, and the price type never fetches with one.
  */
 export function patternProblem(pattern: string): string | null {

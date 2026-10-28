@@ -252,6 +252,46 @@ describe("delivery per recipient", () => {
     expect([row?.status, row?.deferrals]).toEqual(["claimed", 2])
   })
 
+  it("counts only its own write when two sweeps race on one row (docket#47)", async () => {
+    // Another sweep (or a tick that failed the same row) writes the same status first, at its own
+    // time: this call wrote nothing, so it neither counts the row nor reports it failed.
+    const stale = await oneRow()
+    await stale.store.claimDelivery(stale.id, stale.userId, T0)
+    const swept = between(stale.store, () =>
+      stale.store.settleDelivery(stale.id, stale.userId, {
+        status: "unconfirmed",
+        attempts: 0,
+        deferrals: 0,
+        retryAt: null,
+        at: "2026-01-01T00:00:00.000Z",
+      }),
+    )
+    const later = new Date(Date.parse(T0) + STALE_CLAIM_MS + MIN)
+    expect(await settleStaleClaims(swept, later, true)).toBe(0)
+
+    const gone = await oneRow()
+    const failed = between(gone.store, () =>
+      gone.store.settleDelivery(gone.id, gone.userId, {
+        status: "failed",
+        error: "elsewhere",
+        attempts: 0,
+        deferrals: 0,
+        retryAt: null,
+        at: "2026-01-01T00:00:00.000Z",
+      }),
+    )
+    const report = await deliver(
+      failed,
+      new FakeNotifier(),
+      gone.occurrence,
+      "owner",
+      new Map(),
+      { text: "hi" },
+      { now: () => new Date(T0) },
+    )
+    expect([report.failed, report.untried]).toEqual([[], [gone.userId]])
+  })
+
   it("drops only owed rows: a sent copy stays sent", async () => {
     const { store, id, userId } = await oneRow()
     await store.claimDelivery(id, userId, T0)

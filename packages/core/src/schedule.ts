@@ -100,7 +100,7 @@ const HORIZON_DAYS = 366 * 3
  * The largest calendar `every` per unit whose longest gap between two runs stays inside the days
  * `nextDue` searches (offsets 0 to `HORIZON_DAYS - 1` from the day it starts on): 1097 days; 156
  * weeks, whose runs fall at most 1092 days apart whichever weekdays are set; 36 months, which span
- * at most 1097 days (three years with a leap day, from a day clamped to the month's end). One more
+ * at most 1096 days (three years, one leap day among them), while 37 span at least 1124. One more
  * of any would be accepted and could then never fire (docket#46).
  */
 export const MAX_CALENDAR_EVERY: Readonly<Record<CalendarSchedule["unit"], number>> = {
