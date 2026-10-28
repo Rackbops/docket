@@ -166,7 +166,8 @@ export const price = defineTaskType<PriceConfig>({
     const point: SeriesObservation = currency
       ? { value: seen, unit: currency, note: "observed" }
       : { value: seen, note: "observed" }
-    const code = currency.trim().toUpperCase()
+    // Only a valid code is kept as the watch's currency (docket#58).
+    const code = currencyCode(currency) ?? ""
     const kept = code === "" ? {} : { currency: code }
     const rule = baselineRule(ctx.config)
     const drop = dropPercent(ctx.config)

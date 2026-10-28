@@ -18,7 +18,14 @@ import { money } from "./money.js"
 import { safeUrl } from "./research-answer.js"
 import { retryOutcome } from "./retry.js"
 import { BGG_HOST, BGG_SPACING_MS } from "./want-bgg.js"
-import { isEbayHost, type Listing, listingKey, type Source, type SourceId } from "./want-sources.js"
+import {
+  isEbayHost,
+  isObj,
+  type Listing,
+  listingKey,
+  type Source,
+  type SourceId,
+} from "./want-sources.js"
 import { sourceText } from "./want-text.js"
 import {
   clip,
@@ -120,8 +127,6 @@ export const JUDGE_SCHEMA = {
   required: ["verdicts"],
 } as const
 
-const isObj = (v: unknown): v is Record<string, unknown> =>
-  typeof v === "object" && v !== null && !Array.isArray(v)
 const str = (v: unknown, max: number): string => (typeof v === "string" ? clean(v, max, true) : "")
 
 /** One stored listing, re-checked as stored data must be; null when unusable. */

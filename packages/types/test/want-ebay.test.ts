@@ -272,6 +272,9 @@ describe("an eBay watch", () => {
     // A USD watch, in any case, still searches.
     const usd = await type.run(ctx(null, { currency: " usd " }))
     expect(usd.summary).toBe("1 listed, 1 within limits, 1 new")
+    // An invalid code counts as none named, so it searches eBay US too (docket#58).
+    const invalid = await type.run(ctx(null, { currency: "dollars" }))
+    expect(invalid.summary).toBe("1 listed, 1 within limits, 1 new")
   })
 
   it("opens no eBay page for the judge", () => {
