@@ -44,7 +44,8 @@ export interface WantConfig {
   currency?: string
   /**
    * Words or phrases that rule a listing out: one whose title holds any of them, as whole words in
-   * that order, is dropped before it is told or judged (docket#77). Absent or empty, nothing is.
+   * that order, is dropped when the source is read, so it is never told; a judged watch checks its
+   * waiting listings again when it settles them (docket#77). Absent or empty, nothing is.
    */
   exclude?: string[]
 }
@@ -129,7 +130,8 @@ export const EXCLUDE_CHARS = 80
 
 /**
  * The exclude entries in `text`, as a host reads them from one field: split at commas and line
- * breaks, trimmed, empty and repeated ones dropped (case-insensitively), capped. Pure.
+ * breaks, trimmed, capped; an entry with no words in it is dropped, and so is one that repeats an
+ * earlier one on the word split (`wordsOf`: case, accents and punctuation folded). Pure.
  */
 export function parseExclude(text: string): string[] {
   const out: string[] = []
@@ -149,9 +151,12 @@ export function parseExclude(text: string): string[] {
  * Whether `title` holds any entry of `exclude` as whole words in that order, on the same word split
  * as the target's (`wordsOf`: case and accents folded, punctuation ignored), so "investigator"
  * rules out "Edge of the Earth: Investigator Expansion" and "investigator expansion" does too, but
- * "investigators" does not. A stored value that is not a list of strings excludes nothing. Pure.
+ * "investigators" does not. A stored string is read as one comma-separated field (`parseExclude`),
+ * so a host that stored the intake field as it came still excludes; any other value that is not a
+ * list of strings excludes nothing. Pure.
  */
-export function isExcluded(title: string, exclude: unknown): boolean {
+export function isExcluded(title: string, value: unknown): boolean {
+  const exclude = typeof value === "string" ? parseExclude(value) : value
   if (!Array.isArray(exclude) || exclude.length === 0) return false
   const have = wordsOf(title)
   return exclude.slice(0, MAX_EXCLUDE).some((entry) => {

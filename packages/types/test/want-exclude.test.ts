@@ -13,8 +13,9 @@ import {
 
 /**
  * Exclude words on want-list watches (docket#77, the Arkham pilot of rackbops-bot-plugins#368): a
- * listing whose title holds an excluded word or phrase is dropped before it is told or judged, from
- * every source, and a watch with no `exclude` behaves as before.
+ * listing whose title holds an excluded word or phrase is dropped when the source is read, from
+ * every source, and a watch with no `exclude` behaves as before. A stub stands in for each source:
+ * the filter runs on what `search` returns, whichever source returned it.
  */
 
 const listing = (title: string, url: string, price = 40): Listing => ({
@@ -57,8 +58,14 @@ describe("isExcluded", () => {
     expect(isExcluded("Investigator", undefined)).toBe(false)
     expect(isExcluded("Investigator", [])).toBe(false)
     expect(isExcluded("Investigator", ["", " -- "])).toBe(false)
-    expect(isExcluded("Investigator", "investigator")).toBe(false)
+    expect(isExcluded("Investigator", { investigator: true })).toBe(false)
     expect(isExcluded("Investigator", [7, null])).toBe(false)
+  })
+
+  it("reads a stored string as one comma-separated field", () => {
+    expect(isExcluded("Edge of the Earth Investigator Expansion", "promo, investigator")).toBe(true)
+    expect(isExcluded("Edge of the Earth Campaign Expansion", "promo, investigator")).toBe(false)
+    expect(isExcluded("Investigator", "")).toBe(false)
   })
 
   it("reads at most MAX_EXCLUDE entries", () => {
@@ -101,6 +108,14 @@ describe("exclude words on a plain watch, from every source", () => {
     const out = await type.run(ctx({ source: "page", target: "https://shop.example/s" }))
     expect(out.summary).toBe("2 listed, 2 within limits, 2 new")
     expect(out.findings).toHaveLength(2)
+  })
+
+  it("excludes from a stored comma-separated string too", async () => {
+    const type = wantlistType({ page: stub("page") })
+    const out = await type.run(
+      ctx({ source: "page", target: "https://shop.example/s", exclude: "promo, investigator" }),
+    )
+    expect(out.summary).toBe("2 listed, 2 within limits, 1 excluded, 1 new")
   })
 
   it("ends quietly when every new listing is excluded", async () => {
