@@ -9,6 +9,7 @@ import {
 import { currencyCode, money } from "./money.js"
 import { MISSES_BEFORE_TELLING } from "./price.js"
 import { EBAY_CURRENCY } from "./want-ebay.js"
+import { wordsOf } from "./want-shopify.js"
 import {
   type Listing,
   listingKey,
@@ -41,6 +42,12 @@ export interface WantConfig {
   maxPrice?: number
   /** Only listings in this currency; a listing that names none passes. */
   currency?: string
+  /**
+   * Words or phrases that rule a listing out: one whose title holds any of them, as whole words in
+   * that order, is dropped when the source is read, so it is never told; a judged watch checks its
+   * waiting listings again when it settles them (docket#77). Absent or empty, nothing is.
+   */
+  exclude?: string[]
 }
 
 export interface WantState {
@@ -115,6 +122,57 @@ export function withinLimits(l: Listing, config: WantConfig): boolean {
   if (want && l.currency && currencyCode(l.currency) !== want) return false
   if (config.maxPrice === undefined) return true
   return l.price !== undefined && l.price <= config.maxPrice + 1e-9
+}
+
+/** At most this many exclude entries, each at most `EXCLUDE_CHARS`; more is cut, never an error. */
+export const MAX_EXCLUDE = 20
+export const EXCLUDE_CHARS = 80
+
+/**
+ * The exclude entries in `text`, as a host reads them from one field: split at commas and line
+ * breaks, trimmed, capped; an entry with no words in it is dropped, and so is one that repeats an
+ * earlier one on the word split (`wordsOf`: case, accents and punctuation folded). Pure.
+ */
+export function parseExclude(text: string): string[] {
+  const out: string[] = []
+  const seen = new Set<string>()
+  for (const raw of text.split(/[,\n]/)) {
+    const entry = raw.trim().slice(0, EXCLUDE_CHARS).trim()
+    const key = wordsOf(entry).join(" ")
+    if (!key || seen.has(key)) continue
+    seen.add(key)
+    out.push(entry)
+    if (out.length === MAX_EXCLUDE) break
+  }
+  return out
+}
+
+/**
+ * Whether `title` holds any entry of `exclude` as whole words in that order, on the same word split
+ * as the target's (`wordsOf`: case and accents folded, punctuation ignored), so "investigator"
+ * rules out "Edge of the Earth: Investigator Expansion" and "investigator expansion" does too, but
+ * "investigators" does not. A stored string is read as one comma-separated field (`parseExclude`),
+ * so a host that stored the intake field as it came still excludes; any other value that is not a
+ * list of strings excludes nothing. Pure.
+ */
+export function isExcluded(title: string, value: unknown): boolean {
+  const exclude = typeof value === "string" ? parseExclude(value) : value
+  if (!Array.isArray(exclude) || exclude.length === 0) return false
+  const have = wordsOf(title)
+  return exclude.slice(0, MAX_EXCLUDE).some((entry) => {
+    if (typeof entry !== "string") return false
+    const want = wordsOf(entry.slice(0, EXCLUDE_CHARS))
+    if (want.length === 0) return false
+    for (let i = 0; i + want.length <= have.length; i++) {
+      if (want.every((w, j) => have[i + j] === w)) return true
+    }
+    return false
+  })
+}
+
+/** Whether a listing is one the owner wants told of: within the limits and not excluded. */
+export function wanted(l: Listing, config: WantConfig): boolean {
+  return withinLimits(l, config) && !isExcluded(l.title, config.exclude)
 }
 
 export function priceText(l: Listing, config: WantConfig): string {
@@ -248,9 +306,13 @@ export async function pollWant(
     throw err
   }
   const told = new Set(state.reported)
-  const within = listings.filter((l) => withinLimits(l, ctx.config))
+  const limited = listings.filter((l) => withinLimits(l, ctx.config))
+  const within = limited.filter((l) => !isExcluded(l.title, ctx.config.exclude))
   const fresh = within.filter((l) => !told.has(listingKey(l.id))).slice(0, MAX_NEW_PER_RUN)
-  const summary = `${listings.length} listed, ${within.length} within limits, ${fresh.length} new`
+  const dropped = limited.length - within.length
+  const summary =
+    `${listings.length} listed, ${limited.length} within limits, ` +
+    `${dropped > 0 ? `${dropped} excluded, ` : ""}${fresh.length} new`
   const read: WantState = { ...state, misses: 0, warned: false }
   if (fresh.length === 0) return { kind: "done", outcome: { state: read, summary } }
   return { kind: "fresh", state: read, fresh, summary }
@@ -287,6 +349,13 @@ export function wantlistType(sources: Partial<Record<SourceId, Source>>): TaskTy
         {
           name: "currency",
           description: "Only listings in this currency",
+          required: false,
+          kind: "string",
+        },
+        {
+          name: "exclude",
+          description:
+            "Leave out listings whose title has any of these words or phrases, separated by commas",
           required: false,
           kind: "string",
         },

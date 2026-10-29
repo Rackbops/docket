@@ -92,7 +92,7 @@ export function shopifyQuery(query: string): string {
 }
 
 /** Letters and digits, lower-cased, accents folded (an accented "e" matches a plain one). */
-function wordsOf(text: string): string[] {
+export function wordsOf(text: string): string[] {
   return (
     text
       .normalize("NFKD")
