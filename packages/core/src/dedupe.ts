@@ -31,7 +31,32 @@ export function followUpKey(occurrenceId: string): string {
 
 export const FOLLOW_UP_PREFIX = "followup:"
 
-/** True for a run a person or a type asked for (a snooze's, a follow-up), not a scheduled one. */
+/**
+ * A run its owner asked for now, outside the schedule (a host's "run now", rackbops-bot-plugins#369):
+ * one per request, so a retried request queues one run. `requestId` is the host's own: 1 to 64
+ * letters, digits, `-` or `_`, or this throws. Like a snooze's run it is off the schedule: the
+ * schedule's next run stays where it was, and a schedule edit never cancels it.
+ *
+ * The host decides which tasks may run now. Not a one-off (`once`): its scheduled run stays queued,
+ * so a reminder would be sent twice and a research request ended early. Not a renewal: its ask
+ * reads its period from the run's `dueAt` (`periodDateOf`), so a run now would ask about a date the
+ * schedule never had. Nor a paused or ended task: the run would wait for a resume, or never fire.
+ */
+export function runNowKey(taskId: string, requestId: string): string {
+  if (!REQUEST_ID.test(requestId))
+    throw new Error("runNowKey: requestId must be 1 to 64 of A-Z a-z 0-9 - _")
+  return `${RUN_NOW_PREFIX}${taskId}:${requestId}`
+}
+
+const REQUEST_ID = /^[A-Za-z0-9_-]{1,64}$/
+
+export const RUN_NOW_PREFIX = "now:"
+
+/** True for a run a person or a type asked for (a snooze's, a follow-up, a run now), not a scheduled one. */
 export function isOffSchedule(dedupeKey: string): boolean {
-  return dedupeKey.startsWith(SNOOZE_PREFIX) || dedupeKey.startsWith(FOLLOW_UP_PREFIX)
+  return (
+    dedupeKey.startsWith(SNOOZE_PREFIX) ||
+    dedupeKey.startsWith(FOLLOW_UP_PREFIX) ||
+    dedupeKey.startsWith(RUN_NOW_PREFIX)
+  )
 }
