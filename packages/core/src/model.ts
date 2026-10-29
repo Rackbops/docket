@@ -71,7 +71,7 @@ export interface Occurrence {
   late: boolean
   /**
    * Per-source identity: `sched:<task>:<due>`, `manual:<task>:<seq>`, `snooze:<occurrence>`,
-   * `followup:<occurrence>`.
+   * `followup:<occurrence>`, `now:<task>:<request>` (`dedupe.ts`).
    */
   dedupeKey: string
   summary: string | null

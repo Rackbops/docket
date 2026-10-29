@@ -33,14 +33,22 @@ export const FOLLOW_UP_PREFIX = "followup:"
 
 /**
  * A run its owner asked for now, outside the schedule (a host's "run now", rackbops-bot-plugins#369):
- * one per request, so a retried request queues one run. `requestId` is the host's own (letters,
- * digits, `-` and `_`). Like a snooze's run it is off the schedule: the schedule's next run stays
- * where it was, and an edit never cancels it. The host decides which tasks may run now; a one-off
- * is not one of them, since the run would end it.
+ * one per request, so a retried request queues one run. `requestId` is the host's own: 1 to 64
+ * letters, digits, `-` or `_`, or this throws. Like a snooze's run it is off the schedule: the
+ * schedule's next run stays where it was, and a schedule edit never cancels it.
+ *
+ * The host decides which tasks may run now. Not a one-off (`once`): its scheduled run stays queued,
+ * so a reminder would be sent twice and a research request ended early. Not a renewal: its ask
+ * reads its period from the run's `dueAt` (`periodDateOf`), so a run now would ask about a date the
+ * schedule never had. Nor a paused or ended task: the run would wait for a resume, or never fire.
  */
 export function runNowKey(taskId: string, requestId: string): string {
+  if (!REQUEST_ID.test(requestId))
+    throw new Error("runNowKey: requestId must be 1 to 64 of A-Z a-z 0-9 - _")
   return `${RUN_NOW_PREFIX}${taskId}:${requestId}`
 }
+
+const REQUEST_ID = /^[A-Za-z0-9_-]{1,64}$/
 
 export const RUN_NOW_PREFIX = "now:"
 

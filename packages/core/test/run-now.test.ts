@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest"
 import {
   createTask,
+  invite,
   isOffSchedule,
   Lanes,
   RUN_NOW_PREFIX,
   reschedule,
+  respondToInvite,
   runNowKey,
   type TaskType,
 } from "../src/index.js"
@@ -50,8 +52,16 @@ describe("a run now", () => {
     expect(isOffSchedule("sched:t1:2026-03-02T12:00:00.000Z")).toBe(false)
   })
 
-  it("runs and sends on the next tick, and leaves the schedule's next run where it was", async () => {
-    const { store, clock, notifier, lanes, task } = await setup()
+  it("takes only a plain request id, so no two requests share a key", () => {
+    for (const bad of ["", "a:b", "a b", "x".repeat(65)])
+      expect(() => runNowKey("t1", bad)).toThrow()
+    expect(runNowKey("t1", "x".repeat(64))).toBe(`now:t1:${"x".repeat(64)}`)
+  })
+
+  it("runs and sends to the owner and each accepted recipient on the next tick, and leaves the schedule's next run where it was", async () => {
+    const { store, clock, notifier, lanes, task, larry, moe } = await setup()
+    await invite(store, actor(larry), task, moe.id, clock.now())
+    await respondToInvite(store, task, moe.id, "accept", clock.now())
     const before = await store.listOccurrences({ taskId: task.id, status: "queued" })
     expect(before).toHaveLength(1)
     const next = before[0]?.dueAt
@@ -74,13 +84,18 @@ describe("a run now", () => {
     ).toBeNull()
     expect(made).not.toBeNull()
     expect(await lanes.tickNotify()).toEqual({ ran: 1, failed: 0, skipped: 0 })
-    expect(notifier.sent.map((s) => s.message.text)).toEqual(["pills"])
+    expect(notifier.sent.map((s) => [s.userId, s.message.text]).sort()).toEqual(
+      [
+        [larry.id, "pills"],
+        [moe.id, "pills"],
+      ].sort(),
+    )
     const queued = await store.listOccurrences({ taskId: task.id, status: "queued" })
     expect(queued.map((o) => [o.dueAt, o.dedupeKey.split(":")[0]])).toEqual([[next, "sched"]])
     expect((await store.getTask(task.id))?.status).toBe("active")
   })
 
-  it("survives a schedule edit, as a snooze's run does", async () => {
+  it("survives a schedule edit, which replaces only the scheduled run, as a snooze's run does", async () => {
     const { store, clock, task, larry } = await setup()
     await store.createOccurrence({
       taskId: task.id,
@@ -102,5 +117,8 @@ describe("a run now", () => {
     )
     const queued = await store.listOccurrences({ taskId: task.id, status: "queued" })
     expect(queued.map((o) => o.dedupeKey.split(":")[0]).sort()).toEqual(["now", "sched"])
+    // The scheduled run is the edit's: its first day is the new start, not the old one.
+    const sched = queued.find((o) => o.dedupeKey.startsWith("sched:"))
+    expect(sched?.dueAt.slice(0, 10)).toBe(start)
   })
 })

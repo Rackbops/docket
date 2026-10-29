@@ -44,10 +44,13 @@ API key.
 **Run now** (rackbops-bot-plugins#369). `runNowKey(taskId, requestId)` keys a run its owner asked for
 now: `now:<task>:<request>`, one per request, so a retried request queues one run. The host creates
 it as an ordinary occurrence due now; `isOffSchedule` is true for it, as for a snooze's run and a
-follow-up, so the schedule's next run stays where it was (`materialize`) and an edit keeps it
+follow-up, so the schedule's next run stays where it was (`materialize`) and a schedule edit keeps it
 (`cancelScheduledRuns`). Its message goes to the owner and every accepted recipient, as a scheduled
-run's does. Nothing else changes, and no Store change is needed. The host decides which tasks may
-run now and how often: a one-off ends when it runs, so it is not one of them.
+run's does. Nothing else changes, and no Store change is needed. `requestId` is 1 to 64 letters,
+digits, `-` or `_`; anything else throws. The host decides which tasks may run now and how often,
+and refuses: a one-off (its scheduled run stays queued, so a reminder would go twice and a research
+request end early); a renewal (its ask takes its period from the run's `dueAt`); a paused or ended
+task (the run would wait for a resume, or never fire).
 
 ## Adopting 0.16.0
 
