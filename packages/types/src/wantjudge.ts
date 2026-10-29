@@ -42,8 +42,8 @@ import {
   SHOWN_IN_DM,
   type WantConfig,
   type WantState,
+  wanted,
   wantState,
-  withinLimits,
 } from "./wantlist.js"
 
 /**
@@ -387,8 +387,8 @@ function judgeFailed(
     return { state: { ...state, failures, retryAt: retry.at }, followUp: retry.followUp, summary }
   }
   const reason = SAID[kind] ?? "the check failed"
-  // As `judged`: a listing an edit put outside the limits is neither sent nor remembered.
-  const within = state.pending.filter((l) => withinLimits(l, ctx.config))
+  // As `judged`: a listing an edit put outside the limits, or excluded, is neither sent nor remembered.
+  const within = state.pending.filter((l) => wanted(l, ctx.config))
   const kept = { ...state, pending: within }
   return {
     state: settled(kept, within.length),
@@ -416,11 +416,11 @@ function judged(
   stored: JudgeState,
   verdicts: Map<number, JudgeVerdict>,
 ): Outcome {
-  // Judged against the limits as they are now: one an edit put outside them is neither told nor
-  // remembered, so it comes back once it is within them again, as on the plain watch.
+  // Judged against the limits and exclusions as they are now: one an edit put outside them is
+  // neither told nor remembered, so it comes back once it is within them again, as on the plain watch.
   const all = stored.pending
     .map((l, i) => ({ l, v: verdicts.get(i + 1) ?? { fit: "maybe" as Fit, why: "", seller: "" } }))
-    .filter(({ l }) => withinLimits(l, ctx.config))
+    .filter(({ l }) => wanted(l, ctx.config))
   const state = { ...stored, pending: all.map((x) => x.l) }
   const rank: Record<Fit, number> = { match: 0, maybe: 1, no: 2 }
   const shown = all.filter((x) => x.v.fit !== "no").sort((a, b) => rank[a.v.fit] - rank[b.v.fit])
@@ -498,6 +498,13 @@ export function wantjudgeType(
         {
           name: "currency",
           description: "Only listings in this currency",
+          required: false,
+          kind: "string",
+        },
+        {
+          name: "exclude",
+          description:
+            "Leave out listings whose title has any of these words or phrases, separated by commas",
           required: false,
           kind: "string",
         },

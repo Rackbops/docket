@@ -208,7 +208,10 @@ The tracker's task types, built on `@rackbops/docket-core`'s contract. Shipped s
   Shopify's catalog search through Firecrawl's Alexandria, 5 credits a look; a product counts only
   when every word of the search is in its title, and the judge opens no store for it) and
   `ebaySource` (eBay listings from eBay's own Browse API, with the host's eBay app token; the
-  judge opens no eBay page for it).
+  judge opens no eBay page for it). A watch's optional `exclude` (words or phrases) drops any
+  listing whose title holds one of them, as whole words in order on the target's word split,
+  before it is told or judged, from every source (docket#77); `parseExclude` reads the list from
+  one comma-separated field, and `isExcluded` is the test.
 - `wantjudge` (category 2, plan 5.4, item 63): the same watch on the execute lane. New listings
   are read in plain code (no charge), then one Job has the model judge each one and its seller
   (WebFetch only on the watch's own host, never WebSearch or the runner's files; 12 turns,
