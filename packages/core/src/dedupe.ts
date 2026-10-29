@@ -31,7 +31,24 @@ export function followUpKey(occurrenceId: string): string {
 
 export const FOLLOW_UP_PREFIX = "followup:"
 
-/** True for a run a person or a type asked for (a snooze's, a follow-up), not a scheduled one. */
+/**
+ * A run its owner asked for now, outside the schedule (a host's "run now", rackbops-bot-plugins#369):
+ * one per request, so a retried request queues one run. `requestId` is the host's own (letters,
+ * digits, `-` and `_`). Like a snooze's run it is off the schedule: the schedule's next run stays
+ * where it was, and an edit never cancels it. The host decides which tasks may run now; a one-off
+ * is not one of them, since the run would end it.
+ */
+export function runNowKey(taskId: string, requestId: string): string {
+  return `${RUN_NOW_PREFIX}${taskId}:${requestId}`
+}
+
+export const RUN_NOW_PREFIX = "now:"
+
+/** True for a run a person or a type asked for (a snooze's, a follow-up, a run now), not a scheduled one. */
 export function isOffSchedule(dedupeKey: string): boolean {
-  return dedupeKey.startsWith(SNOOZE_PREFIX) || dedupeKey.startsWith(FOLLOW_UP_PREFIX)
+  return (
+    dedupeKey.startsWith(SNOOZE_PREFIX) ||
+    dedupeKey.startsWith(FOLLOW_UP_PREFIX) ||
+    dedupeKey.startsWith(RUN_NOW_PREFIX)
+  )
 }
