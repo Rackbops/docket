@@ -235,6 +235,13 @@ epic is Rackbops/Tooling#816.
   (`currencyCode`), one retry policy serves research, scout and the judge, and a period schedule
   starts its walk near now (#75). The tracker adopts the Store rules before it pins 0.16.0
   (rackbops-bot-plugins#364).
+- **0.17.0 -- exclude words on want-list watches** (Rod, 2026-10-29, "Fix CI", for the Arkham pilot
+  of rackbops-bot-plugins#368). Additive: a `wantlist` or `wantjudge` config may carry `exclude`,
+  words or phrases that rule a listing out when its title holds one as whole words in order, from
+  every source; a stored string is read as one comma-separated field, and `parseExclude`,
+  `isExcluded` and `wanted` are exported for a host (#77, #79). A config without it behaves as
+  before. No core change. Release order: docket 0.17.0 first, then the tracker bump that pins it
+  (rackbops-bot-plugins#372).
 
 ## Use
 
