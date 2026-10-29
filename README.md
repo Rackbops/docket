@@ -242,6 +242,11 @@ epic is Rackbops/Tooling#816.
   `isExcluded` and `wanted` are exported for a host (#77, #79). A config without it behaves as
   before. No core change. Release order: docket 0.17.0 first, then the tracker bump that pins it
   (rackbops-bot-plugins#372).
+- **0.18.0 -- run now** (for the task API's `POST /tasks/<id>/run`, rackbops-bot-plugins#369).
+  Additive: `runNowKey(taskId, requestId)` keys a run its owner asked for now, `now:<task>:<request>`,
+  and `isOffSchedule` counts it, so the schedule's next run stays put and a schedule edit keeps it
+  (#82). No Store change. The host refuses a one-off, a renewal and a paused or ended task (core
+  README, "Adopting 0.18.0"). Release order: docket 0.18.0 first, then the tracker change that pins it.
 
 ## Use
 
