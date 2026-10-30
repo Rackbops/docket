@@ -39,6 +39,19 @@ export interface Listing {
   currency?: string
   condition?: string
   seller?: string
+  /** What the source's `detail` reads the full listing by (eBay's own item id); absent, it reads nothing. */
+  ref?: string
+  /** Shipping as the full listing shows it ("$4.99 shipping", "free shipping"), when a `detail` read gave it. */
+  shipping?: string
+}
+
+/**
+ * A listing read in full by its source's `detail`: its item specifics and description as plain
+ * text (untrusted, capped), for the watch's `confirm` words, and its shipping when it shows one.
+ */
+export interface ListingDetail {
+  text: string
+  shipping?: string
 }
 
 export type SourceId = "page" | "bgg" | "inbox" | "shopify" | "ebay"
@@ -54,6 +67,11 @@ export interface Source {
   id: SourceId
   /** The listings at `target` now; throws `SourceMiss` for a read that counts as a miss. */
   search(target: string, fetch: Fetch | undefined, limits?: SearchLimits): Promise<Listing[]>
+  /**
+   * The full listing behind one search result (eBay's own item, 0.20.0), or null when it cannot be
+   * read: never throws. A source without it reads only what its search returned.
+   */
+  detail?(listing: Listing): Promise<ListingDetail | null>
 }
 
 /** A read that found nothing usable (an error page, no structured data, a busy API): the type counts it. */
