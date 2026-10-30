@@ -259,6 +259,9 @@ epic is Rackbops/Tooling#816.
   `detail` (eBay's getItem), then told, told marked to check, or ruled out. Plain eBay DM lines
   show shipping. A judged watch reads nothing in full. Nothing from a read is stored (#87). No core
   change. Release order: docket 0.20.0 first, then the tracker change that offers the words.
+  Also a fix: done on a one-off reminder's run now finishes the task (it stayed active, and a
+  second done was refused as already answered); done on a run left behind by a move, or on a
+  recurring reminder, still answers that run only (#89).
 
 ## Use
 
