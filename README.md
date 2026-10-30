@@ -253,6 +253,12 @@ epic is Rackbops/Tooling#816.
   repeats, eBay links and `exclude` matches, and a reviewer Job checks each item before only the
   kept ones are DMed (#78, #84). No core change. Release order: docket 0.19.0 first, then the
   tracker change that offers the type.
+- **0.20.0 -- confirm words and eBay full-listing read** (for the Arkham pilot of
+  rackbops-bot-plugins#368). Additive: a want-list watch's optional `confirm` and `unconfirmed`
+  words; a listing whose title has no `confirm` word is read in full through the source's optional
+  `detail` (eBay's getItem), then told, told marked to check, or ruled out. Plain eBay DM lines
+  show shipping. A judged watch reads nothing in full. Nothing from a read is stored (#87). No core
+  change. Release order: docket 0.20.0 first, then the tracker change that offers the words.
 
 ## Use
 
