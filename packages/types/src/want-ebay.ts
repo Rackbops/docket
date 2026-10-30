@@ -40,7 +40,8 @@ import {
  * full through the same API, `GET /buy/browse/v1/item/{item_id}` (developer.ebay.com, getItem, read
  * 2026-10-30): its item specifics (`localizedAspects`), short description and description, as text
  * for the watch's `confirm` words, and its first shipping option's cost. Nothing of it is kept: the
- * watch uses it for the one run and the DM, as it does the search answer.
+ * plain watch uses it for the one run and the DM, as it does the search answer; a judged watch
+ * never reads it.
  */
 
 export const EBAY_SEARCH_PATH = "/buy/browse/v1/item_summary/search"
@@ -185,23 +186,47 @@ export const EBAY_ITEM_ID = /^v1\|[0-9]{6,20}\|[0-9]{1,20}$/
 export const DETAIL_CHARS = 20_000
 const DESCRIPTION_CHARS = 12_000
 
-/** The getItem request for `ref` (an `EBAY_ITEM_ID`), or null for anything else. Pure. */
+/**
+ * The getItem request for `ref` (an `EBAY_ITEM_ID`), or null for anything else. `fieldgroups=PRODUCT`
+ * adds the product container to eBay's default answer (developer.ebay.com, read 2026-10-30). Pure.
+ */
 export function ebayItemRequest(ref: string): EbayRequest | null {
   if (!EBAY_ITEM_ID.test(ref)) return null
   return {
     path: `${EBAY_ITEM_PATH}${encodeURIComponent(ref)}`,
-    params: {},
+    params: { fieldgroups: "PRODUCT" },
     marketplace: EBAY_MARKETPLACE,
   }
 }
 
-/** HTML as plain words: tags, scripts and styles out, entities a space. Bounded, no backtracking. */
+/** HTML as plain words: tags, scripts and styles out, entities a space. One linear pass, bounded. */
 function plain(html: string): string {
-  return html
-    .slice(0, DESCRIPTION_CHARS * 4)
-    .replace(/<(script|style)\b[^>]*>[\s\S]*?<\/\1\s*>/gi, " ")
-    .replace(/<[^>]*>/g, " ")
-    .replace(/&[a-z0-9#]{1,10};/gi, " ")
+  const text = html.slice(0, DESCRIPTION_CHARS * 4)
+  const lower = text.toLowerCase()
+  let out = ""
+  let i = 0
+  while (i < text.length) {
+    const open = text.indexOf("<", i)
+    if (open < 0) {
+      out += text.slice(i)
+      break
+    }
+    out += `${text.slice(i, open)} `
+    const close = text.indexOf(">", open + 1)
+    if (close < 0) break
+    const tag = /^<(script|style)\b/.exec(lower.slice(open, open + 8))
+    if (tag) {
+      // Everything up to the matching end tag goes; an unclosed script drops the rest.
+      const end = lower.indexOf(`</${tag[1]}`, close + 1)
+      if (end < 0) break
+      const after = text.indexOf(">", end)
+      if (after < 0) break
+      i = after + 1
+      continue
+    }
+    i = close + 1
+  }
+  return out.replace(/&[a-z0-9#]{1,10};/gi, " ")
 }
 
 /** "$4.99 shipping" or "free shipping" from the first shipping option with a cost, or "". */
@@ -218,7 +243,7 @@ function shippingOf(options: unknown): string {
 
 /**
  * What one getItem answer says, as `ListingDetail`: the title, short description, each item
- * specific as "name: value", the product's own title, and the description as plain text, cleaned
+ * specific as "name: value", the product's own title (`fieldgroups=PRODUCT`), and the description as plain text, cleaned
  * and capped at `DETAIL_CHARS`; and its shipping. Null for an answer that is not an item. Pure.
  */
 export function parseEbayItem(body: unknown): ListingDetail | null {

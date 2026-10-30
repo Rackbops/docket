@@ -217,8 +217,10 @@ The tracker's task types, built on `@rackbops/docket-core`'s contract. Shipped s
   title has none is read in full where its source can (`Source.detail`: eBay's getItem, its item
   specifics and description, nothing kept), then told if that has one, ruled out if its title or
   full text has an `unconfirmed` entry, and otherwise told marked `check: not confirmed as ...`.
-  Every listing a source can read in full is read once before it is told, so an eBay DM line also
-  shows its shipping; a ruled-out listing is remembered as told (`confirmListings`, `hasConfirm`).
+  Every listing a source can read in full is read once before it is told (all of a look's reads at
+  once), so an eBay DM line also shows its shipping. A ruled-out listing is remembered as told, so
+  taking an `unconfirmed` word away later does not bring it back (`confirmListings`, `hasConfirm`).
+  A judged watch (below) reads nothing in full.
 - `wantjudge` (category 2, plan 5.4, item 63): the same watch on the execute lane. New listings
   are read in plain code (no charge), then one Job has the model judge each one and its seller
   (WebFetch only on the watch's own host, never WebSearch or the runner's files; 12 turns,

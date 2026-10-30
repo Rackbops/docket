@@ -10,6 +10,7 @@ import {
   parseEbayAnswer,
   parseEbayItem,
   type Source,
+  wantjudgeType,
   wantlistType,
 } from "../src/index.js"
 
@@ -180,7 +181,7 @@ describe("eBay's full listing", () => {
   it("asks getItem for a well-formed item id only", () => {
     expect(ebayItemRequest("v1|123456789012|0")).toEqual({
       path: "/buy/browse/v1/item/v1%7C123456789012%7C0",
-      params: {},
+      params: { fieldgroups: "PRODUCT" },
       marketplace: "EBAY_US",
     })
     expect(ebayItemRequest("v1|123|0")).toBeNull()
@@ -235,5 +236,60 @@ describe("eBay's full listing", () => {
     })
     expect(await down.detail?.(l as Listing)).toBeNull()
     expect(await ok.detail?.({ ...(l as Listing), ref: undefined } as never)).toBeNull()
+  })
+})
+
+describe("review fixes", () => {
+  it("strips hostile markup in one linear pass", () => {
+    const body = { itemId: "v1|123456789012|0", description: `${"<".repeat(48_000)}` }
+    const t0 = performance.now()
+    parseEbayItem(body)
+    parseEbayItem({ ...body, description: "<script ".repeat(6_000) })
+    expect(performance.now() - t0).toBeLessThan(200)
+    expect(
+      parseEbayItem({ ...body, description: "a<b>b</b><STYLE x>c{}</style >d&amp;e" })?.text,
+    ).toBe("a b d e")
+  })
+
+  it("drops confirm entries with no word, and marks by a stored string's first word", async () => {
+    const { source } = stub([PLAIN], {})
+    const empty = await confirmListings([PLAIN], { ...CONFIG, confirm: ["", " , "] }, source)
+    expect(empty.unchecked.size).toBe(0)
+    const type = wantlistType({ ebay: stub([PLAIN], { "2": { text: "" } }).source })
+    const out = (await type.run(ctx({ ...CONFIG, confirm: "campaign, box" }))) as Out
+    expect(out.notify?.text).toContain('check: not confirmed as "campaign"')
+  })
+
+  it("reads every listing at once, and reads none when told not to", async () => {
+    let open = 0
+    let most = 0
+    const source: Source = {
+      id: "ebay",
+      search: async () => [],
+      detail: async () => {
+        open++
+        most = Math.max(most, open)
+        await new Promise((r) => setTimeout(r, 5))
+        open--
+        return null
+      },
+    }
+    await confirmListings([CAMPAIGN, PLAIN, INVESTIGATOR], CONFIG, source)
+    expect(most).toBe(3)
+    const { read, source: quiet } = stub([PLAIN], {})
+    const none = await confirmListings([PLAIN], { ...CONFIG, confirm: [] }, quiet, false)
+    expect(read).toEqual([])
+    expect(none.kept).toHaveLength(1)
+  })
+
+  it("has a judged watch read nothing in full and keep no shipping", async () => {
+    const { read, source } = stub([CAMPAIGN], { "1": { text: "", shipping: "free shipping" } })
+    const type = wantjudgeType({ ebay: source })
+    const out = (await type.prepare?.(ctx({ source: "ebay", target: CONFIG.target }))) as {
+      outcome: { state: { pending: Listing[] } }
+    }
+    expect(read).toEqual([])
+    expect(out.outcome.state.pending).toHaveLength(1)
+    expect(out.outcome.state.pending[0]?.shipping).toBeUndefined()
   })
 })

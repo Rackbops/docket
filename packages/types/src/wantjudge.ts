@@ -454,6 +454,12 @@ export interface JudgeOptions {
   wait?: (ms: number) => Promise<void>
 }
 
+/**
+ * A judged watch reads no listing in full: it offers no `confirm` words, and its stored listings
+ * keep no shipping, so a read would be calls for nothing, and its answer would sit in the state.
+ */
+const NO_DETAIL = { detail: false } as const
+
 /** The judged type over `sources` (the plain watch's); BGG's spacing is waited out once, on this background lane. */
 export function wantjudgeType(
   sources: Partial<Record<SourceId, Source>>,
@@ -462,11 +468,11 @@ export function wantjudgeType(
   const wait = o.wait ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)))
   const look = async (ctx: RunContext<WantConfig>, state: JudgeState) => {
     try {
-      return await pollWant(ctx, sources, state)
+      return await pollWant(ctx, sources, state, NO_DETAIL)
     } catch (err) {
       if (!(err instanceof ExecutorUnavailableError)) throw err
       await wait(BGG_SPACING_MS)
-      return pollWant(ctx, sources, state)
+      return pollWant(ctx, sources, state, NO_DETAIL)
     }
   }
   return defineTaskType<WantConfig>({

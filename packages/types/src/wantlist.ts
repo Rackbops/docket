@@ -195,8 +195,8 @@ export function priceText(l: Listing, config: WantConfig): string {
 
 /** The mark on a listing `confirm` did not confirm, for the owner to check by eye. */
 export function checkMark(config: WantConfig): string {
-  const first = Array.isArray(config.confirm) ? config.confirm[0] : undefined
-  return `check: not confirmed as "${inert(clean(String(first ?? ""), EXCLUDE_CHARS, true))}"`
+  const first = confirmWords(config)[0] ?? ""
+  return `check: not confirmed as "${inert(clean(first, EXCLUDE_CHARS, true))}"`
 }
 
 /** One DM line: what, how much, its shipping, condition and seller, then the link in <...> (no embed). */
@@ -294,6 +294,7 @@ export async function pollWant(
   ctx: RunContext<WantConfig>,
   sources: Partial<Record<SourceId, Source>>,
   stored?: WantState,
+  o: { detail?: boolean } = {},
 ): Promise<Polled> {
   const state = stored ?? wantState(ctx.state)
   const source = sources[ctx.config.source]
@@ -339,7 +340,7 @@ export async function pollWant(
   const limited = listings.filter((l) => withinLimits(l, ctx.config))
   const within = limited.filter((l) => !isExcluded(l.title, ctx.config.exclude))
   const candidates = within.filter((l) => !told.has(listingKey(l.id))).slice(0, MAX_NEW_PER_RUN)
-  const checked = await confirmListings(candidates, ctx.config, source)
+  const checked = await confirmListings(candidates, ctx.config, source, o.detail !== false)
   const fresh = checked.kept
   const dropped = limited.length - within.length
   const ruled = checked.ruledOut.length
@@ -363,13 +364,27 @@ export async function pollWant(
 
 /** Whether `text` has a `confirm` entry: the same whole-word match as `exclude`'s. */
 function confirms(text: string, config: WantConfig): boolean {
-  return isExcluded(text, config.confirm)
+  return isExcluded(text, confirmWords(config))
 }
 
-/** Whether a watch has `confirm` words; a stored comma-separated string counts, as for `exclude`. */
-export function hasConfirm(config: WantConfig): boolean {
+/**
+ * A watch's `confirm` entries that hold a word: a stored comma-separated string counts, as for
+ * `exclude`, and an entry with no word in it (or not a string) is dropped, so it never marks
+ * every listing to check.
+ */
+function confirmWords(config: WantConfig): string[] {
   const c: unknown = config.confirm
-  return typeof c === "string" ? parseExclude(c).length > 0 : Array.isArray(c) && c.length > 0
+  const list: unknown[] = typeof c === "string" ? parseExclude(c) : Array.isArray(c) ? c : []
+  return list
+    .slice(0, MAX_EXCLUDE)
+    .filter(
+      (e): e is string => typeof e === "string" && wordsOf(e.slice(0, EXCLUDE_CHARS)).length > 0,
+    )
+}
+
+/** Whether a watch has `confirm` words (above). */
+export function hasConfirm(config: WantConfig): boolean {
+  return confirmWords(config).length > 0
 }
 
 /**
@@ -382,13 +397,18 @@ export async function confirmListings(
   listings: readonly Listing[],
   config: WantConfig,
   source: Source,
+  read = true,
 ): Promise<{ kept: Listing[]; unchecked: Set<string>; ruledOut: Listing[] }> {
   const kept: Listing[] = []
   const ruledOut: Listing[] = []
   const unchecked = new Set<string>()
   const confirming = hasConfirm(config)
-  for (const l of listings) {
-    const detail = source.detail ? await source.detail(l) : null
+  // All at once (at most MAX_NEW_PER_RUN), so a slow source holds a look for one read's time, not twenty.
+  const details = await Promise.all(
+    listings.map((l) => (read && source.detail ? source.detail(l) : Promise.resolve(null))),
+  )
+  for (const [i, l] of listings.entries()) {
+    const detail = details[i] ?? null
     const full = detail?.shipping ? { ...l, shipping: detail.shipping } : l
     if (!confirming || confirms(l.title, config) || (detail && confirms(detail.text, config))) {
       kept.push(full)
