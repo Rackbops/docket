@@ -62,8 +62,12 @@ export {
 export { currencyCode, money } from "./money.js"
 export {
   LOOKBACK_DAYS,
+  MAX_DISAMBIGUATE_CHARS,
+  MAX_INCLUDE,
+  MAX_KIND_CHARS,
   MAX_NEWS_ITEMS,
   MAX_SEEN,
+  MAX_SUBJECT_CHARS,
   NEWS_MAX_BUDGET_USD,
   NEWS_MAX_TURNS,
   NEWS_REVIEW_MAX_BUDGET_USD,
