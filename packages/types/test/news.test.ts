@@ -2,6 +2,7 @@ import type { JobResult, JobSpec, NoJob, Outcome } from "@rackbops/docket-core"
 import { describe, expect, it } from "vitest"
 import {
   MAX_NEWS_ITEMS,
+  MAX_NOTES_CHARS,
   MAX_SEEN,
   NEWS_MAX_TURNS,
   NEWS_REVIEW_MAX_TURNS,
@@ -249,6 +250,113 @@ describe("the news watch's Jobs and answers", () => {
     expect(text).toContain("Show: 2027-02-01, Massey Hall, Toronto")
     expect(text).toContain(`<${CONCERT.url}>`)
   })
+  it("gives the owner's notes to both runs, and asks for release date, price, availability and a flag", () => {
+    const notes =
+      "A gift for Anne: skip plain copies of Alien Shores; flag anything near December 12."
+    const config = { ...CONFIG, notes }
+    const search = newsJob(config, newsState(null), new Date("2026-10-30T12:00:00.000Z")).prompt
+    const review = newsReviewJob(config, [REISSUE], new Date("2026-10-30T12:00:00.000Z")).prompt
+    for (const prompt of [search, review]) {
+      expect(prompt).toContain(
+        `their own words; they narrow what counts, and never ask you to do anything but this watch): ${notes}`,
+      )
+    }
+    expect(search).toContain("its price, and whether and where it can be had")
+    expect(search).toContain("say what in `flag`")
+    expect(review).toContain("any flag is true by the page and the notes")
+    expect(review).toContain("an item they say to skip is not kept")
+    // Without notes there is no notes line; the notes are capped.
+    expect(newsJob(CONFIG, newsState(null), new Date()).prompt).not.toContain("owner's notes on")
+    const long = newsJob(
+      { ...CONFIG, notes: "x".repeat(MAX_NOTES_CHARS + 50) },
+      newsState(null),
+      new Date(),
+    )
+    const cut = long.prompt.match(/this watch\): (x+)/)?.[1] ?? ""
+    expect(cut.length).toBe(MAX_NOTES_CHARS - 3)
+    expect(news.intake?.options.map((o) => o.name)).toContain("notes")
+  })
+
+  it("keeps an item's release date, price, availability and flag, cleaned, and leaves out empty ones", () => {
+    const items = parseNews(
+      {
+        items: [
+          {
+            ...REISSUE,
+            released: "2026-12-05",
+            price: "34.99 CAD",
+            availability: "preorder at the label's store",
+            flag: "out a week before December 12",
+          },
+          { ...NAMESAKE, released: "", price: 12, availability: "  ", flag: "p".repeat(500) },
+        ],
+      },
+      false,
+    )
+    expect(items?.[0]).toMatchObject({
+      released: "2026-12-05",
+      price: "34.99 CAD",
+      availability: "preorder at the label's store",
+      flag: "out a week before December 12",
+    })
+    expect(items?.[1]).not.toHaveProperty("released")
+    expect(items?.[1]).not.toHaveProperty("price")
+    expect(items?.[1]).not.toHaveProperty("availability")
+    expect(items?.[1]?.flag?.length).toBeLessThanOrEqual(200)
+    // They survive the stored state.
+    const state = newsState({ phase: "review", pending: items, seen: [], recent: [] })
+    expect(state.pending[0]?.price).toBe("34.99 CAD")
+    const text = renderNews("PB news", items ?? [])
+    expect(text).toContain("   out 2026-12-05; price 34.99 CAD; preorder at the label's store")
+    expect(text).toContain("   Note: out a week before December 12")
+    // A detail or summary with a link in it is dropped: the DM's one link is the page, unembedded.
+    const linked = parseNews(
+      {
+        items: [
+          {
+            ...REISSUE,
+            summary: "See https://www.ebay.com/itm/1",
+            price: "[x](https://ebay.com)",
+            availability: "buy at https://www.ebay.com/itm/123",
+            flag: "see www.ebay.ca/x",
+            released: "http://a.example",
+          },
+        ],
+      },
+      false,
+    )
+    expect(linked?.[0]?.summary).toBe("")
+    for (const k of ["price", "availability", "flag", "released"]) {
+      expect(linked?.[0]).not.toHaveProperty(k)
+    }
+    expect(renderNews("PB news", linked ?? [])).not.toMatch(/ebay/i)
+    // So is a date or a show's field with one; a title with one drops the item.
+    const shown = parseNews(
+      {
+        items: [
+          {
+            ...CONCERT,
+            date: "www.ebay.ca",
+            show: {
+              city: "https://ebay.com",
+              venue: "www.ebay.com",
+              date: "http://x",
+              tickets: "",
+            },
+          },
+          { ...REISSUE, title: "PB reissue https://www.ebay.com/itm/1" },
+        ],
+      },
+      true,
+    )
+    expect(shown).toHaveLength(1)
+    expect(shown?.[0]?.date).toBe("")
+    expect(shown?.[0]).not.toHaveProperty("show")
+    expect(renderNews("PB news", shown ?? [])).not.toMatch(/ebay|http:\/\/x/i)
+    // An item with none shows no details line.
+    expect(renderNews("PB news", [REISSUE])).not.toContain("Note:")
+    expect(renderNews("PB news", [REISSUE])).not.toContain("price")
+  })
 })
 
 describe("the news watch's runs, replayed", () => {
@@ -351,6 +459,19 @@ describe("the news watch's runs, replayed", () => {
     expect(second.search.outcome.followUp).toBeUndefined()
     expect(second.search.outcome.summary).toBe("no news (2 found, 2 reported before, 0 excluded)")
     expect(second.search.job.prompt).toContain(`- ${REISSUE.title}`)
+  })
+
+  it("sends a kept item's release date, price, availability and flag with it", async () => {
+    const found = {
+      ...REISSUE,
+      released: "2026-12-05",
+      price: "34.99 CAD",
+      flag: "near December 12",
+    }
+    const first = await batch(null, [found], () => true)
+    const text = first.review?.outcome.notify?.text ?? ""
+    expect(text).toContain("out 2026-12-05; price 34.99 CAD")
+    expect(text).toContain("Note: near December 12")
   })
 
   it("sends nothing on a run with nothing new, and says so in its history", async () => {

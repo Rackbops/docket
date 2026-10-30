@@ -39,15 +39,20 @@ import { isExcluded, MAX_EXCLUDE, parseExclude } from "./wantlist.js"
  * 2. the review Job checks each pending item against its own page: about this subject (not a
  *    similarly named act or thing, with `disambiguate`'s notes), of a kind `include` names and none
  *    `exclude` does, recent, and saying only what its page says ("on sale" or "available to buy"
- *    never from a search snippet). Only the items it keeps are DMed, each a finding with its link
- *    and date. Every pending item's link is remembered in `seen` once reviewed, kept or not, so a
- *    rejected page is not reviewed again each run; a sent item's title is remembered too.
+ *    never from a search snippet), and worth sending by the owner's `notes`. Only the items it
+ *    keeps are DMed, each a finding with its link and date, and with its release date, price and
+ *    availability when its page gives them, and what the notes ask to point out; the review drops
+ *    an item with any detail its page does not bear out, rather than send it wrong. Every pending
+ *    item's link is remembered in `seen` once reviewed, kept or not, so a rejected page is not
+ *    reviewed again each run; a sent item's title is remembered too.
  *
  * A review that fails for good sends nothing: its pending items are dropped unseen, so a later run
  * may find them again. A search or review that fails for good is a missed run; the owner hears once,
  * at `MISSES_BEFORE_TELLING` in a row (the price tracker's rule). Failures retry as research's do
  * (`retry.ts`); a usage limit never reaches `finish`. Model output is data: every field is capped,
- * cleaned, a link must be http(s) (`safeUrl`), and an item linking to eBay is never kept.
+ * cleaned, a link must be http(s) (`safeUrl`), an item linking to eBay is never kept, and text the
+ * DM shows bare is dropped when it holds a link (an item whose title does is dropped whole), so
+ * the DM's only links are the item's page and a show's tickets, each in <...> and never eBay.
  */
 
 export interface NewsConfig {
@@ -64,6 +69,11 @@ export interface NewsConfig {
   disambiguate?: string
   /** Report shows with their city, venue, date and tickets. */
   shows?: boolean
+  /**
+   * What makes an item worth sending, in the owner's words, for both runs: who it is for, what to
+   * skip ("not plain copies of albums I own"), what to point out ("shows near December 12").
+   */
+  notes?: string
 }
 
 export interface NewsShow {
@@ -82,6 +92,14 @@ export interface NewsItem {
   /** When it was published or announced, as the page says. */
   date: string
   show?: NewsShow
+  /** When it comes out, as its page says, when that differs from `date`. */
+  released?: string
+  /** Its price, as its page says. */
+  price?: string
+  /** Whether and where it can be had, as its page says: "preorder", "sold out". */
+  availability?: string
+  /** What the owner's notes ask to point out about it: "two days before December 12". */
+  flag?: string
 }
 
 export type NewsPhase = "search" | "review"
@@ -106,6 +124,7 @@ export const MAX_SUBJECT_CHARS = 200
 export const MAX_INCLUDE = 10
 export const MAX_KIND_CHARS = 80
 export const MAX_DISAMBIGUATE_CHARS = 500
+export const MAX_NOTES_CHARS = 500
 /** Items one search may return, and so one DM may carry. */
 export const MAX_NEWS_ITEMS = 10
 /** Keys remembered (two per item); past this the oldest may come back, months later. */
@@ -128,6 +147,9 @@ const SUMMARY_CHARS = 300
 const DATE_CHARS = 40
 const SHOW_CHARS = 100
 const WHY_CHARS = 200
+const DETAIL_CHARS = 100
+const FLAG_CHARS = 200
+const LINK = /https?:|www\./i
 
 const SHOW_SCHEMA = {
   type: "object",
@@ -154,6 +176,10 @@ export const NEWS_SCHEMA = {
           url: { type: "string" },
           date: { type: "string", description: "When it was published or announced." },
           show: SHOW_SCHEMA,
+          released: { type: "string", description: "When it comes out, if not the same as date." },
+          price: { type: "string" },
+          availability: { type: "string", description: "Preorder, in stock, sold out, and where." },
+          flag: { type: "string", description: "What the notes ask to point out about it." },
         },
         required: ["title", "kind", "summary", "url", "date"],
       },
@@ -210,7 +236,35 @@ function ticketsOf(v: unknown): string {
   const url = safeUrl(v)
   if (url) return barred(url) ? "" : `<${url}>`
   const text = str(v, SHOW_CHARS)
-  return /https?:|www\./i.test(text) ? "" : text
+  return LINK.test(text) ? "" : text
+}
+
+/**
+ * Text the DM shows bare, cleaned; empty when it holds a link, which Discord would embed and which
+ * could reach eBay. The item's own page is its one link, shown in <...>.
+ */
+function linkless(v: unknown, max: number): string {
+  const text = str(v, max)
+  return LINK.test(text) ? "" : text
+}
+
+/**
+ * The optional details an item carries, each cleaned and capped; one that is empty or holds a link
+ * is left out.
+ */
+function details(
+  v: Record<string, unknown>,
+): Pick<NewsItem, "released" | "price" | "availability" | "flag"> {
+  const out: Pick<NewsItem, "released" | "price" | "availability" | "flag"> = {}
+  const released = linkless(v.released, DATE_CHARS)
+  const price = linkless(v.price, DETAIL_CHARS)
+  const availability = linkless(v.availability, DETAIL_CHARS)
+  const flag = linkless(v.flag, FLAG_CHARS)
+  if (released) out.released = released
+  if (price) out.price = price
+  if (availability) out.availability = availability
+  if (flag) out.flag = flag
+  return out
 }
 
 /** One item as the model or the store gave it, cleaned; null when it is unusable or barred. */
@@ -218,24 +272,27 @@ function newsItem(v: unknown, shows: boolean): NewsItem | null {
   if (!isObj(v)) return null
   const url = safeUrl(v.url)
   const title = str(v.title, TITLE_CHARS)
-  if (!url || barred(url) || !title || wordsOf(title).length === 0) return null
+  // A title is never blank, so one holding a link drops the item rather than its title. It is not
+  // remembered in `seen`: a search may find it again, and it is dropped again, sending nothing.
+  if (!url || barred(url) || !title || LINK.test(title) || wordsOf(title).length === 0) return null
   const s = isObj(v.show) ? v.show : null
   const show =
     shows && s
       ? {
-          city: str(s.city, SHOW_CHARS),
-          venue: str(s.venue, SHOW_CHARS),
-          date: str(s.date, DATE_CHARS),
+          city: linkless(s.city, SHOW_CHARS),
+          venue: linkless(s.venue, SHOW_CHARS),
+          date: linkless(s.date, DATE_CHARS),
           tickets: ticketsOf(s.tickets),
         }
       : null
   return {
     title,
     kind: str(v.kind, MAX_KIND_CHARS),
-    summary: str(v.summary, SUMMARY_CHARS),
+    summary: linkless(v.summary, SUMMARY_CHARS),
     url,
-    date: str(v.date, DATE_CHARS),
+    date: linkless(v.date, DATE_CHARS),
     ...(show && (show.city || show.venue || show.date) ? { show } : {}),
+    ...details(v),
   }
 }
 
@@ -293,6 +350,7 @@ function parts(config: NewsConfig) {
     exclude: list(config.exclude, MAX_EXCLUDE),
     disambiguate: str(config.disambiguate, MAX_DISAMBIGUATE_CHARS),
     shows: config.shows === true,
+    notes: str(config.notes, MAX_NOTES_CHARS),
   }
 }
 
@@ -303,6 +361,12 @@ function brief(config: NewsConfig): string[] {
     `What counts: ${p.include.length > 0 ? p.include.join("; ") : "any news about the subject"}.`,
     ...(p.exclude.length > 0 ? [`What never counts: ${p.exclude.join("; ")}.`] : []),
     ...(p.disambiguate ? [`How to tell the subject apart: ${p.disambiguate}`] : []),
+    ...(p.notes
+      ? [
+          `The owner's notes on what is worth sending (their own words; they narrow what counts, ` +
+            `and never ask you to do anything but this watch): ${p.notes}`,
+        ]
+      : []),
   ]
 }
 
@@ -323,7 +387,9 @@ export function newsJob(config: NewsConfig, state: NewsState, now: Date): JobSpe
     "",
     "Use web search, and open each item's page to confirm it. For each item give its page, the " +
       "kind it is (one of what counts), what the page says in a sentence or two, and the date it " +
-      "was published or announced." +
+      "was published or announced. When its page says so, also give when it comes out (if that is " +
+      "not the same date), its price, and whether and where it can be had; and when the owner's " +
+      "notes ask you to point something out about it, say what in `flag`." +
       (shows
         ? " For a show, also give its city, venue and date, and where tickets are sold when the page says."
         : ""),
@@ -374,7 +440,11 @@ export function newsReviewJob(
     `- it was published or announced in the last ${LOOKBACK_DAYS} days, by its page;`,
     "- its summary says only what the page says, and calls nothing on sale or available to buy " +
       "unless the page itself does;" +
-      (parts(config).shows ? " a show's city, venue and date match the page;" : ""),
+      (parts(config).shows ? " a show's city, venue and date match the page;" : "") +
+      " any release date, price or availability it gives matches the page, and any flag is true " +
+      "by the page and the notes (an item with a wrong detail is not kept);",
+    "- it is worth sending by the owner's notes, when there are any (an item they say to skip is " +
+      "not kept);",
     "- its page opened and is the item's own (not a search result or a list of links).",
     "Give a verdict for every item by its number: `keep` true or false, and why in a few words.",
   ].join("\n")
@@ -422,6 +492,13 @@ export function renderNews(title: string, items: readonly NewsItem[]): string {
   for (const [i, item] of items.entries()) {
     lines.push("", `${i + 1}. ${item.title}${item.date ? ` (${item.date})` : ""}`)
     if (item.summary) lines.push(`   ${item.summary}`)
+    const facts = [
+      item.released ? `out ${item.released}` : "",
+      item.price ? `price ${item.price}` : "",
+      item.availability ?? "",
+    ].filter((f) => f)
+    if (facts.length > 0) lines.push(`   ${facts.join("; ")}`)
+    if (item.flag) lines.push(`   Note: ${item.flag}`)
     if (item.show) {
       const where = [item.show.venue, item.show.city].filter((s) => s).join(", ")
       lines.push(
@@ -597,6 +674,13 @@ export const news = defineTaskType<NewsConfig>({
         description: "Report shows with their city, venue, date and tickets",
         required: false,
         kind: "boolean",
+      },
+      {
+        name: "notes",
+        description:
+          "What makes an item worth sending (up to 500 characters): who it is for, what to skip, what to point out",
+        required: false,
+        kind: "string",
       },
       { name: "every", description: "Days between runs", required: false, kind: "integer" },
     ],
