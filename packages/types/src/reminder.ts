@@ -8,7 +8,8 @@ import {
 /**
  * Category 4 (plan section 1.2): "remind me to X at ..." and "every <cadence> remind me ...".
  * Notify lane, tier 0 only, `once` or `calendar`. The person answers done or snooze; a snooze
- * makes the dispatcher queue a new occurrence at the requested instant.
+ * makes the dispatcher queue a new occurrence at the requested instant. Done on a one-off reminder
+ * finishes the task, since nothing is left to remind of; on a recurring one it answers that run only.
  */
 
 export interface ReminderConfig {
@@ -61,7 +62,11 @@ export const reminder = defineTaskType<ReminderConfig>({
       const until = snoozeUntil(ctx.reply.payload, ctx.now)
       return { snoozeUntil: until, summary: `snoozed until ${until.toISOString()}` }
     }
-    if (ctx.reply.kind === "done") return { summary: "done" }
+    if (ctx.reply.kind === "done") {
+      return ctx.task.schedule?.kind === "once"
+        ? { complete: true, summary: "done" }
+        : { summary: "done" }
+    }
     return {}
   },
 })

@@ -2,7 +2,7 @@
 
 The tracker's task types, built on `@rackbops/docket-core`'s contract. Shipped so far:
 
-- `reminder` (Lepid-Labs/city-hall#7): notify lane, `once` or `calendar`, done and snooze replies.
+- `reminder` (Lepid-Labs/city-hall#7): notify lane, `once` or `calendar`, done and snooze replies. Done on a one-off reminder finishes the task; on a recurring one it answers that run.
 - `renewal` (Lepid-Labs/city-hall#11): a `period` schedule rolling from the renewal date, asking
   keep / cancel / renewed at lead time; the decision and the amount recorded per period (the current
   row in the task's state, the history in the series); cancel ends the task.
