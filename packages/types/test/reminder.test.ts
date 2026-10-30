@@ -1,20 +1,23 @@
 import {
   CAPABILITIES,
+  createTask,
   isLane,
   type Occurrence,
   type Reply,
   type RunContext,
+  reschedule,
   type Task,
   type User,
 } from "@rackbops/docket-core"
 import { describe, expect, it } from "vitest"
 
 import { isTypeId, reminder, snoozeUntil, TASK_TYPES } from "../src/index.js"
+import { actor, T0, tracker } from "./helpers.js"
 
 const now = new Date("2026-03-02T14:00:00.000Z")
 const owner = { id: "u1", timeZone: "America/New_York", preferredHour: 9 } as User
 const task = { id: "t1", ownerId: "u1", type: "reminder", config: { text: "dentist" } } as Task
-const occurrence = { id: "o1", taskId: "t1" } as Occurrence
+const occurrence = { id: "o1", taskId: "t1", dueAt: now.toISOString() } as Occurrence
 
 function ctx(): RunContext<{ text: string }> {
   return {
@@ -72,7 +75,7 @@ describe("reminder", () => {
     )
   })
 
-  it("records done without a follow-up", async () => {
+  it("records done without a follow-up on a task with no schedule", async () => {
     const reply = {
       id: "r2",
       taskId: "t1",
@@ -83,5 +86,110 @@ describe("reminder", () => {
       at: now.toISOString(),
     } as Reply
     expect(await reminder.onReply?.({ ...ctx(), reply })).toEqual({ summary: "done" })
+  })
+
+  it("finishes a one-off reminder on done, and answers only that run of a recurring one", async () => {
+    const reply = { id: "r3", kind: "done", payload: null } as Reply
+    const once = { ...task, schedule: { kind: "once", at: now.toISOString() } } as Task
+    const daily = { ...task, schedule: { kind: "calendar", every: 1, unit: "day" } } as Task
+    expect(await reminder.onReply?.({ ...ctx(), task: once, reply })).toEqual({
+      complete: true,
+      summary: "done",
+    })
+    expect(await reminder.onReply?.({ ...ctx(), task: daily, reply })).toEqual({ summary: "done" })
+    // A run due before the one-off's instant (it was moved, or used to recur) answers that run only.
+    const moved = { ...task, schedule: { kind: "once", at: "2026-03-03T14:00:00.000Z" } } as Task
+    expect(await reminder.onReply?.({ ...ctx(), task: moved, reply })).toEqual({ summary: "done" })
+    // A snooze's run re-asks the one-off: done on it finishes the task.
+    const snoozed = { ...occurrence, dueAt: "2026-03-02T15:00:00.000Z" } as Occurrence
+    expect(
+      await reminder.onReply?.({
+        ...ctx(),
+        task: once,
+        occurrence: snoozed,
+        originalDueAt: now.toISOString(),
+        reply,
+      }),
+    ).toEqual({ complete: true, summary: "done" })
+  })
+
+  it("through the lanes: a fired one-off reminder answered done is done, snoozed first or not", async () => {
+    for (const snoozeFirst of [false, true]) {
+      const t = await tracker()
+      const { task: made } = await createTask(
+        t.store,
+        actor(t.owner),
+        t.owner,
+        {
+          type: reminder,
+          title: "dentist",
+          config: { text: "dentist" },
+          schedule: { kind: "once", at: T0 },
+        },
+        t.clock.now(),
+      )
+      await t.lanes.tickNotify()
+      const answer = async (kind: "done" | "snooze") => {
+        const runs = await t.store.listOccurrences({ taskId: made.id })
+        const fired = runs.filter((o) => o.status === "done").at(-1)
+        return t.lanes.reply({
+          taskId: made.id,
+          occurrenceId: fired?.id ?? null,
+          userId: t.owner.id,
+          kind,
+          payload: kind === "snooze" ? { minutes: 15 } : null,
+        })
+      }
+      if (snoozeFirst) {
+        await answer("snooze")
+        expect((await t.store.getTask(made.id))?.status).toBe("active")
+        t.clock.advance(16 * 60_000)
+        await t.lanes.tickNotify()
+        expect(t.notifier.sent).toHaveLength(2)
+      }
+      await answer("done")
+      expect((await t.store.getTask(made.id))?.status).toBe("done")
+    }
+  })
+
+  it("through the lanes: done on a fired run left behind by a move keeps the moved reminder", async () => {
+    const t = await tracker()
+    const { task: made } = await createTask(
+      t.store,
+      actor(t.owner),
+      t.owner,
+      {
+        type: reminder,
+        title: "dentist",
+        config: { text: "dentist" },
+        schedule: { kind: "once", at: T0 },
+      },
+      t.clock.now(),
+    )
+    await t.lanes.tickNotify()
+    const [fired] = await t.store.listOccurrences({ taskId: made.id })
+    const later = "2026-03-03T12:00:00.000Z"
+    const current = await t.store.getTask(made.id)
+    if (!current) throw new Error("no task")
+    await reschedule(
+      t.store,
+      current,
+      t.owner,
+      { kind: "once", at: later },
+      t.owner.id,
+      t.clock.now(),
+      reminder,
+    )
+    await t.lanes.reply({
+      taskId: made.id,
+      occurrenceId: fired?.id ?? null,
+      userId: t.owner.id,
+      kind: "done",
+      payload: null,
+    })
+    expect((await t.store.getTask(made.id))?.status).toBe("active")
+    t.clock.set(later)
+    await t.lanes.tickNotify()
+    expect(t.notifier.sent).toHaveLength(2)
   })
 })
