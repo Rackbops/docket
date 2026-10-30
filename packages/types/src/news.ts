@@ -52,7 +52,7 @@ import { isExcluded, MAX_EXCLUDE, parseExclude } from "./wantlist.js"
  * (`retry.ts`); a usage limit never reaches `finish`. Model output is data: every field is capped,
  * cleaned, a link must be http(s) (`safeUrl`), an item linking to eBay is never kept, and text the
  * DM shows bare is dropped when it holds a link (an item whose title does is dropped whole), so
- * the DM's one link is the item's page, in <...>.
+ * the DM's only links are the item's page and a show's tickets, each in <...> and never eBay.
  */
 
 export interface NewsConfig {
@@ -272,7 +272,8 @@ function newsItem(v: unknown, shows: boolean): NewsItem | null {
   if (!isObj(v)) return null
   const url = safeUrl(v.url)
   const title = str(v.title, TITLE_CHARS)
-  // A title is never blank, so one holding a link drops the item rather than its title.
+  // A title is never blank, so one holding a link drops the item rather than its title. It is not
+  // remembered in `seen`: a search may find it again, and it is dropped again, sending nothing.
   if (!url || barred(url) || !title || LINK.test(title) || wordsOf(title).length === 0) return null
   const s = isObj(v.show) ? v.show : null
   const show =

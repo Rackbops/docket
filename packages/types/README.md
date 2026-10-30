@@ -232,11 +232,11 @@ The tracker's task types, built on `@rackbops/docket-core`'s contract. Shipped s
   note on what the owner's notes ask to point out (a "Note:" line); the review checks each against
   the page and the notes and drops an item with one it cannot bear out. Bare text with a link in
   it (a summary, a date, a detail, a show's field) is dropped, and an item whose title holds one
-  is dropped whole, so the DM's one link is the item's page. `notes` is the
-  owner's own words on what is worth sending -- who it is for, what to skip, what to point out --
-  and goes to both runs; past 500 characters it is cut. Keeping a special edition while skipping
-  plain copies is the reviewer's reading of the notes: an `exclude` entry drops every title
-  holding it, in plain code.
+  is dropped whole, so the DM's only links are the item's page and a show's tickets, never eBay.
+  `notes` is the owner's own words on what is worth sending -- who it is for, what to skip, what
+  to point out -- and goes to both runs; past 500 characters it is cut. Keeping a special edition
+  while skipping plain copies is the reviewer's reading of the notes: an `exclude` entry drops
+  every title holding it, in plain code.
   A review that fails for good sends nothing; three failed runs in a row (search or review) are
   told once.
 
