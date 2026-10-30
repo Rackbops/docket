@@ -222,12 +222,13 @@ The tracker's task types, built on `@rackbops/docket-core`'s contract. Shipped s
   owner's hour. A search Job (WebSearch and WebFetch, never eBay; 25 turns, 1.50 USD, 10
   minutes) looks for items about one `subject` from the last 30 days that fit `include`, told
   how to tell the subject apart (`disambiguate`) and, with `shows`, to give a show's city, venue,
-  date and tickets. Items seen before (by link or by the title's words) and items whose title or
-  kind holds an `exclude` entry are dropped in plain code; with nothing left the run ends with
-  "no news" and no DM. Otherwise a reviewer Job (12 turns, 0.75 USD, 5 minutes) checks each
+  date and tickets. Items seen before (by link, or by the title's words once sent), eBay links
+  and items whose title or kind holds an `exclude` entry are dropped in plain code; with nothing
+  left the run ends with "no news" and no DM. Otherwise a reviewer Job (12 turns, 0.75 USD, 5 minutes) checks each
   item against its own page (the subject itself, a kind that counts, recent, nothing called on
   sale from a snippet) and only the kept ones are DMed, each a finding with its link and date.
-  A review that fails for good sends nothing; three missed runs in a row are told once.
+  A review that fails for good sends nothing; three failed runs in a row (search or review) are
+  told once.
 
 `reminder`, `renewal`, `price` and `wantlist` call no model.
 
