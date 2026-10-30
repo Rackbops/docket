@@ -231,17 +231,22 @@ export {
   parseMarketplace,
 } from "./want-bgg.js"
 export {
+  DETAIL_CHARS,
   EBAY_ATTRIBUTION,
   EBAY_CURRENCY,
+  EBAY_ITEM_ID,
+  EBAY_ITEM_PATH,
   EBAY_LIMIT,
   EBAY_MARKETPLACE,
   EBAY_SEARCH_PATH,
   type EbayBrowse,
   type EbayRequest,
   type EbaySearch,
+  ebayItemRequest,
   ebayRequest,
   ebaySource,
   parseEbayAnswer,
+  parseEbayItem,
 } from "./want-ebay.js"
 export {
   matchesWords,
@@ -266,6 +271,7 @@ export {
   inboxSource,
   isEbayHost,
   type Listing,
+  type ListingDetail,
   listingKey,
   MAX_LISTINGS,
   NEVER_EBAY,
@@ -302,8 +308,11 @@ export {
   wantjudgeType,
 } from "./wantjudge.js"
 export {
+  checkMark,
   clip,
+  confirmListings,
   EXCLUDE_CHARS,
+  hasConfirm,
   inert,
   isExcluded,
   keepsFindings,

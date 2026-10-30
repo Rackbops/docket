@@ -99,6 +99,7 @@ describe("the eBay answer", () => {
       id: "ebay:123456789012",
       title: "Wingspan Oceania Expansion - Stonemaier Games - New Sealed",
       url: "https://www.ebay.com/itm/123456789012",
+      ref: "v1|123456789012|0",
       price: 29.99,
       currency: "USD",
       condition: "New",

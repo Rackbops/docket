@@ -1,4 +1,5 @@
 import {
+  clean,
   defineTaskType,
   type Finding,
   type Outcome,
@@ -48,6 +49,17 @@ export interface WantConfig {
    * waiting listings again when it settles them (docket#77). Absent or empty, nothing is.
    */
   exclude?: string[]
+  /**
+   * Words or phrases that confirm a listing is the thing wanted (0.20.0, Rod, 2026-10-30, the Arkham
+   * watch: "leave it out, then double check any that don't have it"). A listing whose title has one
+   * is confirmed; one whose title has none is read in full where its source can (`Source.detail`,
+   * eBay's) and confirmed when that has one. A listing still not confirmed is dropped when its title
+   * or full text has an `unconfirmed` entry, and is otherwise told marked for the owner to check.
+   * Absent or empty, every listing counts as confirmed, as before.
+   */
+  confirm?: string[]
+  /** Words or phrases that rule out a listing only when `confirm` did not confirm it ("investigator"). */
+  unconfirmed?: string[]
 }
 
 export interface WantState {
@@ -170,7 +182,7 @@ export function isExcluded(title: string, value: unknown): boolean {
   })
 }
 
-/** Whether a listing is one the owner wants told of: within the limits and not excluded. */
+/** Whether a listing is one the owner wants told of: within the limits and not excluded (`confirm` aside: it needs the source). */
 export function wanted(l: Listing, config: WantConfig): boolean {
   return withinLimits(l, config) && !isExcluded(l.title, config.exclude)
 }
@@ -181,11 +193,19 @@ export function priceText(l: Listing, config: WantConfig): string {
     : money(l.price, l.currency ?? config.currency ?? "")
 }
 
-/** One DM line: what, how much, its condition and seller, then the link in <...> (no embed). */
-export function listingLine(l: Listing, config: WantConfig): string {
+/** The mark on a listing `confirm` did not confirm, for the owner to check by eye. */
+export function checkMark(config: WantConfig): string {
+  const first = Array.isArray(config.confirm) ? config.confirm[0] : undefined
+  return `check: not confirmed as "${inert(clean(String(first ?? ""), EXCLUDE_CHARS, true))}"`
+}
+
+/** One DM line: what, how much, its shipping, condition and seller, then the link in <...> (no embed). */
+export function listingLine(l: Listing, config: WantConfig, unconfirmed = false): string {
   const parts = [
+    ...(unconfirmed ? [checkMark(config)] : []),
     inert(l.title),
     priceText(l, config),
+    ...(l.shipping ? [inert(l.shipping)] : []),
     ...(l.condition ? [inert(l.condition)] : []),
     ...(l.seller ? [`sold by ${inert(l.seller)}`] : []),
   ]
@@ -199,11 +219,14 @@ export function renderWant(
   taskId: string,
   fresh: readonly Listing[],
   config: WantConfig,
+  unchecked?: ReadonlySet<string>,
 ): string {
   const lines = [
     `${title}: ${fresh.length === 1 ? "a new listing" : `${fresh.length} new listings`}.`,
   ]
-  for (const l of fresh.slice(0, SHOWN_IN_DM)) lines.push(listingLine(l, config))
+  for (const l of fresh.slice(0, SHOWN_IN_DM)) {
+    lines.push(listingLine(l, config, unchecked?.has(l.id) === true))
+  }
   if (fresh.length > SHOWN_IN_DM) lines.push(moreLine(fresh.length - SHOWN_IN_DM, taskId, config))
   lines.push("Press Done once you have it, and I stop looking.")
   return clip(lines.join("\n"))
@@ -258,7 +281,14 @@ export function listingFinding(
  */
 export type Polled =
   | { kind: "done"; outcome: Outcome }
-  | { kind: "fresh"; state: WantState; fresh: Listing[]; summary: string }
+  | {
+      kind: "fresh"
+      state: WantState
+      fresh: Listing[]
+      summary: string
+      /** The ids of fresh listings `confirm` did not confirm: told marked for the owner to check. */
+      unchecked: Set<string>
+    }
 
 export async function pollWant(
   ctx: RunContext<WantConfig>,
@@ -308,14 +338,73 @@ export async function pollWant(
   const told = new Set(state.reported)
   const limited = listings.filter((l) => withinLimits(l, ctx.config))
   const within = limited.filter((l) => !isExcluded(l.title, ctx.config.exclude))
-  const fresh = within.filter((l) => !told.has(listingKey(l.id))).slice(0, MAX_NEW_PER_RUN)
+  const candidates = within.filter((l) => !told.has(listingKey(l.id))).slice(0, MAX_NEW_PER_RUN)
+  const checked = await confirmListings(candidates, ctx.config, source)
+  const fresh = checked.kept
   const dropped = limited.length - within.length
+  const ruled = checked.ruledOut.length
   const summary =
     `${listings.length} listed, ${limited.length} within limits, ` +
-    `${dropped > 0 ? `${dropped} excluded, ` : ""}${fresh.length} new`
-  const read: WantState = { ...state, misses: 0, warned: false }
+    `${dropped > 0 ? `${dropped} excluded, ` : ""}` +
+    `${ruled > 0 ? `${ruled} not confirmed and ruled out, ` : ""}` +
+    `${checked.unchecked.size > 0 ? `${checked.unchecked.size} to check, ` : ""}${fresh.length} new`
+  // A listing ruled out is remembered as told, so it is not read in full again on every look.
+  const read: WantState = {
+    ...state,
+    misses: 0,
+    warned: false,
+    reported: [...state.reported, ...checked.ruledOut.map((l) => listingKey(l.id))].slice(
+      -MAX_REPORTED,
+    ),
+  }
   if (fresh.length === 0) return { kind: "done", outcome: { state: read, summary } }
-  return { kind: "fresh", state: read, fresh, summary }
+  return { kind: "fresh", state: read, fresh, summary, unchecked: checked.unchecked }
+}
+
+/** Whether `text` has a `confirm` entry: the same whole-word match as `exclude`'s. */
+function confirms(text: string, config: WantConfig): boolean {
+  return isExcluded(text, config.confirm)
+}
+
+/** Whether a watch has `confirm` words; a stored comma-separated string counts, as for `exclude`. */
+export function hasConfirm(config: WantConfig): boolean {
+  const c: unknown = config.confirm
+  return typeof c === "string" ? parseExclude(c).length > 0 : Array.isArray(c) && c.length > 0
+}
+
+/**
+ * New listings through `confirm` (above): each read in full where the source can, which also gives
+ * its shipping, so every listing a source can read is read once, before it is told. Kept are the
+ * confirmed and the ones to check (their ids in `unchecked`); `ruledOut` are the unconfirmed ones an
+ * `unconfirmed` entry rules out. A watch with no `confirm` keeps every listing, shipping added.
+ */
+export async function confirmListings(
+  listings: readonly Listing[],
+  config: WantConfig,
+  source: Source,
+): Promise<{ kept: Listing[]; unchecked: Set<string>; ruledOut: Listing[] }> {
+  const kept: Listing[] = []
+  const ruledOut: Listing[] = []
+  const unchecked = new Set<string>()
+  const confirming = hasConfirm(config)
+  for (const l of listings) {
+    const detail = source.detail ? await source.detail(l) : null
+    const full = detail?.shipping ? { ...l, shipping: detail.shipping } : l
+    if (!confirming || confirms(l.title, config) || (detail && confirms(detail.text, config))) {
+      kept.push(full)
+      continue
+    }
+    if (
+      isExcluded(l.title, config.unconfirmed) ||
+      (detail !== null && isExcluded(detail.text, config.unconfirmed))
+    ) {
+      ruledOut.push(full)
+      continue
+    }
+    unchecked.add(l.id)
+    kept.push(full)
+  }
+  return { kept, unchecked, ruledOut }
 }
 
 /** The type over `sources`: a task whose source this bot lacks (BGG without its token) counts misses. */
@@ -359,12 +448,26 @@ export function wantlistType(sources: Partial<Record<SourceId, Source>>): TaskTy
           required: false,
           kind: "string",
         },
+        {
+          name: "confirm",
+          description:
+            "Words or phrases that confirm a listing, separated by commas; one whose title has none is read in full where the source can, then ruled out by `unconfirmed` or told marked to check",
+          required: false,
+          kind: "string",
+        },
+        {
+          name: "unconfirmed",
+          description:
+            "Leave out a listing `confirm` did not confirm when its title or full listing has any of these, separated by commas",
+          required: false,
+          kind: "string",
+        },
       ],
     },
     async run(ctx: RunContext<WantConfig>): Promise<Outcome> {
       const polled = await pollWant(ctx, sources)
       if (polled.kind === "done") return polled.outcome
-      const { state, fresh, summary } = polled
+      const { state, fresh, summary, unchecked } = polled
       return {
         state: {
           ...state,
@@ -372,7 +475,7 @@ export function wantlistType(sources: Partial<Record<SourceId, Source>>): TaskTy
           told: state.told + fresh.length,
         },
         notify: {
-          text: renderWant(ctx.task.title, ctx.task.id, fresh, ctx.config),
+          text: renderWant(ctx.task.title, ctx.task.id, fresh, ctx.config, unchecked),
           actions: ["done"],
         },
         ...(keepsFindings(ctx.config)

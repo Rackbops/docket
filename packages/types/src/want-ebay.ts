@@ -1,5 +1,5 @@
 import { clean } from "@rackbops/docket-core"
-import { currencyCode, minorUnits } from "./money.js"
+import { currencyCode, minorUnits, money } from "./money.js"
 import { safeUrl } from "./research-answer.js"
 import { matchesWords, searchWords, shopifyQuery } from "./want-shopify.js"
 import {
@@ -8,6 +8,7 @@ import {
   isEbayHost,
   isObj,
   type Listing,
+  type ListingDetail,
   MAX_LISTINGS,
   SELLER_CHARS,
   type Source,
@@ -34,17 +35,25 @@ import {
  *
  * The answer is untrusted text: every field is capped and cleaned, and an address is kept only as
  * an eBay item's own `https://<eBay host>/itm/<number>`.
+ *
+ * `detail` (0.20.0, Rod, 2026-10-30: "I have a developer API key now") reads one search result in
+ * full through the same API, `GET /buy/browse/v1/item/{item_id}` (developer.ebay.com, getItem, read
+ * 2026-10-30): its item specifics (`localizedAspects`), short description and description, as text
+ * for the watch's `confirm` words, and its first shipping option's cost. Nothing of it is kept: the
+ * watch uses it for the one run and the DM, as it does the search answer.
  */
 
 export const EBAY_SEARCH_PATH = "/buy/browse/v1/item_summary/search"
+/** getItem's path before the item id. */
+export const EBAY_ITEM_PATH = "/buy/browse/v1/item/"
 export const EBAY_MARKETPLACE = "EBAY_US"
 export const EBAY_CURRENCY = "USD"
 export const EBAY_LIMIT = 50
 export const EBAY_ATTRIBUTION = "via eBay"
 
-/** One Browse API search: the path, its query parameters, and the marketplace to send as `X-EBAY-C-MARKETPLACE-ID`. */
+/** One Browse API call, a search or one item: the path, its query parameters, and the marketplace to send as `X-EBAY-C-MARKETPLACE-ID`. */
 export interface EbayRequest {
-  path: typeof EBAY_SEARCH_PATH
+  path: typeof EBAY_SEARCH_PATH | `${typeof EBAY_ITEM_PATH}${string}`
   params: Record<string, string>
   marketplace: typeof EBAY_MARKETPLACE
 }
@@ -155,16 +164,85 @@ export function parseEbayAnswer(body: unknown, query: string): Listing[] {
     const kind = auction ? [buyNow ? "auction, Buy It Now" : "auction"] : []
     const condition = clean([state, ...kind].filter(Boolean).join(", "), CONDITION_CHARS, true)
     const seller = sellerOf(item.seller)
+    const ref = EBAY_ITEM_ID.test(item.itemId) ? item.itemId : ""
     out.push({
       id: `ebay:${number}`,
       title,
       url,
+      ...(ref ? { ref } : {}),
       ...(price ? { price: price.value, currency: price.currency } : {}),
       ...(condition ? { condition } : {}),
       ...(seller ? { seller } : {}),
     })
   }
   return out
+}
+
+/** eBay's RESTful item id, `v1|<listing number>|<variation, 0 for none>`. */
+export const EBAY_ITEM_ID = /^v1\|[0-9]{6,20}\|[0-9]{1,20}$/
+
+/** The longest text kept from one item read, and from its description alone. */
+export const DETAIL_CHARS = 20_000
+const DESCRIPTION_CHARS = 12_000
+
+/** The getItem request for `ref` (an `EBAY_ITEM_ID`), or null for anything else. Pure. */
+export function ebayItemRequest(ref: string): EbayRequest | null {
+  if (!EBAY_ITEM_ID.test(ref)) return null
+  return {
+    path: `${EBAY_ITEM_PATH}${encodeURIComponent(ref)}`,
+    params: {},
+    marketplace: EBAY_MARKETPLACE,
+  }
+}
+
+/** HTML as plain words: tags, scripts and styles out, entities a space. Bounded, no backtracking. */
+function plain(html: string): string {
+  return html
+    .slice(0, DESCRIPTION_CHARS * 4)
+    .replace(/<(script|style)\b[^>]*>[\s\S]*?<\/\1\s*>/gi, " ")
+    .replace(/<[^>]*>/g, " ")
+    .replace(/&[a-z0-9#]{1,10};/gi, " ")
+}
+
+/** "$4.99 shipping" or "free shipping" from the first shipping option with a cost, or "". */
+function shippingOf(options: unknown): string {
+  if (!Array.isArray(options)) return ""
+  for (const o of options.slice(0, 10)) {
+    if (!isObj(o)) continue
+    const cost = amountOf(o.shippingCost)
+    if (!cost) continue
+    return cost.value === 0 ? "free shipping" : `${money(cost.value, cost.currency)} shipping`
+  }
+  return ""
+}
+
+/**
+ * What one getItem answer says, as `ListingDetail`: the title, short description, each item
+ * specific as "name: value", the product's own title, and the description as plain text, cleaned
+ * and capped at `DETAIL_CHARS`; and its shipping. Null for an answer that is not an item. Pure.
+ */
+export function parseEbayItem(body: unknown): ListingDetail | null {
+  if (!isObj(body) || typeof body.itemId !== "string") return null
+  const parts: string[] = []
+  const text = (v: unknown, max: number) => (typeof v === "string" ? clean(v, max, true) : "")
+  parts.push(text(body.title, TITLE_CHARS), text(body.shortDescription, 2_000))
+  if (Array.isArray(body.localizedAspects)) {
+    for (const a of body.localizedAspects.slice(0, 100)) {
+      if (!isObj(a)) continue
+      const name = text(a.name, 80)
+      const value = text(a.value, 400)
+      if (name || value) parts.push(`${name}: ${value}`)
+    }
+  }
+  if (isObj(body.product)) parts.push(text(body.product.title, TITLE_CHARS))
+  if (typeof body.description === "string") {
+    parts.push(clean(plain(body.description), DESCRIPTION_CHARS, true))
+  }
+  const shipping = shippingOf(body.shippingOptions)
+  return {
+    text: clean(parts.filter(Boolean).join("\n"), DETAIL_CHARS, true),
+    ...(shipping ? { shipping } : {}),
+  }
 }
 
 /** The `ebay` source over the host's `browse`: `target` is the words to search for, `limits` the watch's top price and currency. */
@@ -186,6 +264,16 @@ export function ebaySource(browse: EbayBrowse): Source {
       // Keys eBay refuses, or an app without Browse access: no later look succeeds until someone acts.
       checkSearchStatus(status, "eBay", "eBay refused the app's keys")
       return parseEbayAnswer(body, target)
+    },
+    async detail(listing) {
+      const request = listing.ref ? ebayItemRequest(listing.ref) : null
+      if (!request) return null
+      try {
+        const { status, body } = await browse(request)
+        return status === 200 ? parseEbayItem(body) : null
+      } catch {
+        return null
+      }
     },
   }
 }
