@@ -6,10 +6,12 @@
  * renewal and price-tracker slice (Lepid-Labs/city-hall#11), and `research` (category 5, E8), the
  * first execute-lane type: a research run and a reviewer run through the runner. `scout` (category
  * 1), `wantlist` and the judged `wantjudge` (category 2) came from the tracker plugin in 0.6.0 (E9,
- * plan item 104).
+ * plan item 104). `news` (category 1, plan item 153) watches one subject for new items, each
+ * batch checked by a reviewer run before it is sent.
  */
 
 import type { TaskType } from "@rackbops/docket-core"
+import { news } from "./news.js"
 import { price } from "./price.js"
 import { reminder } from "./reminder.js"
 import { renewal } from "./renewal.js"
@@ -58,6 +60,32 @@ export {
   transcriptLines,
 } from "./intake.js"
 export { currencyCode, money } from "./money.js"
+export {
+  LOOKBACK_DAYS,
+  MAX_NEWS_ITEMS,
+  MAX_SEEN,
+  NEWS_MAX_BUDGET_USD,
+  NEWS_MAX_TURNS,
+  NEWS_REVIEW_MAX_BUDGET_USD,
+  NEWS_REVIEW_MAX_TURNS,
+  NEWS_REVIEW_SCHEMA,
+  NEWS_SCHEMA,
+  type NewsConfig,
+  type NewsItem,
+  type NewsPhase,
+  type NewsShow,
+  type NewsState,
+  news,
+  newsJob,
+  newsKeys,
+  newsReviewJob,
+  newsState,
+  PROMPT_SEEN,
+  parseNews,
+  parseNewsReview,
+  renderNews,
+  titleKey,
+} from "./news.js"
 export {
   BASELINE_RULES,
   type BaselineRule,
@@ -309,6 +337,7 @@ export const TYPE_IDS = [
   "scout",
   "wantlist",
   "wantjudge",
+  "news",
 ] as const
 
 export type TypeId = (typeof TYPE_IDS)[number]
@@ -328,4 +357,5 @@ export const TASK_TYPES: Readonly<Record<string, TaskType<unknown>>> = Object.fr
   // Over the page source only: BGG needs a host's token, so a host with one builds its own.
   wantlist: wantlistType({ page: pageSource }) as TaskType<unknown>,
   wantjudge: wantjudgeType({ page: pageSource }) as TaskType<unknown>,
+  news: news as TaskType<unknown>,
 })

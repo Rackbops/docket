@@ -218,6 +218,16 @@ The tracker's task types, built on `@rackbops/docket-core`'s contract. Shipped s
   (WebFetch only on the watch's own host, never WebSearch or the runner's files; 12 turns,
   0.50 USD, 5 minutes). The DM puts the ones worth a look first with the model's note; a look
   that fails for good sends the listings unchecked.
+- `news` (category 1, plan item 153, docket#78): execute lane, `calendar` every N days at the
+  owner's hour. A search Job (WebSearch and WebFetch, never eBay; 25 turns, 1.50 USD, 10
+  minutes) looks for items about one `subject` from the last 30 days that fit `include`, told
+  how to tell the subject apart (`disambiguate`) and, with `shows`, to give a show's city, venue,
+  date and tickets. Items seen before (by link or by the title's words) and items whose title or
+  kind holds an `exclude` entry are dropped in plain code; with nothing left the run ends with
+  "no news" and no DM. Otherwise a reviewer Job (12 turns, 0.75 USD, 5 minutes) checks each
+  item against its own page (the subject itself, a kind that counts, recent, nothing called on
+  sale from a snippet) and only the kept ones are DMed, each a finding with its link and date.
+  A review that fails for good sends nothing; three missed runs in a row are told once.
 
 `reminder`, `renewal`, `price` and `wantlist` call no model.
 
