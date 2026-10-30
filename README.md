@@ -247,6 +247,12 @@ epic is Rackbops/Tooling#816.
   and `isOffSchedule` counts it, so the schedule's next run stays put and a schedule edit keeps it
   (#82). No Store change. The host refuses a one-off, a renewal and a paused or ended task (core
   README, "Adopting 0.18.0"). Release order: docket 0.18.0 first, then the tracker change that pins it.
+- **0.19.0 -- news watch** (plan item 153, for the Platinum Blonde and Rhythm Corps pilots of
+  rackbops-bot-plugins#368). Additive: a new execute-lane type `news` (in `TYPE_IDS` and
+  `TASK_TYPES`) watches one subject every N days; a search Job finds recent items, plain code drops
+  repeats, eBay links and `exclude` matches, and a reviewer Job checks each item before only the
+  kept ones are DMed (#78, #84). No core change. Release order: docket 0.19.0 first, then the
+  tracker change that offers the type.
 
 ## Use
 
