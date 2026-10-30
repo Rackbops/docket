@@ -40,8 +40,8 @@ import { isExcluded, MAX_EXCLUDE, parseExclude } from "./wantlist.js"
  *    similarly named act or thing, with `disambiguate`'s notes), of a kind `include` names and none
  *    `exclude` does, recent, and saying only what its page says ("on sale" or "available to buy"
  *    never from a search snippet), and worth sending by the owner's `notes`. Only the items it
- *    keeps are DMed, each a finding with its link and date, and with its release date, price,
- *    availability and what the notes ask to point out, when its page gives them; the review drops
+ *    keeps are DMed, each a finding with its link and date, and with its release date, price and
+ *    availability when its page gives them, and what the notes ask to point out; the review drops
  *    an item with any detail its page does not bear out, rather than send it wrong. Every pending
  *    item's link is remembered in `seen` once reviewed, kept or not, so a rejected page is not
  *    reviewed again each run; a sent item's title is remembered too.
@@ -51,7 +51,8 @@ import { isExcluded, MAX_EXCLUDE, parseExclude } from "./wantlist.js"
  * at `MISSES_BEFORE_TELLING` in a row (the price tracker's rule). Failures retry as research's do
  * (`retry.ts`); a usage limit never reaches `finish`. Model output is data: every field is capped,
  * cleaned, a link must be http(s) (`safeUrl`), an item linking to eBay is never kept, and text the
- * DM shows bare (summary, details, tickets' name) is dropped when it holds a link.
+ * DM shows bare is dropped when it holds a link (an item whose title does is dropped whole), so
+ * the DM's one link is the item's page, in <...>.
  */
 
 export interface NewsConfig {
@@ -271,14 +272,15 @@ function newsItem(v: unknown, shows: boolean): NewsItem | null {
   if (!isObj(v)) return null
   const url = safeUrl(v.url)
   const title = str(v.title, TITLE_CHARS)
-  if (!url || barred(url) || !title || wordsOf(title).length === 0) return null
+  // A title is never blank, so one holding a link drops the item rather than its title.
+  if (!url || barred(url) || !title || LINK.test(title) || wordsOf(title).length === 0) return null
   const s = isObj(v.show) ? v.show : null
   const show =
     shows && s
       ? {
-          city: str(s.city, SHOW_CHARS),
-          venue: str(s.venue, SHOW_CHARS),
-          date: str(s.date, DATE_CHARS),
+          city: linkless(s.city, SHOW_CHARS),
+          venue: linkless(s.venue, SHOW_CHARS),
+          date: linkless(s.date, DATE_CHARS),
           tickets: ticketsOf(s.tickets),
         }
       : null
@@ -287,7 +289,7 @@ function newsItem(v: unknown, shows: boolean): NewsItem | null {
     kind: str(v.kind, MAX_KIND_CHARS),
     summary: linkless(v.summary, SUMMARY_CHARS),
     url,
-    date: str(v.date, DATE_CHARS),
+    date: linkless(v.date, DATE_CHARS),
     ...(show && (show.city || show.venue || show.date) ? { show } : {}),
     ...details(v),
   }

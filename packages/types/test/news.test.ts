@@ -330,6 +330,29 @@ describe("the news watch's Jobs and answers", () => {
       expect(linked?.[0]).not.toHaveProperty(k)
     }
     expect(renderNews("PB news", linked ?? [])).not.toMatch(/ebay/i)
+    // So is a date or a show's field with one; a title with one drops the item.
+    const shown = parseNews(
+      {
+        items: [
+          {
+            ...CONCERT,
+            date: "www.ebay.ca",
+            show: {
+              city: "https://ebay.com",
+              venue: "www.ebay.com",
+              date: "http://x",
+              tickets: "",
+            },
+          },
+          { ...REISSUE, title: "PB reissue https://www.ebay.com/itm/1" },
+        ],
+      },
+      true,
+    )
+    expect(shown).toHaveLength(1)
+    expect(shown?.[0]?.date).toBe("")
+    expect(shown?.[0]).not.toHaveProperty("show")
+    expect(renderNews("PB news", shown ?? [])).not.toMatch(/ebay|http:\/\/x/i)
     // An item with none shows no details line.
     expect(renderNews("PB news", [REISSUE])).not.toContain("Note:")
     expect(renderNews("PB news", [REISSUE])).not.toContain("price")
