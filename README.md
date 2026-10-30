@@ -262,6 +262,13 @@ epic is Rackbops/Tooling#816.
   Also a fix: done on a one-off reminder's run now finishes the task (it stayed active, and a
   second done was refused as already answered); done on a run left behind by a move, or on a
   recurring reminder, still answers that run only (#89).
+- **0.21.0 -- news watch notes and item details** (for the Platinum Blonde and Rhythm Corps
+  pilots of rackbops-bot-plugins#368). Additive: a news watch's optional `notes` (the owner's own
+  words on what is worth sending, given to both runs), and each item's optional `released`,
+  `price`, `availability` and `flag`, checked by the review and shown in the DM (#86). One
+  behaviour change: text the DM shows bare (a summary, date, detail or show field) is dropped when
+  it holds a link, and an item whose title holds one is not sent. No core change. Release order:
+  docket 0.21.0 first, then the tracker change that offers `notes`.
 
 ## Use
 
