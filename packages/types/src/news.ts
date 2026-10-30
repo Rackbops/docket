@@ -41,7 +41,8 @@ import { isExcluded, MAX_EXCLUDE, parseExclude } from "./wantlist.js"
  *    `exclude` does, recent, and saying only what its page says ("on sale" or "available to buy"
  *    never from a search snippet), and worth sending by the owner's `notes`. Only the items it
  *    keeps are DMed, each a finding with its link and date, and with its release date, price,
- *    availability and what the notes ask to point out, when its page gives them. Every pending
+ *    availability and what the notes ask to point out, when its page gives them; the review drops
+ *    an item with any detail its page does not bear out, rather than send it wrong. Every pending
  *    item's link is remembered in `seen` once reviewed, kept or not, so a rejected page is not
  *    reviewed again each run; a sent item's title is remembered too.
  *
@@ -49,7 +50,8 @@ import { isExcluded, MAX_EXCLUDE, parseExclude } from "./wantlist.js"
  * may find them again. A search or review that fails for good is a missed run; the owner hears once,
  * at `MISSES_BEFORE_TELLING` in a row (the price tracker's rule). Failures retry as research's do
  * (`retry.ts`); a usage limit never reaches `finish`. Model output is data: every field is capped,
- * cleaned, a link must be http(s) (`safeUrl`), and an item linking to eBay is never kept.
+ * cleaned, a link must be http(s) (`safeUrl`), an item linking to eBay is never kept, and text the
+ * DM shows bare (summary, details, tickets' name) is dropped when it holds a link.
  */
 
 export interface NewsConfig {
@@ -146,6 +148,7 @@ const SHOW_CHARS = 100
 const WHY_CHARS = 200
 const DETAIL_CHARS = 100
 const FLAG_CHARS = 200
+const LINK = /https?:|www\./i
 
 const SHOW_SCHEMA = {
   type: "object",
@@ -232,18 +235,30 @@ function ticketsOf(v: unknown): string {
   const url = safeUrl(v)
   if (url) return barred(url) ? "" : `<${url}>`
   const text = str(v, SHOW_CHARS)
-  return /https?:|www\./i.test(text) ? "" : text
+  return LINK.test(text) ? "" : text
 }
 
-/** The optional details an item carries, each cleaned and capped; one that is empty is left out. */
+/**
+ * Text the DM shows bare, cleaned; empty when it holds a link, which Discord would embed and which
+ * could reach eBay. The item's own page is its one link, shown in <...>.
+ */
+function linkless(v: unknown, max: number): string {
+  const text = str(v, max)
+  return LINK.test(text) ? "" : text
+}
+
+/**
+ * The optional details an item carries, each cleaned and capped; one that is empty or holds a link
+ * is left out.
+ */
 function details(
   v: Record<string, unknown>,
 ): Pick<NewsItem, "released" | "price" | "availability" | "flag"> {
   const out: Pick<NewsItem, "released" | "price" | "availability" | "flag"> = {}
-  const released = str(v.released, DATE_CHARS)
-  const price = str(v.price, DETAIL_CHARS)
-  const availability = str(v.availability, DETAIL_CHARS)
-  const flag = str(v.flag, FLAG_CHARS)
+  const released = linkless(v.released, DATE_CHARS)
+  const price = linkless(v.price, DETAIL_CHARS)
+  const availability = linkless(v.availability, DETAIL_CHARS)
+  const flag = linkless(v.flag, FLAG_CHARS)
   if (released) out.released = released
   if (price) out.price = price
   if (availability) out.availability = availability
@@ -270,7 +285,7 @@ function newsItem(v: unknown, shows: boolean): NewsItem | null {
   return {
     title,
     kind: str(v.kind, MAX_KIND_CHARS),
-    summary: str(v.summary, SUMMARY_CHARS),
+    summary: linkless(v.summary, SUMMARY_CHARS),
     url,
     date: str(v.date, DATE_CHARS),
     ...(show && (show.city || show.venue || show.date) ? { show } : {}),
@@ -423,7 +438,8 @@ export function newsReviewJob(
     "- its summary says only what the page says, and calls nothing on sale or available to buy " +
       "unless the page itself does;" +
       (parts(config).shows ? " a show's city, venue and date match the page;" : "") +
-      " any release date, price or availability it gives matches the page;",
+      " any release date, price or availability it gives matches the page, and any flag is true " +
+      "by the page and the notes (an item with a wrong detail is not kept);",
     "- it is worth sending by the owner's notes, when there are any (an item they say to skip is " +
       "not kept);",
     "- its page opened and is the item's own (not a search result or a list of links).",
@@ -659,7 +675,7 @@ export const news = defineTaskType<NewsConfig>({
       {
         name: "notes",
         description:
-          "What makes an item worth sending: who it is for, what to skip, what to point out",
+          "What makes an item worth sending (up to 500 characters): who it is for, what to skip, what to point out",
         required: false,
         kind: "string",
       },

@@ -227,10 +227,15 @@ The tracker's task types, built on `@rackbops/docket-core`'s contract. Shipped s
   left the run ends with "no news" and no DM. Otherwise a reviewer Job (12 turns, 0.75 USD, 5 minutes) checks each
   item against its own page (the subject itself, a kind that counts, recent, nothing called on
   sale from a snippet, worth sending by the owner's `notes`) and only the kept ones are DMed,
-  each a finding with its link and date, and its release date, price, availability and what the
-  notes ask to point out (`flag`) when its page gives them. `notes` (up to 500 characters) is the
+  each a finding with its link and date. When the search gives them, an item also carries its
+  release date, price and availability (shown on one line) and `flag`, the search model's own
+  note on what the owner's notes ask to point out (a "Note:" line); the review checks each against
+  the page and the notes and drops an item with one it cannot bear out. Bare text with a link in
+  it (a summary, a detail) is dropped, so the DM's one link is the item's page. `notes` is the
   owner's own words on what is worth sending -- who it is for, what to skip, what to point out --
-  and goes to both runs.
+  and goes to both runs; past 500 characters it is cut. Keeping a special edition while skipping
+  plain copies is the reviewer's reading of the notes: an `exclude` entry drops every title
+  holding it, in plain code.
   A review that fails for good sends nothing; three failed runs in a row (search or review) are
   told once.
 

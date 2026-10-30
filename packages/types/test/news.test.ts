@@ -263,7 +263,7 @@ describe("the news watch's Jobs and answers", () => {
     }
     expect(search).toContain("its price, and whether and where it can be had")
     expect(search).toContain("say what in `flag`")
-    expect(review).toContain("any release date, price or availability it gives matches the page")
+    expect(review).toContain("any flag is true by the page and the notes")
     expect(review).toContain("an item they say to skip is not kept")
     // Without notes there is no notes line; the notes are capped.
     expect(newsJob(CONFIG, newsState(null), new Date()).prompt).not.toContain("owner's notes on")
@@ -272,8 +272,8 @@ describe("the news watch's Jobs and answers", () => {
       newsState(null),
       new Date(),
     )
-    expect(long.prompt).toContain("x".repeat(MAX_NOTES_CHARS - 3))
-    expect(long.prompt).not.toContain(`${"x".repeat(MAX_NOTES_CHARS + 1)}`)
+    const cut = long.prompt.match(/this watch\): (x+)/)?.[1] ?? ""
+    expect(cut.length).toBe(MAX_NOTES_CHARS - 3)
     expect(news.intake?.options.map((o) => o.name)).toContain("notes")
   })
 
@@ -309,6 +309,27 @@ describe("the news watch's Jobs and answers", () => {
     const text = renderNews("PB news", items ?? [])
     expect(text).toContain("   out 2026-12-05; price 34.99 CAD; preorder at the label's store")
     expect(text).toContain("   Note: out a week before December 12")
+    // A detail or summary with a link in it is dropped: the DM's one link is the page, unembedded.
+    const linked = parseNews(
+      {
+        items: [
+          {
+            ...REISSUE,
+            summary: "See https://www.ebay.com/itm/1",
+            price: "[x](https://ebay.com)",
+            availability: "buy at https://www.ebay.com/itm/123",
+            flag: "see www.ebay.ca/x",
+            released: "http://a.example",
+          },
+        ],
+      },
+      false,
+    )
+    expect(linked?.[0]?.summary).toBe("")
+    for (const k of ["price", "availability", "flag", "released"]) {
+      expect(linked?.[0]).not.toHaveProperty(k)
+    }
+    expect(renderNews("PB news", linked ?? [])).not.toMatch(/ebay/i)
     // An item with none shows no details line.
     expect(renderNews("PB news", [REISSUE])).not.toContain("Note:")
     expect(renderNews("PB news", [REISSUE])).not.toContain("price")
