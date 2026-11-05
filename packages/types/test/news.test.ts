@@ -1,6 +1,8 @@
 import type { JobResult, JobSpec, NoJob, Outcome } from "@rackbops/docket-core"
 import { describe, expect, it } from "vitest"
 import {
+  changedFacts,
+  factsOf,
   MAX_NEWS_ITEMS,
   MAX_NOTES_CHARS,
   MAX_SEEN,
@@ -535,5 +537,151 @@ describe("the news watch's runs, replayed", () => {
       ctx(FOLLOW_UP, { ...newsState(null), failures: 1 }),
     )) as JobSpec
     expect(retry.prompt).toContain("You are a news watch")
+  })
+})
+
+describe("the news watch re-alerts on a change to an item sent before (#368 L8)", () => {
+  const SHOWS: NewsConfig = { subject: "Rhythm Corps (the Detroit band)", shows: true }
+  const SHOW = {
+    title: "Rhythm Corps at the Magic Bag",
+    kind: "show announcement",
+    summary: "A one-night show in Ferndale.",
+    url: "https://venue.example/rhythm-corps",
+    date: "2026-10-28",
+    show: { city: "Ferndale", venue: "The Magic Bag", date: "December 12", tickets: "Ticket Co" },
+  }
+  const moved = { ...SHOW, show: { ...SHOW.show, date: "December 13" } }
+
+  async function step(dedupeKey: string, state: unknown, answer: JobResult) {
+    const c = ctx(dedupeKey, state, SHOWS)
+    const job = (await news.prepare?.(c)) as JobSpec
+    const outcome = (await news.finish?.(c, answer)) as Outcome
+    return { job, outcome }
+  }
+  async function look(state: unknown, found: unknown[], keep: (n: number) => boolean = () => true) {
+    const search = await step(SCHEDULED, state, success({ items: found }))
+    if (!search.outcome.followUp) return { search, review: null, state: search.outcome.state }
+    const pending = (search.outcome.state as NewsState).pending
+    const verdicts = pending.map((_, i) => ({ n: i + 1, keep: keep(i + 1), why: "checked" }))
+    const review = await step(FOLLOW_UP, search.outcome.state, success({ verdicts }))
+    return { search, review, state: review.outcome.state }
+  }
+
+  it("says what changed, and counts a missing or same-but-for-case detail as no change", () => {
+    expect(changedFacts({ showDate: "December 12" }, { showDate: "December 13" })).toBe(
+      "show date: December 12 -> December 13",
+    )
+    expect(changedFacts({ price: "34.99 CAD" }, {})).toBe("")
+    expect(changedFacts({ availability: "Sold out!" }, { availability: "sold OUT" })).toBe("")
+    expect(changedFacts({}, { availability: "on sale" })).toBe("availability: on sale")
+    expect(changedFacts({ venue: "A", city: "B" }, { venue: "C", city: "D" })).toBe(
+      "venue: A -> C; city: B -> D",
+    )
+    expect(factsOf({ ...SHOW, price: "40 USD" })).toEqual({
+      price: "40 USD",
+      showDate: "December 12",
+      venue: "The Magic Bag",
+      city: "Ferndale",
+    })
+  })
+
+  it("sends a moved show once, marked with what changed, then stays quiet; a move back sends again", async () => {
+    const first = await look(null, [SHOW])
+    expect(first.review?.outcome.notify?.text).toContain("Something new")
+    const sent = (first.state as NewsState).sent
+    expect(sent).toHaveLength(1)
+    expect(sent[0]?.facts.showDate).toBe("December 12")
+
+    // The same show, same date: repeat, silent. The search is shown what it was sent with.
+    const same = await look(first.state, [SHOW])
+    expect(same.review).toBeNull()
+    expect(same.search.outcome.summary).toBe("no news (1 found, 1 reported before, 0 excluded)")
+    expect(same.search.job.prompt).toContain(
+      "- Rhythm Corps at the Magic Bag (show date December 12; venue The Magic Bag; city Ferndale)",
+    )
+    expect(same.search.job.prompt).toContain("Report an already reported item again only when")
+
+    // Moved a day, found under another link: an update, reviewed, sent once.
+    const elsewhere = { ...moved, url: "https://news.example/rc-moved" }
+    const change = await look(same.state, [elsewhere])
+    expect(change.search.outcome.summary).toBe(
+      "1 found, 0 reported before, 1 changed, 0 excluded; 1 to review",
+    )
+    expect(change.search.outcome.state).toMatchObject({
+      pending: [{ update: "show date: December 12 -> December 13" }],
+    })
+    expect(change.review?.job.prompt).toContain("an item with `update` was sent before")
+    const text = change.review?.outcome.notify?.text ?? ""
+    expect(text).toContain("A change to something sent before:")
+    expect(text).toContain("1. Changed: Rhythm Corps at the Magic Bag")
+    expect(text).toContain("What changed: show date: December 12 -> December 13")
+    expect(change.review?.outcome.summary).toBe("1 new item(s) sent (1 changed)")
+    const finding = change.review?.outcome.findings?.[0]
+    expect(finding?.tags).toContain("update")
+    expect(finding?.text).toContain("Changed (show date: December 12 -> December 13)")
+    expect(finding?.key).toMatch(/:u:[0-9a-f]{16}$/)
+    const after = change.state as NewsState
+    expect(after.sent).toHaveLength(1)
+    expect(after.sent[0]?.facts.showDate).toBe("December 13")
+    expect(after.recent).toEqual([SHOW.title])
+    expect(after.seen).toEqual((same.state as NewsState).seen)
+
+    // Found again on the new date: quiet.
+    const quiet = await look(change.state, [moved])
+    expect(quiet.review).toBeNull()
+    expect(quiet.search.outcome.notify).toBeUndefined()
+
+    // Moved back: one more update.
+    const back = await look(quiet.state, [SHOW])
+    expect(back.review?.outcome.notify?.text).toContain(
+      "What changed: show date: December 13 -> December 12",
+    )
+  })
+
+  it("keeps a detail the change leaves out, and a page that drops one is no change", async () => {
+    const priced = { ...SHOW, price: "25 USD" }
+    const first = await look(null, [priced])
+    const noPrice = await look(first.state, [SHOW])
+    expect(noPrice.review).toBeNull()
+    const moved2 = await look(noPrice.state, [moved])
+    expect((moved2.state as NewsState).sent[0]?.facts).toMatchObject({
+      price: "25 USD",
+      showDate: "December 13",
+    })
+  })
+
+  it("remembers a rejected update, so the same claim is not reviewed again, but a new one is", async () => {
+    const first = await look(null, [SHOW])
+    const rejected = await look(first.state, [moved], () => false)
+    expect(rejected.review?.outcome.notify).toBeUndefined()
+    expect((rejected.state as NewsState).sent[0]?.facts.showDate).toBe("December 12")
+    const again = await look(rejected.state, [moved])
+    expect(again.review).toBeNull()
+    expect(again.search.outcome.summary).toBe("no news (1 found, 1 reported before, 0 excluded)")
+    const other = { ...SHOW, show: { ...SHOW.show, date: "December 14" } }
+    const next = await look(again.state, [other])
+    expect(next.review?.outcome.notify?.text).toContain("December 12 -> December 14")
+  })
+
+  it("sends a new item and a change together, and never takes `update` from the model", async () => {
+    const first = await look(null, [SHOW])
+    const other = { ...REISSUE, title: "Rhythm Corps reissue Common Ground on vinyl" }
+    const both = await look(first.state, [moved, other])
+    expect(both.review?.outcome.notify?.text).toContain("1 new, 1 changed:")
+    expect(
+      parseNews({ items: [{ ...REISSUE, update: "made up" }] }, false)?.[0],
+    ).not.toHaveProperty("update")
+    // A model-made `update` on an item never sent is dropped: it goes out as new.
+    const fake = await look(null, [{ ...SHOW, update: "made up" }])
+    expect(fake.review?.outcome.notify?.text).not.toContain("made up")
+  })
+
+  it("reads a state from before `sent`: its items stay quiet whatever changed", async () => {
+    const first = await look(null, [SHOW])
+    const { sent: _drop, ...old } = first.state as NewsState
+    expect(newsState(old).sent).toEqual([])
+    const out = await look(old, [moved])
+    expect(out.review).toBeNull()
+    expect(out.search.outcome.summary).toBe("no news (1 found, 1 reported before, 0 excluded)")
   })
 })

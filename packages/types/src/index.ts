@@ -61,6 +61,8 @@ export {
 } from "./intake.js"
 export { currencyCode, money } from "./money.js"
 export {
+  changedFacts,
+  factsOf,
   LOOKBACK_DAYS,
   MAX_DISAMBIGUATE_CHARS,
   MAX_INCLUDE,
@@ -68,6 +70,7 @@ export {
   MAX_NEWS_ITEMS,
   MAX_NOTES_CHARS,
   MAX_SEEN,
+  MAX_SENT,
   MAX_SUBJECT_CHARS,
   NEWS_MAX_BUDGET_USD,
   NEWS_MAX_TURNS,
@@ -76,6 +79,7 @@ export {
   NEWS_REVIEW_SCHEMA,
   NEWS_SCHEMA,
   type NewsConfig,
+  type NewsFacts,
   type NewsItem,
   type NewsPhase,
   type NewsShow,
@@ -89,6 +93,7 @@ export {
   parseNews,
   parseNewsReview,
   renderNews,
+  type SentItem,
   titleKey,
 } from "./news.js"
 export {
