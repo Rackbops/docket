@@ -278,6 +278,7 @@ export {
   isEbayHost,
   type Listing,
   type ListingDetail,
+  ListingUnreadable,
   listingKey,
   MAX_LISTINGS,
   NEVER_EBAY,

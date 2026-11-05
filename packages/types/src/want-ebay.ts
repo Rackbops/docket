@@ -9,10 +9,12 @@ import {
   isObj,
   type Listing,
   type ListingDetail,
+  ListingUnreadable,
   MAX_LISTINGS,
   SELLER_CHARS,
   type Source,
   SourceMiss,
+  SourceUnavailableError,
   TITLE_CHARS,
 } from "./want-sources.js"
 
@@ -325,16 +327,20 @@ export function ebaySource(browse: EbayBrowse): Source {
       try {
         ;({ status, body } = await browse(request))
       } catch (err) {
-        throw new SourceMiss(
-          `eBay could not be read: ${clean(err instanceof Error ? err.message : String(err), 200, true)}`,
-          { cause: err },
-        )
+        // A fixed message: the host's own may echo the request or eBay's answer into run history.
+        throw new SourceMiss("eBay could not be reached for a held listing", { cause: err })
       }
-      // eBay answers 404 for an item it no longer has; anything else that is not a listing is a failed read.
+      // Gone: 404 or 410, which is what eBay is taken to answer for an item it no longer has (inferred,
+      // not checked against a live ended listing). Busy (429, 5xx) and refused keys (401, 403) are
+      // misses, tried again next look; any other answer for this one item will not change by asking
+      // again, so it is let go.
       if (status === 404 || status === 410) return null
-      checkSearchStatus(status, "eBay", "eBay refused the app's keys")
-      const read = parseEbayItem(body)
-      if (!read?.listing) throw new SourceMiss("eBay's answer for a held listing could not be read")
+      if (status === 401 || status === 403)
+        throw new SourceUnavailableError("eBay refused the app's keys")
+      if (status === 429 || status >= 500) throw new SourceMiss(`eBay is busy (HTTP ${status})`)
+      const read = status === 200 ? parseEbayItem(body) : null
+      if (!read?.listing)
+        throw new ListingUnreadable(`eBay answered HTTP ${status} for a held listing`)
       return read
     },
   }

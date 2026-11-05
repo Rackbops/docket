@@ -23,6 +23,8 @@ import {
   isEbayHost,
   isObj,
   type Listing,
+  type ListingDetail,
+  ListingUnreadable,
   listingKey,
   type Source,
   type SourceId,
@@ -521,22 +523,32 @@ function judged(
 
 /**
  * Held eBay listings read back in full, each with its number (its place in `held`, from 1); one
- * eBay says is gone, or that does not read back as the same listing, is left out. Throws
- * `SourceMiss` when any could not be read (or the host has no eBay), so a failed read is never
- * taken for a gone listing: the caller keeps them held for the next look.
+ * eBay says is gone, or that does not read back as the same listing, is left out. One eBay will
+ * never read (`ListingUnreadable`) is left out too, and named in `dropped`: the caller lets it go
+ * unremembered, so it cannot hold the watch up. Throws `SourceMiss` when eBay could not be read
+ * just now (or the host has no eBay), so a failed read is never taken for a gone listing: the
+ * caller keeps them held for the next look.
  */
 async function readHeld(
   source: Source | undefined,
   held: readonly HeldItem[],
-): Promise<JudgeItem[]> {
+): Promise<{ items: JudgeItem[]; dropped: Set<string> }> {
   if (!source?.reread) throw new SourceMiss("this bot cannot read eBay listings")
-  const out: JudgeItem[] = []
+  const items: JudgeItem[] = []
+  const dropped = new Set<string>()
   for (const [i, h] of held.entries()) {
-    const d = await source.reread({ id: h.id, title: "", url: "", ref: h.ref })
+    let d: ListingDetail | null
+    try {
+      d = await source.reread({ id: h.id, title: "", url: "", ref: h.ref })
+    } catch (err) {
+      if (!(err instanceof ListingUnreadable)) throw err
+      dropped.add(h.id)
+      continue
+    }
     if (!d?.listing || d.listing.id !== h.id) continue
-    out.push({ n: i + 1, l: d.listing, detail: d.text })
+    items.push({ n: i + 1, l: d.listing, detail: d.text })
   }
-  return out
+  return { items, dropped }
 }
 
 /**
@@ -565,15 +577,20 @@ async function finishHeld(
   result: JobResult,
   source: Source | undefined,
 ): Promise<Outcome> {
-  let items: JudgeItem[]
+  let read: Awaited<ReturnType<typeof readHeld>>
   try {
-    items = await readHeld(source, state.held)
+    read = await readHeld(source, state.held)
   } catch (err) {
     if (err instanceof SourceMiss) return heldMiss(ctx, state, err)
     throw err
   }
-  // As `pending`: one an edit put outside the limits, or excluded, is neither told nor remembered.
-  const unwanted = new Set(items.filter((x) => !wanted(x.l, ctx.config)).map((x) => x.l.id))
+  const { items, dropped } = read
+  // As `pending`: one an edit put outside the limits, or excluded, is neither told nor remembered;
+  // nor is one eBay will never read.
+  const unwanted = new Set([
+    ...dropped,
+    ...items.filter((x) => !wanted(x.l, ctx.config)).map((x) => x.l.id),
+  ])
   const view: JudgeState = {
     ...state,
     pending: items.map((x) => x.l),
@@ -684,18 +701,22 @@ export function wantjudgeType(
           return { outcome: { summary: "a retry of the last look is waiting" } }
         if (state.held.length === 0) return judgeJob(ctx.task.title, ctx.config, state.pending)
         // Held eBay listings are read back now, in full, for the model; nothing of them is kept.
-        let items: JudgeItem[]
+        let read: Awaited<ReturnType<typeof readHeld>>
         try {
-          items = await readHeld(sources.ebay, state.held)
+          read = await readHeld(sources.ebay, state.held)
         } catch (err) {
           if (err instanceof SourceMiss) return { outcome: heldMiss(ctx, state, err) }
           throw err
         }
+        const { items, dropped } = read
         if (items.length === 0)
           return {
             outcome: {
-              state: settled(state, 0),
-              summary: `nothing to check: the ${state.held.length} new listing(s) are gone from eBay`,
+              // Gone ones are remembered; one eBay will never read is let go unremembered.
+              state: settled({ ...state, held: state.held.filter((h) => !dropped.has(h.id)) }, 0),
+              summary:
+                `nothing to check: the ${state.held.length} new listing(s) are gone from eBay` +
+                (dropped.size > 0 ? ` (${dropped.size} could not be read, let go)` : ""),
             },
           }
         return judgeJob(ctx.task.title, ctx.config, items)

@@ -7,6 +7,7 @@ import {
   judgeJob,
   type Listing,
   type ListingDetail,
+  ListingUnreadable,
   MAX_WANT_NOTES,
   parseEbayItem,
   type Source,
@@ -265,14 +266,21 @@ describe("a judged eBay watch never takes a failed read for a gone listing", () 
     const held = { id: "ebay:123456789012", title: "", url: "", ref: "v1|123456789012|0" }
     answers.push({ status: 404, body: null })
     expect(await s.reread?.(held)).toBeNull()
+    answers.push({ status: 410, body: null })
+    expect(await s.reread?.(held)).toBeNull()
     answers.push({ status: 500, body: null })
     await expect(s.reread?.(held)).rejects.toBeInstanceOf(SourceMiss)
     answers.push({ status: 429, body: null })
     await expect(s.reread?.(held)).rejects.toBeInstanceOf(SourceMiss)
-    answers.push(new Error("connection reset"))
-    await expect(s.reread?.(held)).rejects.toThrow(/could not be read: connection reset/)
-    answers.push({ status: 200, body: { itemId: "v1|123456789012|0", title: "no address" } })
+    answers.push(new Error("connection reset https://api.ebay.com/item/v1|123456789012|0"))
+    await expect(s.reread?.(held)).rejects.toThrow(/^eBay could not be reached for a held listing$/)
+    answers.push({ status: 403, body: null })
     await expect(s.reread?.(held)).rejects.toBeInstanceOf(SourceMiss)
+    // Asking again will not help: this one listing is let go, not waited on.
+    answers.push({ status: 400, body: null })
+    await expect(s.reread?.(held)).rejects.toBeInstanceOf(ListingUnreadable)
+    answers.push({ status: 200, body: { itemId: "v1|123456789012|0", title: "no address" } })
+    await expect(s.reread?.(held)).rejects.toBeInstanceOf(ListingUnreadable)
     answers.push({
       status: 200,
       body: {
@@ -299,6 +307,7 @@ describe("a judged eBay watch never takes a failed read for a gone listing", () 
     expect(after.reported).toEqual(held.reported)
     expect(after.misses).toBe(1)
     expect(after.failures).toBe(0)
+    expect(JSON.stringify(after)).not.toMatch(LISTING_TEXT)
 
     // The next scheduled look reads them again and asks the model.
     down.on = false
@@ -354,6 +363,56 @@ describe("a judged eBay watch never takes a failed read for a gone listing", () 
     expect(out.notify?.text).not.toContain(INVESTIGATOR.title)
     expect(after.reported).toHaveLength(held.reported.length + 1)
     expect(after.held).toEqual([])
+  })
+
+  it("lets go of one listing eBay will never read, unremembered, and judges the rest", async () => {
+    const live = new Map([CAMPAIGN, BUNDLE].map((l) => [l.id, l]))
+    const { s } = source([CAMPAIGN, BUNDLE], live)
+    const reread = s.reread
+    s.reread = async (l) => {
+      if (l.ref === BUNDLE.ref) throw new ListingUnreadable("eBay answered HTTP 400")
+      return (await reread?.(l)) ?? null
+    }
+    const type = wantjudgeType({ ebay: s })
+    const held = (await lookOnce(type)).outcome.state as JudgeState
+    const job = (await type.prepare?.(ctx(FOLLOW_UP, held))) as JobSpec
+    expect(job.prompt).toContain(CAMPAIGN.title)
+    expect(job.prompt).not.toContain(BUNDLE.title)
+    const out = (await type.finish?.(
+      ctx(FOLLOW_UP, held),
+      success({ verdicts: [verdict(1, "match")] }),
+    )) as Outcome
+    const after = out.state as JudgeState
+    expect(out.notify?.text).toContain(CAMPAIGN.title)
+    expect(after.held).toEqual([])
+    // Only the told one is remembered: the unreadable one may come back in a later look.
+    expect(after.reported).toHaveLength(held.reported.length + 1)
+
+    // Every held listing unreadable: settled at the look, none remembered.
+    s.reread = async () => {
+      throw new ListingUnreadable("eBay answered HTTP 400")
+    }
+    const none = (await type.prepare?.(ctx(FOLLOW_UP, held))) as NoJob
+    expect(none.outcome.summary).toContain("(2 could not be read, let go)")
+    expect((none.outcome.state as JudgeState).held).toEqual([])
+    expect((none.outcome.state as JudgeState).reported).toEqual(held.reported)
+  })
+
+  it("asks the model again at the next scheduled look after a failed judge and a failed read", async () => {
+    const live = new Map([CAMPAIGN].map((l) => [l.id, l]))
+    const { s, down } = source([CAMPAIGN], live)
+    const type = wantjudgeType({ ebay: s })
+    const held = (await lookOnce(type)).outcome.state
+    const timeout: JobResult = { kind: "timeout", detail: "slow", durationMs: 1 }
+    const retry = (await type.finish?.(ctx(FOLLOW_UP, held), timeout)) as Outcome
+    down.on = true
+    const failed = (await type.finish?.(ctx(FOLLOW_UP, retry.state), timeout)) as Outcome
+    const after = failed.state as JudgeState
+    expect(after.failures).toBe(0)
+    expect(after.retryAt).toBeUndefined()
+    down.on = false
+    const job = (await type.prepare?.(ctx("2026-11-06T14:00:00.000Z", after))) as JobSpec
+    expect(job.prompt).toContain(CAMPAIGN.title)
   })
 
   it("loads at most 20 held numbers", async () => {
