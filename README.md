@@ -269,6 +269,20 @@ epic is Rackbops/Tooling#816.
   behaviour change: text the DM shows bare (a summary, date, detail or show field) is dropped when
   it holds a link, and an item whose title holds one is not sent. No core change. Release order:
   docket 0.21.0 first, then the tracker change that offers `notes`.
+- **0.22.0 -- news re-alerts and judged eBay watches** (three of the four gaps before the cutover of
+  rackbops-bot-plugins#368). A news item already sent is sent once more, marked as a change, when a
+  detail it was sent with (date, price, availability, a show's venue or city) changes to another
+  given value on the same page; a detail first given later is not a change (#104). A judged want-
+  list watch can use eBay without keeping eBay data in its state: it holds only item numbers between
+  its runs and reads each listing back in full through getItem for the model (#105); the model's Job
+  still carries those listings to the queue, so a host that must keep no eBay data anywhere has to
+  settle that before judging eBay. A held listing eBay says is gone is dropped; a failed read keeps
+  the numbers for the next look and counts a miss; a listing eBay will never read is let go. Judged
+  watches gain the owner's optional `notes`, given to the model. Behaviour changes: a news watch's
+  search and review prompts now carry what was sent and report changes, so it can send the same item
+  twice; a judged eBay watch now works as above (none is live: the tracker makes every eBay API
+  watch plain), and one mid-look when this lands finishes that look on the old path. No core change.
+  Release order: docket 0.22.0 first, then the tracker change that offers `notes` on judged watches.
 
 ## Use
 
