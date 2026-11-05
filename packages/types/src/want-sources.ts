@@ -77,6 +77,13 @@ export interface Source {
    * read: never throws. A source without it reads only what its search returned.
    */
   detail?(listing: Listing): Promise<ListingDetail | null>
+  /**
+   * One listing read back by its `ref` for a judged watch that kept only its item number (eBay's):
+   * the listing as it is now, or null when the source says it is gone (sold, ended or removed).
+   * Throws `SourceMiss` when it could not be read (busy, refused, an answer it cannot parse), so
+   * a failed read is never taken for a gone listing.
+   */
+  reread?(listing: Listing): Promise<ListingDetail | null>
 }
 
 /** A read that found nothing usable (an error page, no structured data, a busy API): the type counts it. */

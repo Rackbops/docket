@@ -317,5 +317,25 @@ export function ebaySource(browse: EbayBrowse): Source {
         return null
       }
     },
+    async reread(listing) {
+      const request = listing.ref ? ebayItemRequest(listing.ref) : null
+      if (!request) throw new SourceMiss("the held listing has no eBay item number")
+      let status: number
+      let body: unknown
+      try {
+        ;({ status, body } = await browse(request))
+      } catch (err) {
+        throw new SourceMiss(
+          `eBay could not be read: ${clean(err instanceof Error ? err.message : String(err), 200, true)}`,
+          { cause: err },
+        )
+      }
+      // eBay answers 404 for an item it no longer has; anything else that is not a listing is a failed read.
+      if (status === 404 || status === 410) return null
+      checkSearchStatus(status, "eBay", "eBay refused the app's keys")
+      const read = parseEbayItem(body)
+      if (!read?.listing) throw new SourceMiss("eBay's answer for a held listing could not be read")
+      return read
+    },
   }
 }

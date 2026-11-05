@@ -1,6 +1,7 @@
 import type { JobResult, JobSpec, NoJob, Outcome } from "@rackbops/docket-core"
 import { describe, expect, it } from "vitest"
 import {
+  ebaySource,
   JUDGE_DETAIL_CHARS,
   type JudgeState,
   judgeJob,
@@ -9,6 +10,7 @@ import {
   MAX_WANT_NOTES,
   parseEbayItem,
   type Source,
+  SourceMiss,
   wantjudgeType,
 } from "../src/index.js"
 
@@ -42,14 +44,19 @@ const CONFIG = {
   notes: NOTES,
 }
 
-/** A source whose search finds `found` and whose full reads come from `live` (gone when absent). */
+/**
+ * A source whose search finds `found` and whose full reads come from `live` (gone when absent);
+ * while `down.on` is set, every read fails as eBay being busy would.
+ */
 function source(found: Listing[], live: Map<string, Listing>) {
   const reads: string[] = []
+  const down = { on: false }
   const s: Source = {
     id: "ebay",
     search: async () => found,
-    detail: async (l): Promise<ListingDetail | null> => {
+    reread: async (l): Promise<ListingDetail | null> => {
       reads.push(l.ref ?? "")
+      if (down.on) throw new SourceMiss("eBay is busy (HTTP 503)")
       const now = [...live.values()].find((x) => x.ref === l.ref)
       if (!now) return null
       return {
@@ -59,7 +66,7 @@ function source(found: Listing[], live: Map<string, Listing>) {
       }
     },
   }
-  return { s, reads }
+  return { s, reads, down }
 }
 
 const SCHEDULED = "2026-11-06T13:00:00.000Z"
@@ -85,6 +92,9 @@ const success = (structuredOutput: unknown): JobResult => ({
 
 const lookOnce = async (type: ReturnType<typeof wantjudgeType>) =>
   (await type.prepare?.(ctx(SCHEDULED, null))) as NoJob
+
+/** Any title, seller, condition, price or address of a listing. */
+const LISTING_TEXT = /Arkham|seller_a|Used|itm|USD|shipping/
 
 const verdict = (n: number, fit: string, why = "checked") => ({ n, fit, why, seller: "not shown" })
 
@@ -126,7 +136,7 @@ describe("the judged eBay watch keeps item numbers only", () => {
     expect(look.outcome.followUp).toEqual({})
     expect(look.outcome.summary).toContain("3 new; checking them")
     // No title, seller or price of any listing is in the state.
-    expect(JSON.stringify(held)).not.toMatch(/Arkham|seller_a|Used|itm/)
+    expect(JSON.stringify(held)).not.toMatch(LISTING_TEXT)
 
     const job = (await type.prepare?.(ctx(FOLLOW_UP, held))) as JobSpec
     expect(reads).toEqual([CAMPAIGN.ref, BUNDLE.ref, INVESTIGATOR.ref])
@@ -163,7 +173,7 @@ describe("the judged eBay watch keeps item numbers only", () => {
     expect(after.held).toEqual([])
     // All three remembered, the sold one too: none comes back.
     expect(after.reported).toHaveLength(3)
-    expect(JSON.stringify(after)).not.toContain("Arkham")
+    expect(JSON.stringify(after)).not.toMatch(LISTING_TEXT)
   })
 
   it("keeps only the numbers while a retry waits, and sends what is still listed unchecked when judging fails for good", async () => {
@@ -177,7 +187,7 @@ describe("the judged eBay watch keeps item numbers only", () => {
     expect(retry.followUp).toBeDefined()
     expect(waiting.pending).toEqual([])
     expect(waiting.held).toHaveLength(2)
-    expect(JSON.stringify(waiting)).not.toContain("Arkham")
+    expect(JSON.stringify(waiting)).not.toMatch(LISTING_TEXT)
 
     let state: unknown = waiting
     let last: Outcome = retry
@@ -189,7 +199,7 @@ describe("the judged eBay watch keeps item numbers only", () => {
     expect(last.notify?.text).toContain("2 new listings, unchecked")
     expect(last.notify?.text).toContain("free shipping")
     expect((state as JudgeState).held).toEqual([])
-    expect(JSON.stringify(state)).not.toContain("Arkham")
+    expect(JSON.stringify(state)).not.toMatch(LISTING_TEXT)
   })
 
   it("settles quietly when every held listing is gone before the model looks", async () => {
@@ -241,5 +251,126 @@ describe("the judged eBay watch keeps item numbers only", () => {
       { n: 1, l: CAMPAIGN, detail: "y".repeat(JUDGE_DETAIL_CHARS * 2) },
     ])
     expect(big.prompt).not.toContain("y".repeat(JUDGE_DETAIL_CHARS + 1))
+  })
+})
+
+describe("a judged eBay watch never takes a failed read for a gone listing", () => {
+  it("reads a held listing back through the eBay source: 404 is gone, anything else unreadable is a miss", async () => {
+    const answers: Array<{ status: number; body: unknown } | Error> = []
+    const s = ebaySource(async () => {
+      const a = answers.shift()
+      if (a instanceof Error) throw a
+      return a ?? { status: 500, body: null }
+    })
+    const held = { id: "ebay:123456789012", title: "", url: "", ref: "v1|123456789012|0" }
+    answers.push({ status: 404, body: null })
+    expect(await s.reread?.(held)).toBeNull()
+    answers.push({ status: 500, body: null })
+    await expect(s.reread?.(held)).rejects.toBeInstanceOf(SourceMiss)
+    answers.push({ status: 429, body: null })
+    await expect(s.reread?.(held)).rejects.toBeInstanceOf(SourceMiss)
+    answers.push(new Error("connection reset"))
+    await expect(s.reread?.(held)).rejects.toThrow(/could not be read: connection reset/)
+    answers.push({ status: 200, body: { itemId: "v1|123456789012|0", title: "no address" } })
+    await expect(s.reread?.(held)).rejects.toBeInstanceOf(SourceMiss)
+    answers.push({
+      status: 200,
+      body: {
+        itemId: "v1|123456789012|0",
+        title: "Arkham Horror Edge of the Earth",
+        itemWebUrl: "https://www.ebay.com/itm/123456789012",
+      },
+    })
+    expect((await s.reread?.(held))?.listing?.id).toBe("ebay:123456789012")
+  })
+
+  it("keeps the numbers held, counts a miss and asks nothing when eBay cannot be read at the look", async () => {
+    const live = new Map([CAMPAIGN, BUNDLE].map((l) => [l.id, l]))
+    const { s, down } = source([CAMPAIGN, BUNDLE], live)
+    const type = wantjudgeType({ ebay: s })
+    const held = (await lookOnce(type)).outcome.state as JudgeState
+    down.on = true
+    const out = (await type.prepare?.(ctx(FOLLOW_UP, held))) as NoJob
+    const after = out.outcome.state as JudgeState
+    expect(out.outcome.summary).toContain("nothing read: eBay is busy (HTTP 503)")
+    expect(out.outcome.summary).toContain("the 2 new listing(s) wait for the next look")
+    expect(out.outcome.followUp).toBeUndefined()
+    expect(after.held).toEqual(held.held)
+    expect(after.reported).toEqual(held.reported)
+    expect(after.misses).toBe(1)
+    expect(after.failures).toBe(0)
+
+    // The next scheduled look reads them again and asks the model.
+    down.on = false
+    const job = (await type.prepare?.(ctx("2026-11-06T14:00:00.000Z", after))) as JobSpec
+    expect(job.prompt).toContain(CAMPAIGN.title)
+    expect(job.prompt).toContain(BUNDLE.title)
+  })
+
+  it("keeps the numbers held when eBay cannot be read once the answer is back, and tells nothing", async () => {
+    const live = new Map([CAMPAIGN, BUNDLE].map((l) => [l.id, l]))
+    const { s, down } = source([CAMPAIGN, BUNDLE], live)
+    const type = wantjudgeType({ ebay: s })
+    const held = (await lookOnce(type)).outcome.state as JudgeState
+    await type.prepare?.(ctx(FOLLOW_UP, held))
+    down.on = true
+    const out = (await type.finish?.(
+      ctx(FOLLOW_UP, held),
+      success({ verdicts: [verdict(1, "match"), verdict(2, "match")] }),
+    )) as Outcome
+    const after = out.state as JudgeState
+    expect(out.notify).toBeUndefined()
+    expect(out.followUp).toBeUndefined()
+    expect(after.held).toEqual(held.held)
+    expect(after.reported).toEqual(held.reported)
+    expect(after.pending).toEqual([])
+    expect(JSON.stringify(after)).not.toMatch(LISTING_TEXT)
+  })
+
+  it("keeps the numbers held on a bot with no eBay source", async () => {
+    const live = new Map([CAMPAIGN].map((l) => [l.id, l]))
+    const { s } = source([CAMPAIGN], live)
+    const held = (await lookOnce(wantjudgeType({ ebay: s }))).outcome.state as JudgeState
+    const bare = wantjudgeType({})
+    const look = (await bare.prepare?.(ctx(FOLLOW_UP, held))) as NoJob
+    expect((look.outcome.state as JudgeState).held).toEqual(held.held)
+    const out = (await bare.finish?.(ctx(FOLLOW_UP, held), success({ verdicts: [] }))) as Outcome
+    expect((out.state as JudgeState).held).toEqual(held.held)
+    expect((out.state as JudgeState).reported).toEqual(held.reported)
+  })
+
+  it("does not remember a listing an edit excluded while the model looked, as for pending", async () => {
+    const live = new Map([CAMPAIGN, INVESTIGATOR].map((l) => [l.id, l]))
+    const { s } = source([CAMPAIGN, INVESTIGATOR], live)
+    const type = wantjudgeType({ ebay: s })
+    const held = (await lookOnce(type)).outcome.state as JudgeState
+    const edited = { ...CONFIG, exclude: ["proxy", "investigator"] }
+    const out = (await type.finish?.(
+      ctx(FOLLOW_UP, held, edited),
+      success({ verdicts: [verdict(1, "match"), verdict(2, "match")] }),
+    )) as Outcome
+    const after = out.state as JudgeState
+    expect(out.notify?.text).toContain(CAMPAIGN.title)
+    expect(out.notify?.text).not.toContain(INVESTIGATOR.title)
+    expect(after.reported).toHaveLength(held.reported.length + 1)
+    expect(after.held).toEqual([])
+  })
+
+  it("loads at most 20 held numbers", async () => {
+    const many = Array.from({ length: 25 }, (_, i) => ({
+      id: `ebay:${200000 + i}`,
+      ref: `v1|${200000 + i}|0`,
+    }))
+    const reads: string[] = []
+    const s: Source = {
+      id: "ebay",
+      search: async () => [],
+      reread: async (l) => {
+        reads.push(l.ref ?? "")
+        return null
+      },
+    }
+    await wantjudgeType({ ebay: s }).prepare?.(ctx(FOLLOW_UP, { held: many }))
+    expect(reads).toHaveLength(20)
   })
 })

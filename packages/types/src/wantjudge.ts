@@ -26,6 +26,7 @@ import {
   listingKey,
   type Source,
   type SourceId,
+  SourceMiss,
 } from "./want-sources.js"
 import { sourceText } from "./want-text.js"
 import {
@@ -421,7 +422,7 @@ export function renderUnchecked(
 /** `pending`, now told (or passed over): remembered, and the look's count reset. */
 function settled(state: JudgeState, told: number): JudgeState {
   const { retryAt: _done, ...rest } = state
-  // A held eBay listing is remembered whether or not it could be read back: one gone is sold or ended.
+  // A held eBay listing still here is remembered, as is one eBay says is gone (sold or ended).
   const keys = [...state.pending.map((l) => l.id), ...state.held.map((h) => h.id)]
   return {
     ...rest,
@@ -520,20 +521,37 @@ function judged(
 
 /**
  * Held eBay listings read back in full, each with its number (its place in `held`, from 1); one
- * eBay no longer has, or that does not read back as the same listing, is left out.
+ * eBay says is gone, or that does not read back as the same listing, is left out. Throws
+ * `SourceMiss` when any could not be read (or the host has no eBay), so a failed read is never
+ * taken for a gone listing: the caller keeps them held for the next look.
  */
 async function readHeld(
   source: Source | undefined,
   held: readonly HeldItem[],
 ): Promise<JudgeItem[]> {
+  if (!source?.reread) throw new SourceMiss("this bot cannot read eBay listings")
   const out: JudgeItem[] = []
-  if (!source?.detail) return out
   for (const [i, h] of held.entries()) {
-    const d = await source.detail({ id: h.id, title: "", url: "", ref: h.ref })
+    const d = await source.reread({ id: h.id, title: "", url: "", ref: h.ref })
     if (!d?.listing || d.listing.id !== h.id) continue
     out.push({ n: i + 1, l: d.listing, detail: d.text })
   }
   return out
+}
+
+/**
+ * Held listings that could not be read back: a miss on record (told after a few in a row, as a
+ * plain watch's), the numbers kept and the retry count cleared, so the next scheduled look reads
+ * them again and asks the model afresh. A model's answer, if there was one, is not kept: its
+ * reasons describe the listings.
+ */
+function heldMiss(ctx: RunContext<WantConfig>, state: JudgeState, err: unknown): Outcome {
+  const { retryAt: _gone, ...rest } = state
+  const out = miss(ctx, { ...rest, pending: [], failures: 0 }, err)
+  return {
+    ...out,
+    summary: `${out.summary}; the ${state.held.length} new listing(s) wait for the next look`,
+  }
 }
 
 /**
@@ -547,8 +565,20 @@ async function finishHeld(
   result: JobResult,
   source: Source | undefined,
 ): Promise<Outcome> {
-  const items = await readHeld(source, state.held)
-  const view: JudgeState = { ...state, pending: items.map((x) => x.l) }
+  let items: JudgeItem[]
+  try {
+    items = await readHeld(source, state.held)
+  } catch (err) {
+    if (err instanceof SourceMiss) return heldMiss(ctx, state, err)
+    throw err
+  }
+  // As `pending`: one an edit put outside the limits, or excluded, is neither told nor remembered.
+  const unwanted = new Set(items.filter((x) => !wanted(x.l, ctx.config)).map((x) => x.l.id))
+  const view: JudgeState = {
+    ...state,
+    pending: items.map((x) => x.l),
+    held: state.held.filter((h) => !unwanted.has(h.id)),
+  }
   let out: Outcome
   if (result.kind !== "success") out = judgeFailed(ctx, view, result.kind, result.detail)
   else {
@@ -654,7 +684,13 @@ export function wantjudgeType(
           return { outcome: { summary: "a retry of the last look is waiting" } }
         if (state.held.length === 0) return judgeJob(ctx.task.title, ctx.config, state.pending)
         // Held eBay listings are read back now, in full, for the model; nothing of them is kept.
-        const items = await readHeld(sources.ebay, state.held)
+        let items: JudgeItem[]
+        try {
+          items = await readHeld(sources.ebay, state.held)
+        } catch (err) {
+          if (err instanceof SourceMiss) return { outcome: heldMiss(ctx, state, err) }
+          throw err
+        }
         if (items.length === 0)
           return {
             outcome: {
