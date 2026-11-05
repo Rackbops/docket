@@ -256,7 +256,7 @@ describe("the judged eBay watch keeps item numbers only", () => {
 })
 
 describe("a judged eBay watch never takes a failed read for a gone listing", () => {
-  it("reads a held listing back through the eBay source: 404 is gone, anything else unreadable is a miss", async () => {
+  it("reads a held listing back through the eBay source: 404 and 410 are gone, busy or refused is a miss, any other answer is unreadable", async () => {
     const answers: Array<{ status: number; body: unknown } | Error> = []
     const s = ebaySource(async () => {
       const a = answers.shift()
@@ -424,6 +424,24 @@ describe("a judged eBay watch never takes a failed read for a gone listing", () 
     const after = out.state as JudgeState
     expect(after.held).toEqual([])
     expect(after.reported).toHaveLength(held.reported.length + 1)
+  })
+
+  it("takes an answer with no verdict for any listing shown as malformed: retried, then sent unchecked", async () => {
+    const live = new Map([CAMPAIGN].map((l) => [l.id, l]))
+    const { s } = source([CAMPAIGN], live)
+    const type = wantjudgeType({ ebay: s })
+    let state: unknown = (await lookOnce(type)).outcome.state
+    let out = (await type.finish?.(
+      ctx(FOLLOW_UP, state),
+      success({ verdicts: [verdict(9, "match")] }),
+    )) as Outcome
+    expect(out.summary).toContain("no verdict for any listing shown")
+    expect(out.followUp).toBeDefined()
+    state = out.state
+    out = (await type.finish?.(ctx(FOLLOW_UP, state), success({ verdicts: [] }))) as Outcome
+    expect(out.followUp).toBeUndefined()
+    expect(out.notify?.text).toContain("unchecked")
+    expect(out.notify?.text).toContain(CAMPAIGN.title)
   })
 
   it("asks the model again at the next scheduled look after a failed judge and a failed read", async () => {

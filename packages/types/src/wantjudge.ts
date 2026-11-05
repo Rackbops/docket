@@ -602,8 +602,9 @@ async function finishHeld(
     const raw = parseVerdicts(result.structuredOutput, state.held.length)
     if (!raw) out = judgeFailed(ctx, view, "malformed", "no verdicts in the structured output")
     else {
-      // The model gives a verdict on every listing it is shown: one with none was not in its prompt
-      // (unreadable at the look), so it is neither told nor remembered, and the next look has it.
+      // A listing with no verdict was most likely not in the model's prompt (unreadable at the look),
+      // though a model may also skip one it was shown: either way it is neither told nor
+      // remembered, and the next look judges it.
       const seen = items.filter((x) => raw.has(x.n))
       const unseen = new Set(items.filter((x) => !raw.has(x.n)).map((x) => x.l.id))
       const verdicts = new Map<number, JudgeVerdict>()
@@ -616,7 +617,12 @@ async function finishHeld(
         pending: seen.map((x) => x.l),
         held: view.held.filter((h) => !unseen.has(h.id)),
       }
-      out = judged(ctx, shown, verdicts)
+      // No verdict for any listing shown: a malformed answer, retried and then sent unchecked, so a
+      // judge that never answers usably cannot silence the watch.
+      out =
+        items.length > 0 && seen.length === 0
+          ? judgeFailed(ctx, view, "malformed", "no verdict for any listing shown")
+          : judged(ctx, shown, verdicts)
     }
   }
   return out.state ? { ...out, state: { ...(out.state as JudgeState), pending: [] } } : out
