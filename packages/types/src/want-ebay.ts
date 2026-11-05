@@ -331,13 +331,14 @@ export function ebaySource(browse: EbayBrowse): Source {
         throw new SourceMiss("eBay could not be reached for a held listing", { cause: err })
       }
       // Gone: 404 or 410, which is what eBay is taken to answer for an item it no longer has (inferred,
-      // not checked against a live ended listing). Busy (429, 5xx) and refused keys (401, 403) are
+      // not checked against a live ended listing). Busy (408, 429, 5xx) and refused keys (401, 403) are
       // misses, tried again next look; any other answer for this one item will not change by asking
       // again, so it is let go.
       if (status === 404 || status === 410) return null
       if (status === 401 || status === 403)
         throw new SourceUnavailableError("eBay refused the app's keys")
-      if (status === 429 || status >= 500) throw new SourceMiss(`eBay is busy (HTTP ${status})`)
+      if (status === 408 || status === 429 || status >= 500)
+        throw new SourceMiss(`eBay is busy (HTTP ${status})`)
       const read = status === 200 ? parseEbayItem(body) : null
       if (!read?.listing)
         throw new ListingUnreadable(`eBay answered HTTP ${status} for a held listing`)

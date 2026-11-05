@@ -602,12 +602,21 @@ async function finishHeld(
     const raw = parseVerdicts(result.structuredOutput, state.held.length)
     if (!raw) out = judgeFailed(ctx, view, "malformed", "no verdicts in the structured output")
     else {
+      // The model gives a verdict on every listing it is shown: one with none was not in its prompt
+      // (unreadable at the look), so it is neither told nor remembered, and the next look has it.
+      const seen = items.filter((x) => raw.has(x.n))
+      const unseen = new Set(items.filter((x) => !raw.has(x.n)).map((x) => x.l.id))
       const verdicts = new Map<number, JudgeVerdict>()
-      for (const [i, x] of items.entries()) {
+      for (const [i, x] of seen.entries()) {
         const v = raw.get(x.n)
         if (v) verdicts.set(i + 1, v)
       }
-      out = judged(ctx, view, verdicts)
+      const shown: JudgeState = {
+        ...view,
+        pending: seen.map((x) => x.l),
+        held: view.held.filter((h) => !unseen.has(h.id)),
+      }
+      out = judged(ctx, shown, verdicts)
     }
   }
   return out.state ? { ...out, state: { ...(out.state as JudgeState), pending: [] } } : out
@@ -715,8 +724,9 @@ export function wantjudgeType(
               // Gone ones are remembered; one eBay will never read is let go unremembered.
               state: settled({ ...state, held: state.held.filter((h) => !dropped.has(h.id)) }, 0),
               summary:
-                `nothing to check: the ${state.held.length} new listing(s) are gone from eBay` +
-                (dropped.size > 0 ? ` (${dropped.size} could not be read, let go)` : ""),
+                dropped.size === 0
+                  ? `nothing to check: the ${state.held.length} new listing(s) are gone from eBay`
+                  : `nothing to check: ${state.held.length - dropped.size} gone from eBay, ${dropped.size} could not be read (let go)`,
             },
           }
         return judgeJob(ctx.task.title, ctx.config, items)

@@ -270,6 +270,8 @@ describe("a judged eBay watch never takes a failed read for a gone listing", () 
     expect(await s.reread?.(held)).toBeNull()
     answers.push({ status: 500, body: null })
     await expect(s.reread?.(held)).rejects.toBeInstanceOf(SourceMiss)
+    answers.push({ status: 408, body: null })
+    await expect(s.reread?.(held)).rejects.toBeInstanceOf(SourceMiss)
     answers.push({ status: 429, body: null })
     await expect(s.reread?.(held)).rejects.toBeInstanceOf(SourceMiss)
     answers.push(new Error("connection reset https://api.ebay.com/item/v1|123456789012|0"))
@@ -393,9 +395,35 @@ describe("a judged eBay watch never takes a failed read for a gone listing", () 
       throw new ListingUnreadable("eBay answered HTTP 400")
     }
     const none = (await type.prepare?.(ctx(FOLLOW_UP, held))) as NoJob
-    expect(none.outcome.summary).toContain("(2 could not be read, let go)")
+    expect(none.outcome.summary).toBe(
+      "nothing to check: 0 gone from eBay, 2 could not be read (let go)",
+    )
     expect((none.outcome.state as JudgeState).held).toEqual([])
     expect((none.outcome.state as JudgeState).reported).toEqual(held.reported)
+  })
+
+  it("neither tells nor remembers a listing the model was not shown (unreadable at the look only)", async () => {
+    const live = new Map([CAMPAIGN, BUNDLE].map((l) => [l.id, l]))
+    const { s } = source([CAMPAIGN, BUNDLE], live)
+    const reread = s.reread
+    let bundleFails = true
+    s.reread = async (l) => {
+      if (l.ref === BUNDLE.ref && bundleFails) throw new ListingUnreadable("eBay answered HTTP 400")
+      return (await reread?.(l)) ?? null
+    }
+    const type = wantjudgeType({ ebay: s })
+    const held = (await lookOnce(type)).outcome.state as JudgeState
+    const job = (await type.prepare?.(ctx(FOLLOW_UP, held))) as JobSpec
+    expect(job.prompt).not.toContain(BUNDLE.title)
+    bundleFails = false
+    const out = (await type.finish?.(
+      ctx(FOLLOW_UP, held),
+      success({ verdicts: [verdict(1, "no", "investigator box alone")] }),
+    )) as Outcome
+    expect(out.notify).toBeUndefined()
+    const after = out.state as JudgeState
+    expect(after.held).toEqual([])
+    expect(after.reported).toHaveLength(held.reported.length + 1)
   })
 
   it("asks the model again at the next scheduled look after a failed judge and a failed read", async () => {
