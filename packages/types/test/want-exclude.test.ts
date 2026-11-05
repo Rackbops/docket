@@ -135,7 +135,10 @@ describe("exclude words on a judged watch, from every source", () => {
       const out = (await type.prepare?.(
         ctx({ source: id, target: "edge of the earth", exclude: ["investigator"] }),
       )) as { outcome: { state: { pending: Listing[] }; summary: string } }
-      expect(out.outcome.state.pending.map((l) => l.title)).toEqual([CAMPAIGN.title])
+      // An eBay watch keeps no listing waiting (only item numbers, which these stubs lack).
+      expect(out.outcome.state.pending.map((l) => l.title)).toEqual(
+        id === "ebay" ? [] : [CAMPAIGN.title],
+      )
       expect(out.outcome.summary).toContain("1 excluded, 1 new")
     })
   }

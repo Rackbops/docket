@@ -60,7 +60,15 @@ export interface WantConfig {
   confirm?: string[]
   /** Words or phrases that rule out a listing only when `confirm` did not confirm it ("investigator"). */
   unconfirmed?: string[]
+  /**
+   * A judged watch's owner notes, in their own words, given to the model with each look: what
+   * counts ("complete copies only"), what to skip, how to weigh the price (rackbops-bot-plugins#368,
+   * the Arkham watch). At most `MAX_WANT_NOTES` characters; a plain watch has no model to read them.
+   */
+  notes?: string
 }
+
+export const MAX_WANT_NOTES = 500
 
 export interface WantState {
   /** `listingKey`s of the listings already DMed, newest last, at most `MAX_REPORTED`. */

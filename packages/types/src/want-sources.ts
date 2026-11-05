@@ -52,6 +52,11 @@ export interface Listing {
 export interface ListingDetail {
   text: string
   shipping?: string
+  /**
+   * The listing as the full read shows it now, when the source can say (eBay's getItem): a judged
+   * eBay watch keeps only item numbers between its runs and reads each listing back from this.
+   */
+  listing?: Listing
 }
 
 export type SourceId = "page" | "bgg" | "inbox" | "shopify" | "ebay"
