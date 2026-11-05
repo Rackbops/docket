@@ -420,7 +420,7 @@ function sentItem(v: unknown): SentItem | null {
     url,
     link: v.link,
     title: v.title,
-    name: str(v.name, TITLE_CHARS),
+    name: linkless(v.name, TITLE_CHARS),
     facts,
     ...(typeof v.tried === "string" && HEX.test(v.tried) ? { tried: v.tried } : {}),
   }
@@ -767,7 +767,7 @@ function afterSearch(ctx: RunContext<NewsConfig>, state: NewsState, output: unkn
       const renamed =
         sent && changes && sent.title !== titleKey(item.title) ? `; was: ${sent.name}` : ""
       update = changes ? clean(`${changes}${renamed}`, UPDATE_CHARS, true) : ""
-      if (!sent || !update || updated.has(sent) || sent.tried === claimDigest(update)) {
+      if (!sent || !update || updated.has(sent) || sent.tried === claimDigest(changes)) {
         if (sent) filled.set(sent, { ...facts, ...(filled.get(sent) ?? {}), ...sent.facts })
         repeats++
         continue
@@ -829,9 +829,15 @@ function afterReview(ctx: RunContext<NewsConfig>, state: NewsState, output: unkn
   // Every item reviewed is remembered by its link, so a rejected page costs no review next run; a
   // sent one also by its title, so it is not sent again under another link. A rejected title is
   // not remembered: another item may share its words ("Tour dates announced").
-  // An update's keys are remembered already.
+  // An update's link is remembered already; a sent one under a new title is remembered by it too.
   const keys = state.pending.flatMap((item, i) =>
-    item.update ? [] : kept.has(i + 1) ? newsKeys(item) : [itemKey(item.url)],
+    item.update
+      ? kept.has(i + 1) && item.update.includes("; was: ")
+        ? [titleKey(item.title)]
+        : []
+      : kept.has(i + 1)
+        ? newsKeys(item)
+        : [itemKey(item.url)],
   )
   const seen = [...state.seen, ...keys].slice(-MAX_SEEN)
   const items = state.pending.filter((_, i) => kept.has(i + 1))
@@ -842,7 +848,8 @@ function afterReview(ctx: RunContext<NewsConfig>, state: NewsState, output: unkn
     const facts = factsOf(item)
     const before = item.update ? sentFor(sent, item) : undefined
     if (!kept.has(i + 1)) {
-      const claim = item.update ? claimDigest(item.update) : ""
+      // The claim without its "was:", so a title worded another way does not reopen it.
+      const claim = item.update ? claimDigest(item.update.split("; was: ")[0] ?? "") : ""
       if (before) sent = sent.map((s) => (s === before ? { ...s, tried: claim } : s))
       continue
     }

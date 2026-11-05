@@ -696,8 +696,13 @@ describe("the news watch re-alerts on a change to an item sent before (#368 L8)"
     const again = await look(rejected.state, [{ ...moved, price: "20 USD" }])
     expect(again.review).toBeNull()
     expect(again.search.outcome.summary).toBe("no news (1 found, 1 reported before, 0 excluded)")
+    // The same claim under another title: still the claim rejected.
+    const retitled = await look(again.state, [
+      { ...moved, title: "Rhythm Corps play the Magic Bag" },
+    ])
+    expect(retitled.review).toBeNull()
     const other = { ...SHOW, show: { ...SHOW.show, date: "December 14" } }
-    const next = await look(again.state, [other])
+    const next = await look(retitled.state, [other])
     expect(next.review?.outcome.notify?.text).toContain("December 12 -> December 14")
   })
 
@@ -733,7 +738,9 @@ describe("the news watch re-alerts on a change to an item sent before (#368 L8)"
     const after = out.state as NewsState
     expect(after.sent[0]?.name).toBe(renamed.title)
     expect(after.recent).toEqual([SHOW.title, renamed.title])
-    const next = await look(after, [renamed])
+    // The new title on another page is the same item: not sent again.
+    expect(after.seen).toContain(titleKey(renamed.title))
+    const next = await look(after, [renamed, { ...renamed, url: "https://shop.example/rc" }])
     expect(next.review).toBeNull()
     expect(next.search.job.prompt).toContain(`- ${renamed.title} (show date December 13`)
   })
