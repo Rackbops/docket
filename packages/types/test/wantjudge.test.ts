@@ -146,6 +146,7 @@ describe("the judge's Job and verdicts", () => {
       told: 0,
       warned: false,
       pending: [],
+      held: [],
       failures: 0,
     })
   })

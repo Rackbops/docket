@@ -282,14 +282,17 @@ describe("review fixes", () => {
     expect(none.kept).toHaveLength(1)
   })
 
-  it("has a judged watch read nothing in full and keep no shipping", async () => {
-    const { read, source } = stub([CAMPAIGN], { "1": { text: "", shipping: "free shipping" } })
+  it("has a judged eBay watch read nothing in full at its look, and keep only item numbers", async () => {
+    const held = { ...CAMPAIGN, id: "ebay:100001", ref: "v1|100001|0" }
+    const { read, source } = stub([held], {
+      "ebay:100001": { text: "", shipping: "free shipping" },
+    })
     const type = wantjudgeType({ ebay: source })
     const out = (await type.prepare?.(ctx({ source: "ebay", target: CONFIG.target }))) as {
-      outcome: { state: { pending: Listing[] } }
+      outcome: { state: { pending: Listing[]; held: unknown[] } }
     }
     expect(read).toEqual([])
-    expect(out.outcome.state.pending).toHaveLength(1)
-    expect(out.outcome.state.pending[0]?.shipping).toBeUndefined()
+    expect(out.outcome.state.pending).toEqual([])
+    expect(out.outcome.state.held).toEqual([{ id: "ebay:100001", ref: "v1|100001|0" }])
   })
 })

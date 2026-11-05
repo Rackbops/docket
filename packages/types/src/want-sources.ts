@@ -52,6 +52,11 @@ export interface Listing {
 export interface ListingDetail {
   text: string
   shipping?: string
+  /**
+   * The listing as the full read shows it now, when the source can say (eBay's getItem): a judged
+   * eBay watch keeps only item numbers between its runs and reads each listing back from this.
+   */
+  listing?: Listing
 }
 
 export type SourceId = "page" | "bgg" | "inbox" | "shopify" | "ebay"
@@ -72,11 +77,28 @@ export interface Source {
    * read: never throws. A source without it reads only what its search returned.
    */
   detail?(listing: Listing): Promise<ListingDetail | null>
+  /**
+   * One listing read back by its `ref` for a judged watch that kept only its item number (eBay's):
+   * the listing as it is now, or null when the source says it is gone (sold, ended or removed).
+   * Throws `SourceMiss` when the source could not be read just now (busy, refused, unreachable),
+   * so a failed read is never taken for a gone listing, and `ListingUnreadable` when this one
+   * listing cannot be read and asking again will not help (an answer the source rejects or that
+   * is not a listing).
+   */
+  reread?(listing: Listing): Promise<ListingDetail | null>
 }
 
 /** A read that found nothing usable (an error page, no structured data, a busy API): the type counts it. */
 export class SourceMiss extends Error {
   override name = "SourceMiss"
+}
+
+/**
+ * One listing a source's `reread` cannot read, where asking again will not help: the watch lets
+ * it go unremembered (a later look may find it again) instead of waiting on it.
+ */
+export class ListingUnreadable extends Error {
+  override name = "ListingUnreadable"
 }
 
 /** The source cannot be read at all as set up (BGG refusing the token): a miss the owner should hear about. */

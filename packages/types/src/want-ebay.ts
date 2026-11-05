@@ -9,10 +9,12 @@ import {
   isObj,
   type Listing,
   type ListingDetail,
+  ListingUnreadable,
   MAX_LISTINGS,
   SELLER_CHARS,
   type Source,
   SourceMiss,
+  SourceUnavailableError,
   TITLE_CHARS,
 } from "./want-sources.js"
 
@@ -40,8 +42,9 @@ import {
  * full through the same API, `GET /buy/browse/v1/item/{item_id}` (developer.ebay.com, getItem, read
  * 2026-10-30): its item specifics (`localizedAspects`), short description and description, as text
  * for the watch's `confirm` words, and its first shipping option's cost. Nothing of it is kept: the
- * plain watch uses it for the one run and the DM, as it does the search answer; a judged watch
- * never reads it.
+ * plain watch uses it for the one run and the DM, as it does the search answer. A judged watch
+ * reads its held listings back through it (with the listing as it is now) for the model and for the
+ * DM, keeping only the item numbers between the two.
  */
 
 export const EBAY_SEARCH_PATH = "/buy/browse/v1/item_summary/search"
@@ -148,35 +151,47 @@ export function parseEbayAnswer(body: unknown, query: string): Listing[] {
     if (out.length >= MAX_LISTINGS) break
     if (!isObj(item) || typeof item.title !== "string" || typeof item.itemId !== "string") continue
     if (!matchesWords(item.title.slice(0, 2_000), words)) continue
-    const title = clean(item.title, TITLE_CHARS, true)
-    const url = itemUrl(item.itemWebUrl)
-    if (!title || !url || item.itemId.length > 120) continue
+    const listing = itemListing(item)
     // Keyed by the listing's `/itm/<number>`, which its variations share: one listing is told once,
     // whichever variation eBay puts first on a later look.
-    const number = /\/itm\/([0-9]+)$/.exec(url)?.[1]
-    if (!number || seen.has(number)) continue
-    seen.add(number)
-    const options = Array.isArray(item.buyingOptions) ? item.buyingOptions : []
-    const auction = options.includes("AUCTION")
-    const buyNow = options.includes("FIXED_PRICE")
-    // A plain auction at its current bid; one with Buy It Now at that price, which buys it outright.
-    const price = amountOf(auction && !buyNow ? (item.currentBidPrice ?? item.price) : item.price)
-    const state = typeof item.condition === "string" ? clean(item.condition, 30, true) : ""
-    const kind = auction ? [buyNow ? "auction, Buy It Now" : "auction"] : []
-    const condition = clean([state, ...kind].filter(Boolean).join(", "), CONDITION_CHARS, true)
-    const seller = sellerOf(item.seller)
-    const ref = EBAY_ITEM_ID.test(item.itemId) ? item.itemId : ""
-    out.push({
-      id: `ebay:${number}`,
-      title,
-      url,
-      ...(ref ? { ref } : {}),
-      ...(price ? { price: price.value, currency: price.currency } : {}),
-      ...(condition ? { condition } : {}),
-      ...(seller ? { seller } : {}),
-    })
+    if (!listing || seen.has(listing.id)) continue
+    seen.add(listing.id)
+    out.push(listing)
   }
   return out
+}
+
+/**
+ * One eBay item, a search's summary or getItem's answer (the same fields): titled, with an eBay
+ * item address, priced (an auction at its current bid), with its condition, "auction" when it is
+ * one, and its seller; null without a title, an id or an item address. Pure.
+ */
+function itemListing(item: Record<string, unknown>): Listing | null {
+  if (typeof item.title !== "string" || typeof item.itemId !== "string") return null
+  const title = clean(item.title, TITLE_CHARS, true)
+  const url = itemUrl(item.itemWebUrl)
+  if (!title || !url || item.itemId.length > 120) return null
+  const number = /\/itm\/([0-9]+)$/.exec(url)?.[1]
+  if (!number) return null
+  const options = Array.isArray(item.buyingOptions) ? item.buyingOptions : []
+  const auction = options.includes("AUCTION")
+  const buyNow = options.includes("FIXED_PRICE")
+  // A plain auction at its current bid; one with Buy It Now at that price, which buys it outright.
+  const price = amountOf(auction && !buyNow ? (item.currentBidPrice ?? item.price) : item.price)
+  const state = typeof item.condition === "string" ? clean(item.condition, 30, true) : ""
+  const kind = auction ? [buyNow ? "auction, Buy It Now" : "auction"] : []
+  const condition = clean([state, ...kind].filter(Boolean).join(", "), CONDITION_CHARS, true)
+  const seller = sellerOf(item.seller)
+  const ref = EBAY_ITEM_ID.test(item.itemId) ? item.itemId : ""
+  return {
+    id: `ebay:${number}`,
+    title,
+    url,
+    ...(ref ? { ref } : {}),
+    ...(price ? { price: price.value, currency: price.currency } : {}),
+    ...(condition ? { condition } : {}),
+    ...(seller ? { seller } : {}),
+  }
 }
 
 /** eBay's RESTful item id, `v1|<listing number>|<variation, 0 for none>`. */
@@ -244,7 +259,9 @@ function shippingOf(options: unknown): string {
 /**
  * What one getItem answer says, as `ListingDetail`: the title, short description, each item
  * specific as "name: value", the product's own title (`fieldgroups=PRODUCT`), and the description as plain text, cleaned
- * and capped at `DETAIL_CHARS`; and its shipping. Null for an answer that is not an item. Pure.
+ * and capped at `DETAIL_CHARS`; its shipping; and the listing itself as it is now (title, price,
+ * condition, seller, address), which a judged watch reads instead of keeping it. Null for an answer
+ * that is not an item. Pure.
  */
 export function parseEbayItem(body: unknown): ListingDetail | null {
   if (!isObj(body) || typeof body.itemId !== "string") return null
@@ -264,9 +281,11 @@ export function parseEbayItem(body: unknown): ListingDetail | null {
     parts.push(clean(plain(body.description), DESCRIPTION_CHARS, true))
   }
   const shipping = shippingOf(body.shippingOptions)
+  const listing = itemListing(body)
   return {
     text: clean(parts.filter(Boolean).join("\n"), DETAIL_CHARS, true),
     ...(shipping ? { shipping } : {}),
+    ...(listing ? { listing: { ...listing, ...(shipping ? { shipping } : {}) } } : {}),
   }
 }
 
@@ -299,6 +318,31 @@ export function ebaySource(browse: EbayBrowse): Source {
       } catch {
         return null
       }
+    },
+    async reread(listing) {
+      const request = listing.ref ? ebayItemRequest(listing.ref) : null
+      if (!request) throw new SourceMiss("the held listing has no eBay item number")
+      let status: number
+      let body: unknown
+      try {
+        ;({ status, body } = await browse(request))
+      } catch (err) {
+        // A fixed message: the host's own may echo the request or eBay's answer into run history.
+        throw new SourceMiss("eBay could not be reached for a held listing", { cause: err })
+      }
+      // Gone: 404 or 410, which is what eBay is taken to answer for an item it no longer has (inferred,
+      // not checked against a live ended listing). Busy (408, 429, 5xx) and refused keys (401, 403) are
+      // misses, tried again next look; any other answer for this one item will not change by asking
+      // again, so it is let go.
+      if (status === 404 || status === 410) return null
+      if (status === 401 || status === 403)
+        throw new SourceUnavailableError("eBay refused the app's keys")
+      if (status === 408 || status === 429 || status >= 500)
+        throw new SourceMiss(`eBay is busy (HTTP ${status})`)
+      const read = status === 200 ? parseEbayItem(body) : null
+      if (!read?.listing)
+        throw new ListingUnreadable(`eBay answered HTTP ${status} for a held listing`)
+      return read
     },
   }
 }
