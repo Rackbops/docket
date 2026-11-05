@@ -713,6 +713,46 @@ describe("the news watch re-alerts on a change to an item sent before (#368 L8)"
     expect(both.review?.outcome.summary).toBe("1 new item(s) and 1 change(s) sent")
   })
 
+  it("keeps a detail first given after sending, without an alert, so its later change is told", async () => {
+    const first = await look(null, [SHOW])
+    const priced = await look(first.state, [{ ...SHOW, price: "20 USD" }])
+    expect(priced.review).toBeNull()
+    expect((priced.state as NewsState).sent[0]?.facts.price).toBe("20 USD")
+    // A later page leaving it out, or a stored value, is never overwritten by a gap-fill.
+    const raised = await look(priced.state, [{ ...SHOW, price: "25 USD" }])
+    expect(raised.review?.outcome.notify?.text).toContain("What changed: price: 20 USD -> 25 USD")
+  })
+
+  it("says what a page now under another title was, and lists it by its new title", async () => {
+    const first = await look(null, [SHOW])
+    const renamed = { ...moved, title: "Rhythm Corps show moved to December 13" }
+    const out = await look(first.state, [renamed])
+    expect(out.review?.outcome.notify?.text).toContain(
+      "What changed: show date: December 12 -> December 13; was: Rhythm Corps at the Magic Bag",
+    )
+    const after = out.state as NewsState
+    expect(after.sent[0]?.name).toBe(renamed.title)
+    expect(after.recent).toEqual([SHOW.title, renamed.title])
+    const next = await look(after, [renamed])
+    expect(next.review).toBeNull()
+    expect(next.search.job.prompt).toContain(`- ${renamed.title} (show date December 13`)
+  })
+
+  it("tells the search and the review that a rewording is no change, and drops a malformed record", async () => {
+    const first = await look(null, [SHOW])
+    const change = await look(first.state, [moved])
+    expect(change.search.job.prompt).toContain(
+      "(a real change, not the same thing worded another way)",
+    )
+    expect(change.review?.job.prompt).toContain(
+      "not the same date, price or availability worded another way",
+    )
+    const record = (first.state as NewsState).sent[0]
+    expect(newsState({ sent: [{ ...record, link: "not hex" }] }).sent).toEqual([])
+    expect(newsState({ sent: [{ ...record, title: "x" }] }).sent).toEqual([])
+    expect(newsState({ sent: [{ ...record, tried: "zz" }] }).sent[0]).not.toHaveProperty("tried")
+  })
+
   it("never takes `update` from the model", async () => {
     expect(
       parseNews({ items: [{ ...REISSUE, update: "made up" }] }, false)?.[0],

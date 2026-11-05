@@ -393,7 +393,7 @@ function claimDigest(update: string): string {
   return createHash("sha256").update(wordsOf(update).join(" ")).digest("hex").slice(0, 16)
 }
 
-/** A stored sent item, re-checked as stored data must be; null when unusable. */
+/** Each detail's cap, as `newsItem` caps it. */
 const FACT_CHARS: Readonly<Record<(typeof FACT_FIELDS)[number], number>> = {
   released: DATE_CHARS,
   price: DETAIL_CHARS,
@@ -404,6 +404,7 @@ const FACT_CHARS: Readonly<Record<(typeof FACT_FIELDS)[number], number>> = {
 }
 const HEX = /^[0-9a-f]{16,64}$/
 
+/** A stored sent item, re-checked as stored data must be; null when unusable. */
 function sentItem(v: unknown): SentItem | null {
   if (!isObj(v) || typeof v.link !== "string" || typeof v.title !== "string") return null
   const url = safeUrl(v.url)
@@ -521,12 +522,13 @@ function brief(config: NewsConfig): string[] {
 
 /** The search run: the subject and its kinds, what was already reported, and the rules for an item. */
 export function newsJob(config: NewsConfig, state: NewsState, now: Date): JobSpec {
-  // Each sent title, newest first; with its page and last details when it has any, so the search
-  // can tell a change on that page.
+  // Each sent title, newest first, with its page and last details when `sent` has them, so the
+  // search can tell a change on that page.
   const titles = [...state.recent].reverse().map((t) => {
     const s = state.sent.findLast((x) => x.name === t)
     const line = s ? factsLine(s.facts) : ""
-    return s && line ? `${t} (${line}; page ${s.url})` : t
+    if (!s) return t
+    return line ? `${t} (${line}; page ${s.url})` : `${t} (page ${s.url})`
   })
   const shows = parts(config).shows
   const prompt = [
@@ -749,6 +751,9 @@ function afterSearch(ctx: RunContext<NewsConfig>, state: NewsState, output: unkn
   let changed = 0
   // Sent items an update in this batch is about: one per item, however many copies come back.
   const updated = new Set<SentItem>()
+  // A sent item's details its first sending lacked, as its own page now gives them: kept without
+  // an alert (they may have been there all along), so a later change to them is told.
+  const filled = new Map<SentItem, NewsFacts>()
   for (const item of items) {
     const keys = newsKeys(item)
     let update = ""
@@ -756,8 +761,14 @@ function afterSearch(ctx: RunContext<NewsConfig>, state: NewsState, output: unkn
       // Sent before: back only when its own page shows a detail changed, once per batch, and not
       // a claim the review rejected.
       const sent = sentFor(state.sent, item)
-      update = sent ? clean(changedFacts(sent.facts, factsOf(item)), UPDATE_CHARS, true) : ""
+      const facts = factsOf(item)
+      const changes = sent ? changedFacts(sent.facts, facts) : ""
+      // The page now under another title: say what it was, so the DM is not read as a new item.
+      const renamed =
+        sent && changes && sent.title !== titleKey(item.title) ? `; was: ${sent.name}` : ""
+      update = changes ? clean(`${changes}${renamed}`, UPDATE_CHARS, true) : ""
       if (!sent || !update || updated.has(sent) || sent.tried === claimDigest(update)) {
+        if (sent) filled.set(sent, { ...facts, ...(filled.get(sent) ?? {}), ...sent.facts })
         repeats++
         continue
       }
@@ -778,13 +789,25 @@ function afterSearch(ctx: RunContext<NewsConfig>, state: NewsState, output: unkn
     `${changed > 0 ? `${changed} changed, ` : ""}${excluded} excluded`
   // A run counts as done only once nothing waits on a review: a search whose review then fails for
   // good is still a missed run, so a broken reviewer reaches the owner.
+  const sent = state.sent.map((s) => {
+    const facts = filled.get(s)
+    return facts ? { ...s, facts } : s
+  })
   if (fresh.length === 0)
     return {
-      state: { ...state, phase: "search", pending: [], failures: 0, missed: 0, warned: false },
+      state: {
+        ...state,
+        sent,
+        phase: "search",
+        pending: [],
+        failures: 0,
+        missed: 0,
+        warned: false,
+      },
       summary: `no news (${counts})`,
     }
   return {
-    state: { ...state, phase: "review", pending: fresh, failures: 0 },
+    state: { ...state, sent, phase: "review", pending: fresh, failures: 0 },
     followUp: {},
     summary: `${counts}; ${fresh.length} to review`,
   }
@@ -824,12 +847,13 @@ function afterReview(ctx: RunContext<NewsConfig>, state: NewsState, output: unkn
       continue
     }
     const [link, title] = newsKeys(item)
+    // A sent update takes the page's title as it is now, with the old details it did not give.
     const record: SentItem = before
       ? {
           url: before.url,
           link: before.link,
-          title: before.title,
-          name: before.name,
+          title,
+          name: item.title,
           facts: { ...before.facts, ...facts },
         }
       : { url: item.url, link, title, name: item.title, facts }
@@ -841,7 +865,10 @@ function afterReview(ctx: RunContext<NewsConfig>, state: NewsState, output: unkn
     seen,
     recent: [
       ...state.recent,
-      ...items.filter((item) => !item.update).map((item) => item.title),
+      // An update under the same title is listed already; one under a new title is listed by it.
+      ...items
+        .filter((item) => !item.update || !state.recent.includes(item.title))
+        .map((item) => item.title),
     ].slice(-PROMPT_SEEN),
     sent: sent.slice(-MAX_SENT),
     failures: 0,
