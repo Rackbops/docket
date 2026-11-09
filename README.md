@@ -17,7 +17,8 @@ on a rackbops-discord-bot instance logged in as Rackbops Clerk, with people in i
 [Rackbops/docket-runner](https://github.com/Rackbops/docket-runner) executes through the
 Claude Code CLI on roshne's subscription, never an API key (plan rev17). The plan of record is
 Rackbops/Tooling, `research/city-hall-task-tracker.md` (section 0 is the goal in one page); the
-epic is Rackbops/Tooling#816.
+epic is Rackbops/Tooling#816. Which social platforms a research run may read, by what route and on
+what terms, is recorded in [`docs/social-sources.md`](docs/social-sources.md) (docket#107).
 
 ## Status
 
