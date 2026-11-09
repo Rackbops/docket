@@ -268,6 +268,12 @@ describe("the judge's runs", () => {
     expect(lost.prompt).toContain("1. A")
   })
 
+  it("keeps the runner's detail in a failed look's summary on a watch that keeps findings (#108)", async () => {
+    const failed = { kind: "error", detail: "CLI said: A at 30 USD", durationMs: 1 } as const
+    const out = (await type.finish?.(ctx("followup:o1", pending), failed)) as { summary: string }
+    expect(out.summary).toBe("judge error (try 1): CLI said: A at 30 USD")
+  })
+
   it("counts a read that throws as a miss, and neither tells nor remembers a listing an edit put over the limit", async () => {
     const broken = wantjudgeType({
       page: { id: "page", search: async () => Promise.reject(new Error("boom")) },
