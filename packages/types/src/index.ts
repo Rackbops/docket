@@ -160,6 +160,7 @@ export {
   MAX_MESSAGE_CHARS,
   MAX_PUBLISHED_CHARS,
   MAX_UNCERTAIN,
+  MAX_UNCERTAIN_CHARS,
   parseAnswer,
   parseBlocked,
   parseCoverage,

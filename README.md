@@ -292,11 +292,13 @@ what terms, is recorded in [`docs/social-sources.md`](docs/social-sources.md) (d
   and Bluesky's public search, under prompt rules and about 120 credits, with 20 turns in place of
   15 when social search is on. A finding from a post carries its platform, date and whether it was
   opened; the answer carries `coverage`, shown as a "Social:" line, with Reddit always unavailable
-  (never a route). Plain code counts a repost once, moves a stock, price or availability claim
-  resting on posts alone, and a post older than `since`, to `uncertain`, and completes the
+  (never a route). Plain code counts a copied link once, moves a stock, price or availability
+  claim resting on posts alone, and a post older than `since`, to `uncertain`, and completes the
   coverage. Behaviour changes: a request without `social` now gets 20 turns and the social rules
   (`social: none` restores 15 and the old prompt); the answer schema, and the reviewer's that embeds
-  it, gain optional fields for every request. No core change. Release order: docket 0.23.0 first,
+  it, gain optional fields for every request; a web request drafted under 0.22.0 and reviewed under
+  0.23.0 shows a "Social:" line of platforms skipped, "not reported by the run", once. No core
+  change. Release order: docket 0.23.0 first,
   then the tracker change that offers `social` and `since` (and refuses `reddit`).
 
 ## Use

@@ -109,7 +109,10 @@ export const ANSWER_SCHEMA = {
           claim: { type: "string" },
           sources: {
             type: "array",
-            items: { type: "string", description: "A URL you opened." },
+            items: {
+              type: "string",
+              description: "A URL you opened; for a post marked snippet, the post's own page.",
+            },
           },
           platform: {
             type: "string",

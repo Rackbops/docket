@@ -17,6 +17,7 @@ import {
   MAX_COVERAGE,
   MAX_MESSAGE_CHARS,
   MAX_UNCERTAIN,
+  MAX_UNCERTAIN_CHARS,
   NOT_REPORTED,
   parseAnswer,
   parseSocial,
@@ -30,11 +31,13 @@ import {
   renderAnswer,
   research,
   researchJob,
+  researchType,
   reviewJob,
   SAID_IN_POST,
   SOCIAL_MAX_CREDITS,
   SOCIAL_MAX_TURNS,
   SOCIAL_PLATFORMS,
+  sinceOf,
   socialChoice,
   socialOutgoing,
   socialPlatforms,
@@ -198,6 +201,7 @@ describe("a web first pass with social on (decisions 1 to 4, 6)", () => {
     expect(p).toContain("Cite each post's own page")
     expect(p).toContain("set `platform` (youtube, tiktok, instagram or bluesky), `publishedAt`")
     expect(p).toContain("`evidence` (`read` when you opened")
+    expect(p).toContain("A post is the one exception to the rule that a cited source was opened")
     // Never Reddit, through any route.
     expect(p).toContain(`never Reddit (${REDDIT_WHY})`)
   })
@@ -236,7 +240,14 @@ describe("a web first pass with social on (decisions 1 to 4, 6)", () => {
         "which, and do not retry it)",
     )
     expect(p).toContain("A failed call is not a failed answer")
-    expect(p).toContain("follow a `continuation` token at most once, inside that count")
+    expect(p).toContain(
+      "follow a `continuation` token at most once, passed in place of `query`, inside that count",
+    )
+    expect(p).toContain("with no `url` and no `proxy`, only the body `alexandria:")
+    expect(p).toContain("a result whose `postUrl` is null is not citable")
+    expect(p).toContain(
+      "asking it for each post's text, author handle, `uri` and `record.createdAt`",
+    )
     expect(p).toContain("spread what you read across channels")
     expect(p).toContain('an empty result is "nothing found", never "nobody says so"')
   })
@@ -262,6 +273,12 @@ describe("since (a past-season post)", () => {
     expect(reviewJob(SINCED, DRAFT).prompt).toContain(
       "only posts from 2026-09-01 on are used: a dated post before it is removed",
     )
+    // `since` counts whole UTC days: a time of day is floored, so prompt, filter and belt agree.
+    const evening: ResearchConfig = { ...WEB, since: "2026-09-01T18:00:00Z" }
+    expect(sinceOf(evening)?.toISOString()).toBe(SINCE)
+    expect(researchJob(evening).prompt).toContain(`&since=${SINCE}`)
+    expect(researchJob(evening).prompt).toContain("on or after 2026-09-01 count")
+    expect(sinceOf({ ...WEB, since: "not a date" })).toBeNull()
   })
 
   it("plain code moves a dated post before it to uncertain; an about date counts, a relative one does not", () => {
@@ -270,6 +287,9 @@ describe("since (a past-season post)", () => {
     expect(postDate("undated")).toBeNull()
     expect(postDate("3 weeks ago")).toBeNull()
     expect(postDate(undefined)).toBeNull()
+    // A time with no zone is UTC, whatever the host's zone; an offset is honoured.
+    expect(postDate("2026-10-19T14:00")?.toISOString()).toBe("2026-10-19T14:00:00.000Z")
+    expect(postDate("2026-10-19T14:00:00+05:30")?.toISOString()).toBe("2026-10-19T08:30:00.000Z")
     const answer = parseAnswer({
       ...DRAFT,
       findings: [
@@ -292,6 +312,13 @@ describe("since (a past-season post)", () => {
     ])
     // Without `since`, every dated post stands.
     expect(socialOutgoing(answer, { mode: "auto" }, null).findings).toHaveLength(4)
+    // A post on the day of `since`, before its time of day, stands: whole days.
+    const sameDay = socialOutgoing(
+      { ...answer, findings: [{ ...answer.findings[1], publishedAt: "2026-09-01T10:00:00Z" }] },
+      { mode: "auto" },
+      new Date("2026-09-01T18:00:00Z"),
+    )
+    expect(sameDay.findings).toHaveLength(1)
   })
 })
 
@@ -309,6 +336,8 @@ describe("a post finding's fields (missing timestamp, a web page)", () => {
         { ...DRAFT.findings[2], platform: "youtube", publishedAt: "2026-10-01", evidence: "read" },
         // Bad values are dropped, the platform kept.
         { claim: "Odd.", sources: [BSKY], platform: "bluesky", publishedAt: 7, evidence: "guess" },
+        // A platform the run got wrong: the sources' host wins.
+        { claim: "Wrong.", sources: [TIKTOK], platform: "youtube" },
       ],
     })
     expect(answer?.findings).toEqual([
@@ -323,6 +352,7 @@ describe("a post finding's fields (missing timestamp, a web page)", () => {
       { claim: "Mixed.", sources: [TIKTOK, BSKY] },
       { claim: DRAFT.findings[2]?.claim, sources: [MAKER] },
       { claim: "Odd.", sources: [BSKY], platform: "bluesky" },
+      { claim: "Wrong.", sources: [TIKTOK], platform: "tiktok" },
     ])
     // `platform: "youtube"` on a maker's page is kept only when the schema's enum admits it...
     expect(ANSWER_SCHEMA.properties.findings.items.properties.platform.enum).toEqual([
@@ -352,6 +382,27 @@ describe("a post finding's fields (missing timestamp, a web page)", () => {
     expect(dm).toContain(`- ${DRAFT.findings[2]?.claim} <${MAKER}>`)
     expect(dm.length).toBeLessThanOrEqual(MAX_MESSAGE_CHARS)
   })
+
+  it("hostile post fields and coverage notes reach the DM cleaned and capped", () => {
+    const answer = parseAnswer({
+      ...DRAFT,
+      findings: [
+        {
+          claim: "Pinged.",
+          sources: [BSKY],
+          platform: "bluesky",
+          publishedAt: `@everyone <@&123> [x](https://evil.example) ${"9".repeat(80)}`,
+        },
+      ],
+      coverage: [{ platform: "youtube", status: "searched", note: "@here [see](https://x.y)" }],
+    })
+    if (!answer) throw new Error("no answer")
+    const out = socialOutgoing(answer, { mode: "auto" }, null)
+    const dm = renderAnswer("Pumpkin bread mix", out, { ...approved, answer: out })
+    expect(dm).not.toMatch(/@everyone|@here|<@&|\]\(/)
+    expect(answer.findings[0]?.publishedAt?.length).toBeLessThanOrEqual(40)
+    expect(out.coverage?.[0]?.note?.length).toBeLessThanOrEqual(120)
+  })
 })
 
 describe("duplicates: a repost or a copied link is one post", () => {
@@ -373,9 +424,26 @@ describe("duplicates: a repost or a copied link is one post", () => {
       "https://www.instagram.com/p/C9abc_DEF12/",
     )
     expect(canonicalSocialUrl(`${TIKTOK}?is_from_webapp=1&sender_device=pc&lang=en`)).toBe(TIKTOK)
-    expect(canonicalSocialUrl("https://vm.tiktok.com/ZMabc123/?x=1")).toBe(
+    expect(canonicalSocialUrl("https://vm.tiktok.com/ZMabc123/?is_from_webapp=1")).toBe(
       "https://vm.tiktok.com/ZMabc123",
     )
+    // A search or tag page on these hosts keeps the parameters that name it.
+    expect(canonicalSocialUrl("https://www.tiktok.com/search?q=pumpkin&lang=en")).toBe(
+      "https://www.tiktok.com/search?q=pumpkin",
+    )
+    expect(canonicalSocialUrl("https://www.instagram.com/explore/tags/pumpkin/?hl=en")).toBe(
+      "https://www.instagram.com/explore/tags/pumpkin",
+    )
+    expect(canonicalSocialUrl("https://bsky.app/search?q=pumpkin+bread#x")).toBe(
+      "https://bsky.app/search?q=pumpkin+bread",
+    )
+    // The public API host is no post: a cited search address stays as it is, un-merged.
+    const api = `${BLUESKY_SEARCH_URL}?q=pumpkin&sort=top`
+    expect(canonicalSocialUrl(api)).toBe(api)
+    expect(platformOf(api)).toBeNull()
+    expect(platformOf("https://baker.bsky.social/")).toBeNull()
+    expect(platformOf("https://notyoutube.com/watch?v=dQw4w9WgXcQ")).toBeNull()
+    expect(platformOf("https://youtube.com.evil.com/watch?v=dQw4w9WgXcQ")).toBeNull()
     expect(canonicalSocialUrl(`${BSKY}/?ref=x#frag`)).toBe(BSKY)
     // A channel page keeps its real parameters, loses the tracking ones.
     expect(canonicalSocialUrl("https://www.youtube.com/@baker/videos?view=0&si=abc")).toBe(
@@ -426,8 +494,19 @@ describe("the belt under the prompts: stock, price and availability off posts al
         { claim: "It is back in stock at most stores.", sources: [TIKTOK] },
         { claim: "A poster paid $3.99 for it.", sources: [WATCH, BSKY] },
         { claim: "It sold out in a week last year.", sources: [BSKY] },
+        { claim: "It costs 4 dollars at most stores, posters say.", sources: [TIKTOK] },
+        { claim: "It is now available in stores nationwide.", sources: [BSKY] },
         { claim: "The mix is 3.99 USD a box.", sources: [MAKER, WATCH] },
         { claim: "Posters find it too sweet.", sources: [TIKTOK] },
+        // Everyday product talk is not a stock, price or availability claim.
+        { claim: "The box makes a 2 pound loaf and needs 2 pounds of pumpkin.", sources: [WATCH] },
+        { claim: "Posters say the recipe is available on the channel's page.", sources: [WATCH] },
+        { claim: "It cost her three tries to get a clean rise.", sources: [TIKTOK] },
+        {
+          claim: "The transcript was unavailable, so only the caption was read.",
+          sources: [WATCH],
+        },
+        { claim: "Posters find it expensive but worth the money.", sources: [BSKY] },
       ],
     })
     if (!answer) throw new Error("no answer")
@@ -435,16 +514,35 @@ describe("the belt under the prompts: stock, price and availability off posts al
     expect(out.findings.map((f) => f.claim)).toEqual([
       "The mix is 3.99 USD a box.",
       "Posters find it too sweet.",
+      "The box makes a 2 pound loaf and needs 2 pounds of pumpkin.",
+      "Posters say the recipe is available on the channel's page.",
+      "It cost her three tries to get a clean rise.",
+      "The transcript was unavailable, so only the caption was read.",
+      "Posters find it expensive but worth the money.",
     ])
     expect(out.uncertain).toEqual([
       DRAFT.uncertain[0],
       `It is back in stock at most stores. (${SAID_IN_POST})`,
       `A poster paid $3.99 for it. (${SAID_IN_POST})`,
       `It sold out in a week last year. (${SAID_IN_POST})`,
+      `It costs 4 dollars at most stores, posters say. (${SAID_IN_POST})`,
+      `It is now available in stores nationwide. (${SAID_IN_POST})`,
     ])
-    // The list stays within its cap: the run's own lines first.
+    // The list stays within its cap: the run's own lines first, then a count of what is hidden.
     const full = { ...answer, uncertain: Array.from({ length: MAX_UNCERTAIN }, (_, i) => `u${i}`) }
-    expect(socialOutgoing(full, { mode: "auto" }, null).uncertain).toHaveLength(MAX_UNCERTAIN)
+    const capped = socialOutgoing(full, { mode: "auto" }, null).uncertain
+    expect(capped).toHaveLength(MAX_UNCERTAIN)
+    expect(capped.slice(0, MAX_UNCERTAIN - 1)).toEqual(["u0", "u1", "u2", "u3", "u4"])
+    expect(capped.at(-1)).toBe("(6 more line(s) moved here, not shown)")
+    // A moved line is cut to the uncertain-line cap.
+    const long = parseAnswer({
+      ...DRAFT,
+      findings: [{ claim: `Sold out ${"again and ".repeat(60)}`, sources: [TIKTOK] }],
+    })
+    if (!long) throw new Error("no answer")
+    const line = socialOutgoing(long, { mode: "auto" }, null).uncertain.at(-1) ?? ""
+    expect(line.length).toBeLessThanOrEqual(MAX_UNCERTAIN_CHARS)
+    expect(line.endsWith("...")).toBe(true)
     expect(reviewJob(WEB, DRAFT).prompt).toContain(
       "A claim about stock, a price or availability that rests on posts alone moves to `uncertain`",
     )
@@ -542,10 +640,10 @@ describe("the reviewer's social checks", () => {
       "A finding marked `read` with no sign the post was opened becomes `snippet`",
     )
     expect(review.prompt).toContain(
-      "`coverage` names every platform asked for (YouTube, TikTok, Instagram and Bluesky) and " +
+      "`coverage` names every platform in scope (YouTube, TikTok, Instagram and Bluesky) and " +
         "Reddit as unavailable; `revise` an answer missing either",
     )
-    expect(reviewJob(ONLY, DRAFT).prompt).toContain("asked for (YouTube and Bluesky)")
+    expect(reviewJob(ONLY, DRAFT).prompt).toContain("in scope (YouTube and Bluesky)")
     for (const spec of [
       reviewJob(NONE, DRAFT),
       reviewJob(SENT, DRAFT, PAGES),
@@ -584,6 +682,42 @@ describe("through the lanes", () => {
     ])
     expect(findings.map((f) => f.source)).toEqual([WATCH, TIKTOK, MAKER])
     expect((await store.getTask(task.id))?.status).toBe("done")
+  })
+
+  it("a sent request: its runs were never asked to search, so no Social line and no tags", async () => {
+    const plain = { ...DRAFT, findings: [DRAFT.findings[2]], coverage: undefined }
+    const { executor, specs } = scripted(
+      ok(plain),
+      ok({ verdict: "approve", problems: [], answer: plain }, 0.1),
+    )
+    const store = new MemoryStore()
+    const clock = new FakeClock(new Date(T0))
+    const notifier = new FakeNotifier()
+    const type = researchType({ readSources: async () => PAGES })
+    const larry = await store.createUser({ discordId: "d-larry", at: T0 })
+    const lanes = new Lanes({
+      store,
+      clock,
+      types: { ...TASK_TYPES, research: type },
+      notifier,
+      executor,
+    })
+    const { task } = await createTask(
+      store,
+      actor(larry),
+      larry,
+      { type, title: "Pumpkin bread mix", config: SENT, schedule: { kind: "once", at: T0 } },
+      clock.now(),
+    )
+    await lanes.tickExecute()
+    await lanes.tickExecute()
+    expect(specs.map((s) => s.maxTurns)).toEqual([RESEARCH_MAX_TURNS, REVIEW_MAX_TURNS])
+    const dm = notifier.sent[0]?.message.text ?? ""
+    expect(dm).not.toContain("Social:")
+    expect(dm).not.toContain("not reported by the run")
+    expect((await store.listFindings({ taskId: task.id })).map((f) => f.tags)).toEqual([
+      ["research", "approve"],
+    ])
   })
 
   it("none: the DM and the findings are as before 0.23.0", async () => {

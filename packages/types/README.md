@@ -232,15 +232,16 @@ The tracker's task types, built on `@rackbops/docket-core`'s contract. Shipped s
   Plain code is the belt (`socialOutgoing`, on the answer that goes out, first pass and update):
   a social post link is one post (`canonicalSocialUrl`: `youtu.be`, shorts, live and embed links
   and tracking parameters to the watch page; Instagram reel and p links to one `/p/` page; TikTok
-  post queries dropped; Bluesky hashes dropped; any other URL untouched), applied in
+  post queries dropped; hashes and tracking parameters dropped everywhere; any other URL untouched), applied in
   `parseAnswer` so stored drafts and saved findings carry canonical links; a finding repeating an
-  earlier one (same claim, same post) is dropped; with `since`, a post finding dated before it
-  moves to `uncertain` saying when it was posted; a finding whose every source is on a social
+  earlier one (same claim, same first link) is dropped; with `since` (whole UTC days), a post
+  finding dated before it moves to `uncertain` saying when it was posted; a finding whose every source is on a social
   platform and whose claim speaks of stock, a price or availability (whole words, or a currency
   amount) moves to `uncertain` "(said in a post, not verified)"; and `coverage` is rebuilt
   (`withCoverage`): every chosen platform present (`skipped`, "not reported by the run", when the
   run left one out), Reddit always `unavailable` with `REDDIT_WHY`, the run's other rows after,
-  at most 8; `none` drops it. `uncertain` stays within its cap of 6, the run's own lines first.
+  at most 8; `none`, and a `sent` request, drop it. `uncertain` stays within its cap of 6, the
+  run's own lines first; past it, the last line says how many more were moved.
 
   Reddit is never a route (roshne, 2026-11-07: "if we want to do anything with Reddit, it has to
   be done through a local PC session with me logged in"): not here, not in a host. X, Threads,

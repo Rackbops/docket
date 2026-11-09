@@ -84,7 +84,7 @@ describe("the research run splits the question into parts (0.10.0)", () => {
     expect(researchJob(ROD).prompt).not.toContain("earlier answer left unsettled")
   })
 
-  it("leaves the answer schema as it was: the split is prompt-only", () => {
+  it("leaves the answer schema's required set as it was: the split is prompt-only", () => {
     // `coverage` is 0.23.0's (social platforms), not the split's.
     expect(Object.keys(ANSWER_SCHEMA.properties)).toEqual([
       "summary",

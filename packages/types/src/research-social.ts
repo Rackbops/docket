@@ -1,7 +1,9 @@
+import { clean } from "@rackbops/docket-core"
 import {
   type Coverage,
   MAX_COVERAGE,
   MAX_UNCERTAIN,
+  MAX_UNCERTAIN_CHARS,
   type ResearchAnswer,
   type ResearchFinding,
   sameClaim,
@@ -31,7 +33,7 @@ import {
  * on gathered pages, first or second pass, searches no platform: it cannot open pages.
  *
  * Reddit is never searched (roshne, 2026-11-07: "if we want to do anything with Reddit, it has to
- * be done through a local PC session with me logged in"; its API is closed to new apps and its
+ * be done through a local PC session with me logged in"; its API is closing to outside apps and its
  * terms bar scraping): every answer's `coverage` names it unavailable with `REDDIT_WHY`, whatever
  * the run wrote.
  */
@@ -101,14 +103,17 @@ export const SOCIAL_MAX_CREDITS =
   SOCIAL_YOUTUBE_CALLS * 5 + SOCIAL_ORIANE_CALLS * 50 + SOCIAL_BLUESKY_CALLS
 
 /**
- * Bluesky's public post search (docs.bsky.app, read 2026-11-07): no authentication; `q`, `sort`
- * (`top` or `latest`), `since` and `until` (filtering on `sortAt`), `limit` up to 100.
+ * Bluesky's public post search (the `app.bsky.feed.searchPosts` lexicon and docs.bsky.app's API
+ * directory, read 2026-11-07 and 2026-11-09): no authentication on `public.api.bsky.app`; `q`,
+ * `sort` (`top` or `latest`), `since` and `until` (filtering on `sortAt`, not `createdAt`),
+ * `limit` up to 100.
  */
 export const BLUESKY_SEARCH_URL = "https://public.api.bsky.app/xrpc/app.bsky.feed.searchPosts"
 
 /** Why Reddit is never searched, as the DM's coverage line says it. */
 export const REDDIT_WHY =
-  "its API is closed to new apps; only a local browser session, logged in, could read it"
+  "its API is closing to outside apps and its terms bar scraping; only a local browser " +
+  "session, logged in, could read it"
 
 /** "YouTube, TikTok and Bluesky" */
 function names(platforms: readonly SocialPlatform[]): string {
@@ -155,7 +160,10 @@ export function socialLines(choice: SocialChoice, since: Date | null): string[] 
       "tiktok, instagram or bluesky), `publishedAt` (the instant when the platform gave one; " +
       '"about <date>" worked out from a relative time; "undated" when there is none) and ' +
       "`evidence` (`read` when you opened the transcript, the comments or the post itself; " +
-      "`snippet` when you have only its caption or a search result).",
+      "`snippet` when you have only its caption or a search result). A post is the one " +
+      "exception to the rule that a cited source was opened: you may cite a post you could not " +
+      "open when the finding is marked `snippet` and the claim says it rests on the caption or " +
+      "the search result.",
     "A repost or a copied link counts once, whatever the account. Summarise praise and " +
       "complaints apart, and say how many posters said each; a poster's opinion is an opinion, " +
       "told apart from a verified fact, and where posters disagree, say so. Never take stock, a " +
@@ -173,9 +181,10 @@ export function socialLines(choice: SocialChoice, since: Date | null): string[] 
 /** YouTube through Firecrawl's `youtube-com` provider (the smoke of 2026-11-09, docs/social-sources.md). */
 function youtubeLine(sinceDay: string | null): string {
   return (
-    'YouTube: `firecrawl_scrape` with no `url` and the body `alexandria: {"provider": ' +
-    '"youtube-com", "capability": "videos/search_videos", "options": {"query": "<terms>", ' +
-    '"upload_date": "<window>"}}`; `upload_date` is one of hour, today, week, month or year' +
+    "YouTube: `firecrawl_scrape` with no `url` and no `proxy`, only the body `alexandria: " +
+    '{"provider": "youtube-com", "capability": "videos/search_videos", "options": ' +
+    '{"query": "<terms>", "upload_date": "<window>"}}`; `upload_date` is one of hour, today, ' +
+    "week, month or year" +
     (sinceDay
       ? `, the smallest that reaches back to ${sinceDay} (leave it out when none does)`
       : ", or left out") +
@@ -183,7 +192,8 @@ function youtubeLine(sinceDay: string | null): string {
     'To read a video, the same tool with `"capability": "videos/video_transcript"` or ' +
     '`"videos/video_comments"` and `"options": {"video_id": "<id>"}`. At most ' +
     `${SOCIAL_YOUTUBE_CALLS} youtube-com calls in all, searches and reads together (5 credits ` +
-    "each); follow a `continuation` token at most once, inside that count. One channel can fill " +
+    "each); follow a `continuation` token at most once, passed in place of `query`, inside " +
+    "that count. One channel can fill " +
     "a page with clips nobody watched: spread what you read across channels, and weigh a clip " +
     "with no views for little."
   )
@@ -193,15 +203,16 @@ function youtubeLine(sinceDay: string | null): string {
 function orianeLine(platforms: readonly SocialPlatform[]): string {
   const caps = platforms.map((p) => `"${p}/posts-search"`).join(" or ")
   return (
-    `${names(platforms)}: \`firecrawl_scrape\` with no \`url\` and the body \`alexandria: ` +
-    `{"provider": "oriane", "capability": ${caps}, "options": {"caption": "<words>", ` +
-    '"limit": 20, "sort": "publishedAt:desc"}}`; never `"projection": "full"`. At most ' +
+    `${names(platforms)}: \`firecrawl_scrape\` with no \`url\` and no \`proxy\`, only the ` +
+    `body \`alexandria: {"provider": "oriane", "capability": ${caps}, "options": {"caption": ` +
+    '"<words>", "limit": 20, "sort": "publishedAt:desc"}}`; never `"projection": "full"`. At most ' +
     `${SOCIAL_ORIANE_CALLS} oriane calls in all` +
     (platforms.length > 1 ? ", across both platforms" : "") +
     " (50 credits each when something comes back; an empty result is free). Oriane is an index " +
     "of public posts, not the live feed: a post missing there may still exist, so an empty " +
     'result is "nothing found", never "nobody says so". Each result\'s `publishedAt` is exact; ' +
-    "cite its post URL."
+    "cite its `postUrl`; a result whose `postUrl` is null is not citable: leave it out, or name " +
+    "it in `uncertain` by handle and date."
   )
 }
 
@@ -211,10 +222,12 @@ function blueskyLine(since: Date | null): string {
     `${BLUESKY_SEARCH_URL}?q=<terms>&sort=top&limit=25` +
     (since ? `&since=${since.toISOString()}` : "")
   return (
-    `Bluesky: fetch \`${query}\` with WebFetch (\`firecrawl_scrape\` with that \`url\` if ` +
-    `WebFetch refuses it), at most ${SOCIAL_BLUESKY_CALLS} times; \`sort=latest\` for the ` +
-    "newest. Each post has an exact `createdAt`; its page is `https://bsky.app/profile/<the " +
-    "author's handle>/post/<the last segment of its uri>`: cite that, never the search address."
+    `Bluesky: fetch \`${query}\` with WebFetch, asking it for each post's text, author handle, ` +
+    "`uri` and `record.createdAt` (`firecrawl_scrape` with that `url` if WebFetch refuses it), " +
+    `at most ${SOCIAL_BLUESKY_CALLS} times; \`sort=latest\` for the newest. A post's ` +
+    "`record.createdAt` is the instant its poster set (`since` filters on `sortAt`); its page is " +
+    "`https://bsky.app/profile/<the author's handle>/post/<the last segment of its uri>`: cite " +
+    "that, never the search address."
   )
 }
 
@@ -229,15 +242,16 @@ export function socialChecks(choice: SocialChoice, since: Date | null): string[]
   if (platforms.length === 0) return []
   return [
     "- A finding from a post (`platform` set) cites the post's own page, never a search " +
-      "address. Open it like any site with WebFetch where it opens (a YouTube watch page or a " +
-      "bsky.app post usually does; a TikTok or Instagram post that will not open stays " +
-      "`snippet`) and confirm the claim, the platform and the date. You may spend at most 1 " +
+      "address. Open it like any site with WebFetch where it opens (a bsky.app post usually " +
+      "does, and a YouTube watch page gives its title, description and upload date; a TikTok or " +
+      "Instagram post that will not open stays `snippet`) and confirm the claim, the platform " +
+      "and the date. You may spend at most 1 " +
       "youtube-com call and no oriane call. A finding marked `read` with no sign the post was " +
       "opened becomes `snippet`.",
     "- A claim about stock, a price or availability that rests on posts alone moves to " +
       "`uncertain`; a poster's opinion stated as fact is reworded as what posters say; a repost " +
       "counted twice is counted once; where posters disagree, the answer says so.",
-    `- \`coverage\` names every platform asked for (${names(platforms)}) and Reddit as ` +
+    `- \`coverage\` names every platform in scope (${names(platforms)}) and Reddit as ` +
       "unavailable" +
       (since
         ? `, and only posts from ${day(since)} on are used: a dated post before it is removed`
@@ -249,13 +263,19 @@ export function socialChecks(choice: SocialChoice, since: Date | null): string[]
 
 /**
  * The claims a post cannot settle (docs/social-sources.md: stock, price and availability are
- * never taken from a post): whole words, case aside, or a currency amount.
+ * never taken from a post): stock phrases, availability as stock ("now available", "in stores",
+ * "availability"; not "available on the channel's page"), price words, "costs" followed by an
+ * amount, and a currency amount (a bare number is not caught, nor is "pounds", a weight as often
+ * as money). Opinions on value ("expensive", "worth it") are left alone: they are what a post
+ * is for. Whole words, case aside.
  */
 const FACT_FROM_POST = new RegExp(
   "\\b(?:in[- ]stock|out[- ]of[- ]stock|sold[- ]out|restock(?:ed|ing|s)?|back in stock|" +
-    "availab(?:le|ility)|unavailable|pric(?:e|es|ed|ing)|cost(?:s|ing)?|on sale|" +
-    "discount(?:s|ed)?|clearance|coupons?|msrp|retails? (?:for|at))\\b" +
-    "|[$\\u00a3\\u20ac]\\s?\\d|\\b\\d+(?:\\.\\d+)?\\s?(?:usd|eur|gbp|dollars|bucks|euros|pounds)\\b",
+    "in stores|on (?:the )?shelves|availability|" +
+    "(?:still|now|not|no longer|back|widely|only|currently) available|" +
+    "pric(?:e|es|ed|ing)|on sale|discount(?:s|ed)?|clearance|coupons?|msrp|retails? (?:for|at))\\b" +
+    "|\\bcosts? (?:about |around |roughly |only |just |under |over )?[$\\u00a3\\u20ac]?\\d" +
+    "|[$\\u00a3\\u20ac]\\s?\\d|\\b\\d+(?:\\.\\d+)?\\s?(?:usd|eur|gbp|dollars|bucks|euros)\\b",
   "i",
 )
 
@@ -278,8 +298,15 @@ export function postDate(publishedAt: string | undefined): Date | null {
       )
     : null
   if (!m) return null
-  const at = Date.parse(m[0])
+  // A time with no zone is read as UTC, never as the host's local time.
+  const text = /T\d/.test(m[0]) && !/(?:Z|[+-]\d{2}:?\d{2})$/.test(m[0]) ? `${m[0]}Z` : m[0]
+  const at = Date.parse(text)
   return Number.isNaN(at) ? null : new Date(at)
+}
+
+/** The start of `at`'s UTC day: `since` counts whole days, as the prompt states it. */
+function utcDay(at: Date): Date {
+  return new Date(Date.UTC(at.getUTCFullYear(), at.getUTCMonth(), at.getUTCDate()))
 }
 
 /** What the belt writes for a platform the run searched but did not report on. */
@@ -312,13 +339,16 @@ export function withCoverage(coverage: readonly Coverage[], choice: SocialChoice
 
 /**
  * The belt under the prompts, on the answer that goes out (0.23.0): a finding that repeats an
- * earlier one (the same claim, `sameClaim`, on the same post, `canonicalSocialUrl`) is dropped,
- * so a repost counts once; with `since`, a post finding dated before it (`postDate`) moves to
- * `uncertain`, saying when it was posted; a finding whose every source is on a social platform
- * and whose claim speaks of stock, a price or availability (`FACT_FROM_POST`) moves to
- * `uncertain` as `SAID_IN_POST`; and `coverage` is rebuilt by `withCoverage`. The run's own
- * `uncertain` lines come first and the list stays within `MAX_UNCERTAIN`. `blocked` is kept as it
- * was. Every claim moved stays out of the findings saved, since those are built from this answer.
+ * earlier one (the same claim, `sameClaim`, with the same first source, `canonicalSocialUrl`) is
+ * dropped, so a copied link to one post counts once (a re-upload under another account is the
+ * prompt's rule); with `since`, a post finding dated (`postDate`) before the start of its UTC
+ * day moves to `uncertain`, saying when it was posted; a finding whose every source is on a
+ * social platform and whose claim speaks of stock, a price or availability (`FACT_FROM_POST`)
+ * moves to `uncertain` as `SAID_IN_POST`; and `coverage` is rebuilt by `withCoverage`. The run's
+ * own `uncertain` lines come first, each moved line is cut to `MAX_UNCERTAIN_CHARS`, and past
+ * `MAX_UNCERTAIN` the last line says how many more were moved, so none vanishes without a trace.
+ * `blocked` is kept as it was. Every claim moved stays out of the findings saved, since those are
+ * built from this answer.
  */
 export function socialOutgoing(
   answer: ResearchAnswer,
@@ -328,13 +358,14 @@ export function socialOutgoing(
   const findings: ResearchFinding[] = []
   const moved: string[] = []
   const seen = new Set<string>()
+  const floor = since ? utcDay(since) : null
   for (const f of answer.findings) {
     const key = `${sameClaim(f.claim)}|${canonicalSocialUrl(f.sources[0] ?? "")}`
     if (seen.has(key)) continue
     seen.add(key)
     const posted = f.platform ? postDate(f.publishedAt) : null
-    if (since && posted && posted < since) {
-      moved.push(`${f.claim} (posted ${day(posted)}, before ${day(since)})`)
+    if (floor && posted && posted < floor) {
+      moved.push(`${f.claim} (posted ${day(posted)}, before ${day(floor)})`)
       continue
     }
     if (restsOnPosts(f) && FACT_FROM_POST.test(f.claim)) {
@@ -343,11 +374,15 @@ export function socialOutgoing(
     }
     findings.push(f)
   }
-  const out: ResearchAnswer = {
-    summary: answer.summary,
-    findings,
-    uncertain: [...answer.uncertain, ...moved].slice(0, MAX_UNCERTAIN),
-  }
+  const lines = [...answer.uncertain, ...moved.map((l) => clean(l, MAX_UNCERTAIN_CHARS, true))]
+  const uncertain =
+    lines.length <= MAX_UNCERTAIN
+      ? lines
+      : [
+          ...lines.slice(0, MAX_UNCERTAIN - 1),
+          `(${lines.length - MAX_UNCERTAIN + 1} more line(s) moved here, not shown)`,
+        ]
+  const out: ResearchAnswer = { summary: answer.summary, findings, uncertain }
   if (answer.blocked) out.blocked = answer.blocked
   const coverage = withCoverage(answer.coverage ?? [], choice)
   if (coverage.length > 0) out.coverage = coverage

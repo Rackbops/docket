@@ -40,7 +40,8 @@ const HOSTS: readonly { platform: SocialPlatform; host: RegExp }[] = [
   { platform: "youtube", host: /(^|\.)(youtube\.com|youtu\.be|youtube-nocookie\.com)$/ },
   { platform: "tiktok", host: /(^|\.)tiktok\.com$/ },
   { platform: "instagram", host: /(^|\.)(instagram\.com|instagr\.am)$/ },
-  { platform: "bluesky", host: /(^|\.)(bsky\.app|bsky\.social)$/ },
+  // Post pages only: the public API host is not a post, and `bsky.social` handles serve none.
+  { platform: "bluesky", host: /^(www\.)?bsky\.app$/ },
 ]
 
 function hostOf(url: URL): string {
@@ -63,29 +64,25 @@ export function platformOf(url: string): SocialPlatform | null {
 const VIDEO_ID = /^[A-Za-z0-9_-]{11}$/
 
 /**
- * Query parameters that track a link's sharing, not the post it points at: YouTube's `si`, `t`,
- * `feature` and `pp`, Instagram's `igsh`, TikTok's share fields, Meta's and Google's click ids,
- * and every `utm_*`.
+ * Query parameters that track a link's sharing or the viewer, not the page it points at:
+ * YouTube's `si`, `t`, `feature` and `pp`, Instagram's `igsh`, TikTok's share fields, Meta's and
+ * Google's click ids, a language `hl`/`lang`, and every `utm_*`.
  */
 const TRACKING =
-  /^(utm_.*|si|t|feature|pp|ab_channel|igsh|igshid|img_index|fbclid|gclid|ref|ref_src|_r|_t|is_from_webapp|sender_device|sender_web_id|web_id|lang|is_copy_url|checksum|sec_uid|share_app_id|share_link_id|source|u_code|timestamp|user_id|tt_from)$/i
+  /^(utm_.*|si|t|feature|pp|ab_channel|igsh|igshid|img_index|fbclid|gclid|ref|ref_src|_r|_t|is_from_webapp|sender_device|sender_web_id|web_id|lang|hl|is_copy_url|checksum|sec_uid|share_app_id|share_link_id|source|u_code|timestamp|user_id|tt_from)$/i
 
 /**
- * `u` without its hash or credentials, on `host`, its path without an end slash; with `query`,
- * its tracking parameters dropped and the rest kept, otherwise no query at all.
+ * `u` without its hash or credentials, on `host`, its tracking parameters dropped and the rest
+ * of its query kept, its path without an end slash.
  */
-function stripped(u: URL, host: string, query: boolean): string {
+function stripped(u: URL, host: string): string {
   const out = new URL(u.toString())
   out.hostname = host
   out.hash = ""
   out.username = ""
   out.password = ""
-  if (query) {
-    for (const key of [...out.searchParams.keys()]) {
-      if (TRACKING.test(key)) out.searchParams.delete(key)
-    }
-  } else {
-    out.search = ""
+  for (const key of [...out.searchParams.keys()]) {
+    if (TRACKING.test(key)) out.searchParams.delete(key)
   }
   out.pathname = out.pathname.replace(/\/+$/, "") || "/"
   return out.toString()
@@ -98,9 +95,9 @@ function stripped(u: URL, host: string, query: boolean): string {
  * `/reels/` and `/tv/` share one shortcode space, so a post is
  * `https://www.instagram.com/p/<code>/`. TikTok: a `/@user/video/<id>` (or `/photo/`) page on
  * `www.tiktok.com` without its query; a short `vm.tiktok.com` link cannot be resolved here and is
- * kept without its query. Bluesky: the post page without its hash or query. Any other link on
- * these hosts loses its hash and tracking parameters only; a link anywhere else is returned
- * unchanged, since its query may be part of the page.
+ * kept. Bluesky: a `bsky.app` page (the public API host is no post and is left alone). Any other
+ * link on these hosts loses its hash and tracking parameters only; a link anywhere else is
+ * returned unchanged, since its query may be part of the page.
  */
 export function canonicalSocialUrl(url: string): string {
   let u: URL
@@ -119,17 +116,17 @@ export function canonicalSocialUrl(url: string): string {
     else if (path === "/watch") id = u.searchParams.get("v")
     else id = /^\/(?:shorts|live|embed|v)\/([^/?#]+)/.exec(path)?.[1] ?? null
     if (id && VIDEO_ID.test(id)) return `https://www.youtube.com/watch?v=${id}`
-    return stripped(u, host, true)
+    return stripped(u, host)
   }
   if (platform === "instagram") {
     const code = /^\/(?:[^/]+\/)?(?:p|reel|reels|tv)\/([A-Za-z0-9_-]+)/.exec(path)?.[1]
     if (code) return `https://www.instagram.com/p/${code}/`
-    return stripped(u, host, false)
+    return stripped(u, host)
   }
   if (platform === "tiktok") {
     const post = /^\/(@[^/]+)\/(video|photo)\/(\d+)/.exec(path)
     if (post) return `https://www.tiktok.com/${post[1]}/${post[2]}/${post[3]}`
-    return stripped(u, host, false)
+    return stripped(u, host)
   }
-  return stripped(u, host, false)
+  return stripped(u, host)
 }

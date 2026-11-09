@@ -123,9 +123,9 @@ import { retryOutcome } from "./retry.js"
  * when the question asks for opinions; `none`; or a list of platforms) and from `since` on. It
  * gets `SOCIAL_MAX_TURNS` then. A post finding carries its platform, date and whether the post
  * was opened; the answer carries `coverage`, one row per platform and Reddit (never searched),
- * shown as the DM's "Social:" line. Plain code (`socialOutgoing`) counts a repost once, moves a
- * stock, price or availability claim resting on posts alone and a dated post before `since` to
- * `uncertain`, and completes the coverage. Runs on gathered pages search no platform.
+ * shown as the DM's "Social:" line. Plain code (`socialOutgoing`) counts a copied link once,
+ * moves a stock, price or availability claim resting on posts alone and a dated post before
+ * `since` to `uncertain`, and completes the coverage. Runs on gathered pages search no platform.
  *
  * Failures (a usage limit never reaches `finish`: the dispatcher requeues the run):
  *
@@ -160,7 +160,11 @@ export interface ResearchConfig {
    * spaces) always searches those. `parseSocial` reads it; a host refuses any other value.
    */
   social?: string
-  /** Posts published before this instant (ISO-8601) do not count (0.23.0); nothing without `social`. */
+  /**
+   * Posts published before this day (an ISO-8601 instant, taken as its UTC day) do not count
+   * (0.23.0): the prompts carry it only when social search is on; the belt applies it to any
+   * dated post finding, whatever `social` says.
+   */
   since?: string
 }
 
@@ -272,11 +276,16 @@ export function deadlineOf(config: ResearchConfig): Date | null {
   return Number.isNaN(at) ? null : new Date(at)
 }
 
-/** The `since` instant, or null when there is none or it does not parse. */
+/**
+ * The `since` bound, or null when there is none or it does not parse: the start of the instant's
+ * UTC day, so the prompt's "on or after <day>", Bluesky's `since` filter and the belt agree.
+ */
 export function sinceOf(config: ResearchConfig): Date | null {
   if (typeof config.since !== "string") return null
   const at = Date.parse(config.since)
-  return Number.isNaN(at) ? null : new Date(at)
+  if (Number.isNaN(at)) return null
+  const d = new Date(at)
+  return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()))
 }
 
 function contextLines(config: ResearchConfig): string[] {
@@ -732,12 +741,13 @@ function afterReview(
     }
   }
   // Approved: the draft as stored, so the reviewer cannot slip in changes under "approve".
-  // Revised: the reviewer's corrected answer. Then the social belt (0.23.0): a repost once, a
-  // stock, price or availability claim on posts alone and a post before `since` to `uncertain`,
-  // the coverage completed.
+  // Revised: the reviewer's corrected answer. Then the social belt (0.23.0): a copied link once,
+  // a stock, price or availability claim on posts alone and a post before `since` to
+  // `uncertain`, the coverage completed. A `sent` request's runs were never asked to search
+  // (`researchJob`'s `socialOn`), so they get no coverage.
   const answer = socialOutgoing(
     review.verdict === "approve" && state.draft ? state.draft : review.answer,
-    socialChoice(ctx.config.social),
+    usesSentSources(ctx.config) ? { mode: "none" } : socialChoice(ctx.config.social),
     sinceOf(ctx.config),
   )
   const n = answer.findings.length
