@@ -24,7 +24,15 @@ import {
   type Review,
   renderAnswer,
   renderUpdate,
+  sameClaim,
 } from "./research-answer.js"
+import {
+  SOCIAL_MAX_TURNS,
+  socialChecks,
+  socialChoice,
+  socialLines,
+  socialOutgoing,
+} from "./research-social.js"
 import {
   GATHERED_ALLOWED_TOOLS,
   GATHERED_DENIED_TOOLS,
@@ -109,6 +117,16 @@ import { retryOutcome } from "./retry.js"
  * source's own taxonomy (BoardGameGeek's eight category rankings for board games), a category
  * with no qualifying entry as "none yet"; the reviewer revises an answer that invents its own.
  *
+ * **Social platforms** (0.23.0, docket#107; `research-social.ts`): a web first pass may search
+ * YouTube, TikTok, Instagram and Bluesky for what people say, through `firecrawl_scrape`'s typed
+ * bodies and Bluesky's public search, when the request's `social` asks (`auto`, the default:
+ * when the question asks for opinions; `none`; or a list of platforms) and from `since` on. It
+ * gets `SOCIAL_MAX_TURNS` then. A post finding carries its platform, date and whether the post
+ * was opened; the answer carries `coverage`, one row per platform and Reddit (never searched),
+ * shown as the DM's "Social:" line. Plain code (`socialOutgoing`) counts a repost once, moves a
+ * stock, price or availability claim resting on posts alone and a dated post before `since` to
+ * `uncertain`, and completes the coverage. Runs on gathered pages search no platform.
+ *
  * Failures (a usage limit never reaches `finish`: the dispatcher requeues the run):
  *
  * - `schema_miss`, a malformed answer, `timeout`, `error`: retried once in the same phase, at once.
@@ -135,6 +153,15 @@ export interface ResearchConfig {
    * person's own browser gathers them and the host stores them (`ReadSources`).
    */
   sources?: "web" | "sent"
+  /**
+   * Social platforms (0.23.0, docket#107): `auto` (the default, and what an absent or unreadable
+   * value means) searches them when the question asks what people recommend, think or
+   * experienced; `none` never; a list of `youtube`, `tiktok`, `instagram`, `bluesky` (commas or
+   * spaces) always searches those. `parseSocial` reads it; a host refuses any other value.
+   */
+  social?: string
+  /** Posts published before this instant (ISO-8601) do not count (0.23.0); nothing without `social`. */
+  since?: string
 }
 
 /** True when `config` asks for gathered pages. */
@@ -245,6 +272,13 @@ export function deadlineOf(config: ResearchConfig): Date | null {
   return Number.isNaN(at) ? null : new Date(at)
 }
 
+/** The `since` instant, or null when there is none or it does not parse. */
+export function sinceOf(config: ResearchConfig): Date | null {
+  if (typeof config.since !== "string") return null
+  const at = Date.parse(config.since)
+  return Number.isNaN(at) ? null : new Date(at)
+}
+
 function contextLines(config: ResearchConfig): string[] {
   const c = typeof config.context === "string" ? clean(config.context, MAX_CONTEXT_CHARS) : ""
   const deadline = deadlineOf(config)
@@ -311,6 +345,9 @@ export function researchJob(
   const canWait = options.canWait === true && pages === undefined && earlier === undefined
   const sent = pages !== undefined
   const webFirst = !sent && earlier === undefined
+  const social = socialChoice(config.social)
+  // Social platforms (0.23.0): a web first pass only; a run on gathered pages cannot open pages.
+  const socialOn = webFirst && social.mode !== "none"
   const prompt = [
     "You are researching a one-off question for a person, who will read your answer as a " +
       "Discord DM.",
@@ -333,6 +370,7 @@ export function researchJob(
     "",
     ...bestSourceLines(sent, canWait),
     ...(webFirst ? ["", ...firecrawlLines(), ...bggSearchHint()] : []),
+    ...(socialOn ? socialLines(social, sinceOf(config)) : []),
     "",
     (sent
       ? "Use the pages and web search to check facts."
@@ -365,7 +403,8 @@ export function researchJob(
     jsonSchema: ANSWER_SCHEMA as unknown as Record<string, unknown>,
     allowedTools: allowed(webFirst, sent),
     disallowedTools: disallowed(sent),
-    maxTurns: RESEARCH_MAX_TURNS,
+    // Decision 6 (docket#107): 20 turns when social search is on; the budget is unchanged.
+    maxTurns: socialOn ? SOCIAL_MAX_TURNS : RESEARCH_MAX_TURNS,
     maxBudgetUsd: RESEARCH_MAX_BUDGET_USD,
     timeoutMs: RESEARCH_TIMEOUT_MS,
   }
@@ -495,7 +534,13 @@ export function reviewJob(
         ]
       : []),
     ...(earlier ? updateChecks() : [...answerChecks(sent), ...categoryChecks()]),
-    ...(earlier || sent ? [] : [...bestSourceChecks(canWait), ...firecrawlChecks()]),
+    ...(earlier || sent
+      ? []
+      : [
+          ...bestSourceChecks(canWait),
+          ...firecrawlChecks(),
+          ...socialChecks(socialChoice(config.social), sinceOf(config)),
+        ]),
     "",
     "Then give a verdict: `approve` if the draft stands as is and covers every part (leave " +
       "`answer` out: the draft is sent as it is); `revise` if it stands once corrected (return the corrected " +
@@ -687,16 +732,22 @@ function afterReview(
     }
   }
   // Approved: the draft as stored, so the reviewer cannot slip in changes under "approve".
-  // Revised: the reviewer's corrected answer.
-  const answer = review.verdict === "approve" && state.draft ? state.draft : review.answer
+  // Revised: the reviewer's corrected answer. Then the social belt (0.23.0): a repost once, a
+  // stock, price or availability claim on posts alone and a post before `since` to `uncertain`,
+  // the coverage completed.
+  const answer = socialOutgoing(
+    review.verdict === "approve" && state.draft ? state.draft : review.answer,
+    socialChoice(ctx.config.social),
+    sinceOf(ctx.config),
+  )
   const n = answer.findings.length
   const verdict = review.verdict === "approve" ? "approved" : "revised"
   // One finding per claim, its first source the one it is filed under (`parseAnswer` keeps only
-  // claims with at least one).
+  // claims with at least one); a post's finding is tagged `social` and its platform (0.23.0).
   const findings = answer.findings.map((f) => ({
     text: f.claim,
     ...(f.sources[0] ? { source: f.sources[0] } : {}),
-    tags: ["research", review.verdict],
+    tags: ["research", review.verdict, ...postTags(f)],
   }))
   const blocked = canWait ? blockedAfterReview(state, review, answer) : []
   if (blocked.length > 0) {
@@ -785,13 +836,9 @@ function waitTail(
   )
 }
 
-/** A claim as compared for repeats: case, spacing and a trailing stop do not count. */
-function sameClaim(claim: string): string {
-  return claim
-    .toLowerCase()
-    .replace(/\s+/g, " ")
-    .trim()
-    .replace(/[.!]+$/, "")
+/** The tags a finding from a post carries besides the type's (0.23.0): `social` and its platform. */
+function postTags(f: ResearchAnswer["findings"][number]): string[] {
+  return f.platform ? ["social", f.platform] : []
 }
 
 /** True in the second pass: waiting for pages, or past its research run. */
@@ -836,7 +883,13 @@ function afterUpdateReview(
       `second pass rejected by review (${review.problems.length} problem(s))`,
     )
   }
-  const answer = review.verdict === "approve" && state.draft ? state.draft : review.answer
+  // A second pass searches no platform, so no coverage (`mode: "none"`); the rest of the social
+  // belt (0.23.0) still applies to what the pages said.
+  const answer = socialOutgoing(
+    review.verdict === "approve" && state.draft ? state.draft : review.answer,
+    { mode: "none" },
+    sinceOf(ctx.config),
+  )
   const before = new Set((state.earlier?.findings ?? []).map((f) => sameClaim(f.claim)))
   const fresh = answer.findings.filter((f) => !before.has(sameClaim(f.claim)))
   const update = { ...answer, findings: fresh }
@@ -847,7 +900,7 @@ function afterUpdateReview(
     findings: update.findings.map((f) => ({
       text: f.claim,
       ...(f.sources[0] ? { source: f.sources[0] } : {}),
-      tags: ["research", review.verdict, "update"],
+      tags: ["research", review.verdict, "update", ...postTags(f)],
     })),
     complete: true,
     summary: `second pass ${review.verdict === "approve" ? "approved" : "revised"}: ${n} new or corrected finding(s)`,
@@ -971,6 +1024,20 @@ export function researchType(options: ResearchOptions = {}): TaskType<ResearchCo
           description: "web (the runs search) or sent (pages your own browser gathers)",
           required: false,
           kind: "string",
+        },
+        {
+          name: "social",
+          description:
+            "Social platforms: auto (searched when the question asks what people think), none, " +
+            "or some of youtube, tiktok, instagram, bluesky",
+          required: false,
+          kind: "string",
+        },
+        {
+          name: "since",
+          description: "Only posts from this date on count",
+          required: false,
+          kind: "datetime",
         },
       ],
     },

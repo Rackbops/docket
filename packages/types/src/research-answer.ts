@@ -7,6 +7,14 @@
  */
 
 import { clean, ZWSP } from "@rackbops/docket-core"
+import {
+  canonicalSocialUrl,
+  isSocialPlatform,
+  platformName,
+  platformOf,
+  SOCIAL_PLATFORMS,
+  type SocialPlatform,
+} from "./social-links.js"
 
 /** The cleaner lives in core, so the dispatcher's own messages use it too; re-exported here. */
 export { clean, ZWSP }
@@ -14,8 +22,33 @@ export { clean, ZWSP }
 /** One claim and the pages it rests on. */
 export interface ResearchFinding {
   claim: string
-  /** http(s) URLs the run says it opened. */
+  /**
+   * http(s) URLs the run says it opened; a social post link as one post (`canonicalSocialUrl`,
+   * 0.23.0), so a repost counts once.
+   */
   sources: string[]
+  /**
+   * The platform the sources are posts on (0.23.0), as the run set it or as every source's host
+   * says; absent for a web page. The two fields below are kept only with it.
+   */
+  platform?: SocialPlatform
+  /** When the post was published, as the run read it: an instant, "about <date>", or "undated". */
+  publishedAt?: string
+  /** `read`: the transcript, the comments or the post itself was opened; `snippet`: a caption or a search result only. */
+  evidence?: "read" | "snippet"
+}
+
+/** What a run did on one platform (0.23.0): the DM's "Social:" line is built from these. */
+export const COVERAGE_STATUSES = ["searched", "empty", "unavailable", "skipped"] as const
+
+export type CoverageStatus = (typeof COVERAGE_STATUSES)[number]
+
+export interface Coverage {
+  /** The platform's id, lower-cased: youtube, tiktok, instagram, bluesky, reddit, or another. */
+  platform: string
+  status: CoverageStatus
+  /** A few words: what was found, or why not. */
+  note?: string
 }
 
 /**
@@ -36,6 +69,11 @@ export interface ResearchAnswer {
   uncertain: string[]
   /** Pages the run needed but could not open; absent when there were none. Never rendered. */
   blocked?: BlockedPage[]
+  /**
+   * What the run did on each social platform (0.23.0); absent when none was in scope. Rendered
+   * as the DM's "Social:" line.
+   */
+  coverage?: Coverage[]
 }
 
 export const MAX_SUMMARY_CHARS = 1200
@@ -48,6 +86,13 @@ export const MAX_UNCERTAIN_CHARS = 300
 export const MAX_BLOCKED = 6
 export const MAX_BLOCKED_SITE_CHARS = 100
 export const MAX_BLOCKED_WHY_CHARS = 200
+/** A post's `publishedAt` as kept: an instant, "about 2026-10-19" or "undated" all fit. */
+export const MAX_PUBLISHED_CHARS = 40
+export const MAX_COVERAGE = 8
+export const MAX_COVERAGE_PLATFORM_CHARS = 30
+export const MAX_COVERAGE_NOTE_CHARS = 120
+/** The DM's "Social:" line, kept whole like the "Couldn't open:" tail, so it is bounded here. */
+export const MAX_COVERAGE_LINE_CHARS = 500
 /** Discord's DM limit is 2000 characters; the rest is headroom for the host's own framing. */
 export const MAX_MESSAGE_CHARS = 1900
 
@@ -65,6 +110,26 @@ export const ANSWER_SCHEMA = {
           sources: {
             type: "array",
             items: { type: "string", description: "A URL you opened." },
+          },
+          platform: {
+            type: "string",
+            enum: [...SOCIAL_PLATFORMS],
+            description:
+              "For a finding from a social post: the platform it is on. Leave it out for a web " +
+              "page.",
+          },
+          publishedAt: {
+            type: "string",
+            description:
+              "For a finding from a post: when it was published -- the instant the platform " +
+              'gave, "about <date>" worked out from a relative time, or "undated".',
+          },
+          evidence: {
+            type: "string",
+            enum: ["read", "snippet"],
+            description:
+              "For a finding from a post: read when you opened the transcript, the comments or " +
+              "the post itself; snippet when you have only its caption or a search result.",
           },
         },
         required: ["claim", "sources"],
@@ -85,6 +150,30 @@ export const ANSWER_SCHEMA = {
           why: { type: "string", description: "What stopped you, in a few words." },
         },
         required: ["site", "why"],
+      },
+    },
+    coverage: {
+      type: "array",
+      description:
+        "When social platforms were in scope: one entry per platform, and one for Reddit; " +
+        "leave it out otherwise.",
+      items: {
+        type: "object",
+        properties: {
+          platform: {
+            type: "string",
+            description: "youtube, tiktok, instagram, bluesky or reddit.",
+          },
+          status: {
+            type: "string",
+            enum: [...COVERAGE_STATUSES],
+            description:
+              "searched: something found; empty: nothing found; unavailable: the call failed " +
+              "(say which); skipped: not searched (say why).",
+          },
+          note: { type: "string", description: "A few words: what was found, or why not." },
+        },
+        required: ["platform", "status"],
       },
     },
   },
@@ -127,9 +216,44 @@ function isObj(v: unknown): v is Record<string, unknown> {
 }
 
 /**
+ * The platform every source of a finding is on, when they agree (0.23.0); null when any is a web
+ * page, or they differ.
+ */
+function platformOfAll(sources: readonly string[]): SocialPlatform | null {
+  const platforms = new Set(sources.map(platformOf))
+  const [only] = platforms
+  return platforms.size === 1 && only ? only : null
+}
+
+/**
+ * A finding's post fields (0.23.0): `platform` as the run set it (one of `SOCIAL_PLATFORMS`, and
+ * a source is on it) or as every source's host says; with one, `publishedAt` (one line, capped)
+ * and `evidence` when usable. A finding on web pages alone gets none, whatever the run set.
+ */
+function postFields(
+  f: Record<string, unknown>,
+  sources: readonly string[],
+): Pick<ResearchFinding, "platform" | "publishedAt" | "evidence"> {
+  const given =
+    isSocialPlatform(f.platform) && sources.some((u) => platformOf(u) === f.platform)
+      ? f.platform
+      : null
+  const platform = given ?? platformOfAll(sources)
+  if (!platform) return {}
+  const when =
+    typeof f.publishedAt === "string" ? clean(f.publishedAt, MAX_PUBLISHED_CHARS, true) : ""
+  return {
+    platform,
+    ...(when.length > 0 ? { publishedAt: when } : {}),
+    ...(f.evidence === "read" || f.evidence === "snippet" ? { evidence: f.evidence } : {}),
+  }
+}
+
+/**
  * The answer in `value`, capped and cleaned, or null when it is not one. A claim with no usable
  * source is not a finding: it moves to `uncertain`, marked, since every claim a reader might act
- * on needs a source the run opened.
+ * on needs a source the run opened. A source on a social platform is kept as one post
+ * (`canonicalSocialUrl`), so a `youtu.be` link and its watch page are one (0.23.0).
  */
 export function parseAnswer(value: unknown): ResearchAnswer | null {
   if (!isObj(value) || typeof value.summary !== "string" || !Array.isArray(value.findings)) {
@@ -144,9 +268,19 @@ export function parseAnswer(value: unknown): ResearchAnswer | null {
     const claim = clean(f.claim, MAX_CLAIM_CHARS, true)
     if (claim.length === 0) continue
     const raw = Array.isArray(f.sources) ? f.sources : []
-    const sources = [...new Set(raw.map(safeUrl).filter((u): u is string => u !== null))]
+    const sources = [
+      ...new Set(
+        raw
+          .map(safeUrl)
+          .filter((u): u is string => u !== null)
+          .map(canonicalSocialUrl),
+      ),
+    ]
     if (sources.length === 0) unsourced.push(`${claim} (no source given)`)
-    else findings.push({ claim, sources: sources.slice(0, MAX_SOURCES_PER_FINDING) })
+    else {
+      const kept = sources.slice(0, MAX_SOURCES_PER_FINDING)
+      findings.push({ claim, sources: kept, ...postFields(f, kept) })
+    }
   }
   // The model's own lines come first, so the cap drops markers before them: `withBarredSites`
   // reads these lines to tell a site was not opened.
@@ -159,12 +293,46 @@ export function parseAnswer(value: unknown): ResearchAnswer | null {
   }
   uncertain.push(...unsourced)
   const blocked = parseBlocked(value.blocked)
+  const coverage = parseCoverage(value.coverage)
   return {
     summary,
     findings: findings.slice(0, MAX_FINDINGS),
     uncertain: uncertain.slice(0, MAX_UNCERTAIN),
     ...(blocked.length > 0 ? { blocked } : {}),
+    ...(coverage.length > 0 ? { coverage } : {}),
   }
+}
+
+/**
+ * The coverage rows in `value` (0.23.0), cleaned: a lower-cased one-line platform id, a status in
+ * `COVERAGE_STATUSES`, a one-line note when given; the first row per platform, at most
+ * `MAX_COVERAGE`. A row with no platform or an unknown status is dropped; anything not a list is
+ * none.
+ */
+export function parseCoverage(value: unknown): Coverage[] {
+  if (!Array.isArray(value)) return []
+  const out: Coverage[] = []
+  for (const c of value) {
+    if (out.length >= MAX_COVERAGE) break
+    if (!isObj(c) || typeof c.platform !== "string" || typeof c.status !== "string") continue
+    const platform = clean(c.platform, MAX_COVERAGE_PLATFORM_CHARS, true).toLowerCase()
+    const status = (COVERAGE_STATUSES as readonly string[]).includes(c.status)
+      ? (c.status as CoverageStatus)
+      : null
+    if (platform.length === 0 || !status || out.some((o) => o.platform === platform)) continue
+    const note = typeof c.note === "string" ? clean(c.note, MAX_COVERAGE_NOTE_CHARS, true) : ""
+    out.push({ platform, status, ...(note.length > 0 ? { note } : {}) })
+  }
+  return out
+}
+
+/** A claim as compared for repeats: case, spacing and a trailing stop do not count. */
+export function sameClaim(claim: string): string {
+  return claim
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/[.!]+$/, "")
 }
 
 /**
@@ -276,10 +444,46 @@ export function fitMessage(lines: string[]): string {
 }
 
 /**
+ * A finding's line in a DM: the claim, for a post its platform, date and "snippet only" when it
+ * was not opened (0.23.0), then its first source in <...> so Discord shows the link without an
+ * embed.
+ */
+export function findingLine(f: ResearchFinding): string {
+  const parts = f.platform
+    ? [
+        platformName(f.platform),
+        ...(f.publishedAt ? [f.publishedAt] : []),
+        ...(f.evidence === "snippet" ? ["snippet only"] : []),
+      ]
+    : []
+  const post = parts.length > 0 ? ` (${parts.join(", ")})` : ""
+  return `- ${f.claim}${post} <${f.sources[0]}>`
+}
+
+const STATUS_WORDS: Readonly<Record<CoverageStatus, string>> = {
+  searched: "searched",
+  empty: "nothing found",
+  unavailable: "unavailable",
+  skipped: "skipped",
+}
+
+/**
+ * The DM's "Social:" line (0.23.0): each platform's status, with its note in brackets, in one
+ * line of at most `MAX_COVERAGE_LINE_CHARS`.
+ */
+export function coverageLine(coverage: readonly Coverage[]): string {
+  const items = coverage.map(
+    (c) => `${platformName(c.platform)} ${STATUS_WORDS[c.status]}${c.note ? ` (${c.note})` : ""}`,
+  )
+  return clean(`Social: ${items.join("; ")}.`, MAX_COVERAGE_LINE_CHARS, true)
+}
+
+/**
  * The DM a reviewed answer goes out as, at most `MAX_MESSAGE_CHARS`. Every piece of it was
- * cleaned by `parseAnswer`; the title is the owner's own and is cleaned here. `tail`, when given,
- * goes after the reviewer's note and is kept whole: the caller bounds it (the "couldn't open" list
- * and the queued line, 0.9.0). Without it the DM is what it was before 0.9.0.
+ * cleaned by `parseAnswer`; the title is the owner's own and is cleaned here. The "Social:" line
+ * (0.23.0, when the answer has `coverage`), the reviewer's note and `tail` are kept whole, in
+ * that order: `tail`, when given, is bounded by the caller (the "couldn't open" list and the
+ * queued line, 0.9.0). Without coverage or a tail the DM is what it was before 0.9.0.
  */
 export function renderAnswer(
   title: string,
@@ -290,8 +494,7 @@ export function renderAnswer(
   const lines = [`Research: ${clean(title, 200, true)}`, "", answer.summary]
   if (answer.findings.length > 0) {
     lines.push("", "Findings:")
-    // Sources in <...> so Discord shows the link without an embed.
-    for (const f of answer.findings) lines.push(`- ${f.claim} <${f.sources[0]}>`)
+    for (const f of answer.findings) lines.push(findingLine(f))
   }
   if (answer.uncertain.length > 0) {
     lines.push("", "Uncertain:")
@@ -301,7 +504,8 @@ export function renderAnswer(
     review.verdict === "approve"
       ? "Checked by a reviewer run."
       : `Checked and corrected by a reviewer run (${review.problems.length} problem(s) fixed).`
-  const after = tail.length > 0 ? `${note}\n\n${tail}` : note
+  const social = answer.coverage && answer.coverage.length > 0 ? coverageLine(answer.coverage) : ""
+  const after = [social, note, tail].filter((s) => s.length > 0).join("\n\n")
   return `${fit(lines, MAX_MESSAGE_CHARS - after.length - 2)}\n\n${after}`
 }
 
@@ -321,7 +525,7 @@ export function renderUpdate(title: string, update: ResearchAnswer, review: Revi
     return `${head} the pages added nothing new, so the first answer stands.`
   }
   const lines = [head, "", update.summary, "", "New or corrected:"]
-  for (const f of update.findings) lines.push(`- ${f.claim} <${f.sources[0]}>`)
+  for (const f of update.findings) lines.push(findingLine(f))
   const note =
     review.verdict === "approve"
       ? "Checked by a reviewer run."

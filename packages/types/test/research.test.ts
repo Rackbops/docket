@@ -33,6 +33,7 @@ import {
   researchJob,
   researchState,
   reviewJob,
+  SOCIAL_MAX_TURNS,
   safeUrl,
   TASK_TYPES,
   WEB_DISALLOWED_TOOLS,
@@ -199,7 +200,9 @@ describe("the research type", () => {
   it("prepares the research run with the spike's prompt and item 61's caps, and no model", () => {
     const spec = researchJob(CONFIG)
     expect(spec).toMatchObject({
-      maxTurns: RESEARCH_MAX_TURNS,
+      // Social search is `auto` by default, so a web first pass gets its 20 turns (0.23.0,
+      // docket#107 decision 6); `social: "none"` keeps item 61's 15. The budget is unchanged.
+      maxTurns: SOCIAL_MAX_TURNS,
       maxBudgetUsd: RESEARCH_MAX_BUDGET_USD,
       // Firecrawl for a web first pass (0.11.0).
       allowedTools: [...DEFAULT_ALLOWED_TOOLS, ...FIRECRAWL_TOOLS],
@@ -207,6 +210,7 @@ describe("the research type", () => {
       disallowedTools: [...DEFAULT_DISALLOWED_TOOLS, ...WEB_DISALLOWED_TOOLS],
     })
     expect([RESEARCH_MAX_TURNS, RESEARCH_MAX_BUDGET_USD]).toEqual([15, 1])
+    expect(researchJob({ ...CONFIG, social: "none" }).maxTurns).toBe(RESEARCH_MAX_TURNS)
     expect(spec.model).toBeUndefined()
     expect(spec.prompt).toContain(`Question: ${CONFIG.question}`)
     expect(spec.prompt).toContain(CONFIG.context)
@@ -335,7 +339,8 @@ describe("a research request", () => {
     expect(dms()).toEqual([])
     await lanes.tickExecute()
     await lanes.tickExecute()
-    expect(specs.map((s) => s.maxTurns)).toEqual([15, 15, 8])
+    // The research run's 20 (social `auto`, 0.23.0) twice, then the reviewer's 8.
+    expect(specs.map((s) => s.maxTurns)).toEqual([20, 20, 8])
     expect(await status()).toBe("done")
     expect(await store.listFindings({ taskId: task.id })).toHaveLength(2)
     // The miss cost a call and is charged like any run.

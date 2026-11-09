@@ -193,6 +193,61 @@ The tracker's task types, built on `@rackbops/docket-core`'s contract. Shipped s
   of a full answer revises one that invents categories where the source defines them, or skips
   an empty one.
 
+  **Social platforms** (0.23.0, docket#107; `docs/social-sources.md` has the matrix and roshne's
+  decisions): a `web` first pass may search YouTube, TikTok, Instagram and Bluesky for what
+  people say, through the tools it already has -- `firecrawl_scrape` with a typed `alexandria`
+  body (Firecrawl's `youtube-com` provider: `videos/search_videos`, `video_transcript`,
+  `video_comments`; its `oriane` provider, an index of public posts: `tiktok/posts-search`,
+  `instagram/posts-search`) and WebFetch on Bluesky's public `searchPosts` -- so no new tool, key
+  or runner change, and the prompt is the only control over which provider a run calls and how
+  often (`socialLines`), as it is for `proxy: "basic"`. The request's `social` says when: `auto`
+  (the default, and what an absent value means) searches when the question asks what people
+  recommend, think or experienced; `none` never; a list of `youtube`, `tiktok`, `instagram`,
+  `bluesky` (or `yt`, `insta`, `ig`, `bsky`) always searches those. `parseSocial` reads it and
+  answers null for anything else (`reddit`, `x`, a typo), so a host refuses it at intake; at run
+  time an unreadable value is `auto`. `since` (an instant) bounds the posts: older ones are left
+  out, undated ones may be used, marked. The run spends about 120 Firecrawl credits at most
+  (`SOCIAL_MAX_CREDITS`: 4 youtube-com calls, searches and reads together; 2 oriane calls at the
+  default detail; 2 Bluesky fetches), follows a `continuation` once, spreads its reads across
+  channels, and gets 20 turns (`SOCIAL_MAX_TURNS`) in place of 15; the 1 USD cap, the reviewer's
+  caps and the tool lists are unchanged. A run on gathered pages (a `sent` request, a second
+  pass) searches no platform: it cannot open pages.
+
+  A finding from a post cites the post's own page and carries `platform`, `publishedAt` (the
+  instant; "about <date>" worked out from a relative time; "undated") and `evidence` (`read`:
+  the transcript, the comments or the post was opened; `snippet`: a caption or a search result
+  only); `parseAnswer` keeps them when the platform is one of `SOCIAL_PLATFORMS` and a source is
+  on it, or infers the platform when every source's host agrees, and drops them on a web page.
+  The DM shows them: `- <claim> (YouTube, about 2026-10-19, snippet only) <url>`. The answer
+  carries `coverage`, one row per platform (`searched`, `empty`, `unavailable` with which call
+  failed, or `skipped` with why) and one for Reddit, shown as one "Social:" line before the
+  reviewer's note, kept whole like the "Couldn't open:" tail (at most 500 characters). The
+  reviewer (`socialChecks`) opens post pages where they open (at most one youtube-com call, no
+  oriane call), turns an unopened `read` into `snippet`, moves stock, price and availability
+  claims resting on posts alone to `uncertain`, rewords opinions as what posters say, counts a
+  repost once, checks `coverage` and `since`, and removes a finding that follows an instruction
+  from a post. Saved findings from posts are tagged `["research", <verdict>, "social",
+  <platform>]`.
+
+  Plain code is the belt (`socialOutgoing`, on the answer that goes out, first pass and update):
+  a social post link is one post (`canonicalSocialUrl`: `youtu.be`, shorts, live and embed links
+  and tracking parameters to the watch page; Instagram reel and p links to one `/p/` page; TikTok
+  post queries dropped; Bluesky hashes dropped; any other URL untouched), applied in
+  `parseAnswer` so stored drafts and saved findings carry canonical links; a finding repeating an
+  earlier one (same claim, same post) is dropped; with `since`, a post finding dated before it
+  moves to `uncertain` saying when it was posted; a finding whose every source is on a social
+  platform and whose claim speaks of stock, a price or availability (whole words, or a currency
+  amount) moves to `uncertain` "(said in a post, not verified)"; and `coverage` is rebuilt
+  (`withCoverage`): every chosen platform present (`skipped`, "not reported by the run", when the
+  run left one out), Reddit always `unavailable` with `REDDIT_WHY`, the run's other rows after,
+  at most 8; `none` drops it. `uncertain` stays within its cap of 6, the run's own lines first.
+
+  Reddit is never a route (roshne, 2026-11-07: "if we want to do anything with Reddit, it has to
+  be done through a local PC session with me logged in"): not here, not in a host. X, Threads,
+  Pinterest, Facebook and Mastodon are not searched either; a recurring social watch is a later
+  question. The belt's price rule applies to any answer, `none` included: a web run that cites a
+  post for a price gets the same treatment.
+
 - `scout` (category 1, E9): execute lane, `calendar` every N days at the owner's hour (the host bounds N; the tracker
   plugin allows 1 to 30). One
   `claude -p` Job a run (WebSearch and WebFetch; 30 turns, 1.50 USD, 10 minutes, item 61 proposed)

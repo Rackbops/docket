@@ -284,6 +284,20 @@ what terms, is recorded in [`docs/social-sources.md`](docs/social-sources.md) (d
   twice; a judged eBay watch now works as above (none is live: the tracker makes every eBay API
   watch plain), and one mid-look when this lands finishes that look on the old path. No core change.
   Release order: docket 0.22.0 first, then the tracker change that offers `notes` on judged watches.
+- **0.23.0 -- social platforms for research** ([#107](https://github.com/Rackbops/docket/issues/107);
+  the matrix and decisions in [`docs/social-sources.md`](docs/social-sources.md)). Additive: a `web`
+  research request may carry `social` (`auto`, the default: YouTube, TikTok, Instagram and Bluesky
+  are searched when the question asks what people say; `none`; or a list) and `since`; the run
+  reaches them through the Firecrawl tools it already has (typed `youtube-com` and `oriane` bodies)
+  and Bluesky's public search, under prompt rules and about 120 credits, with 20 turns in place of
+  15 when social search is on. A finding from a post carries its platform, date and whether it was
+  opened; the answer carries `coverage`, shown as a "Social:" line, with Reddit always unavailable
+  (never a route). Plain code counts a repost once, moves a stock, price or availability claim
+  resting on posts alone, and a post older than `since`, to `uncertain`, and completes the
+  coverage. Behaviour changes: a request without `social` now gets 20 turns and the social rules
+  (`social: none` restores 15 and the old prompt); the answer schema, and the reviewer's that embeds
+  it, gain optional fields for every request. No core change. Release order: docket 0.23.0 first,
+  then the tracker change that offers `social` and `since` (and refuses `reddit`).
 
 ## Use
 
