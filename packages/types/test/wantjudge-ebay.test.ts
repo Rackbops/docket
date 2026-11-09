@@ -183,12 +183,20 @@ describe("the judged eBay watch keeps item numbers only", () => {
     const type = wantjudgeType({ ebay: s })
     const held = (await lookOnce(type)).outcome.state
     const quoted = `${CAMPAIGN.title} from seller_a; stderr: rate limited`
-    for (const kind of ["error", "turn_cap", "budget_cap"] as const) {
+    for (const kind of [
+      "error",
+      "turn_cap",
+      "budget_cap",
+      "schema_miss",
+      "timeout",
+      "auth_failed",
+    ] as const) {
       const failed: JobResult = { kind, detail: quoted, durationMs: 1 }
       let state: unknown = held
       let last = (await type.finish?.(ctx(FOLLOW_UP, state), failed)) as Outcome
       expect(last.summary).toMatch(new RegExp(`^judge ${kind} \\(try 1\\)(;|$)`))
       expect(last.summary).not.toMatch(LISTING_TEXT)
+      expect(last.summary).not.toContain("rate limited")
       for (let i = 0; i < 5 && last.followUp; i++) {
         state = last.state
         last = (await type.finish?.(ctx(FOLLOW_UP, state), failed)) as Outcome

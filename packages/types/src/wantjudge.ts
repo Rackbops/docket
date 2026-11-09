@@ -454,7 +454,7 @@ function judgeFailed(
 ): Outcome {
   const failures = state.failures + 1
   // An eBay watch keeps no eBay data (`keepsFindings`), and the runner's detail can quote a listing
-  // (the CLI's result text plus stderr), so its summary, which outlives the six hours, keeps only
+  // (the CLI's output and stderr), so its summary, which outlives the six hours, keeps only
   // the kind and the try (#108). A `malformed` detail is this file's own words, so it stays.
   const summary =
     keepsFindings(ctx.config) || kind === "malformed"
