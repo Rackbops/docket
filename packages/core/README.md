@@ -20,6 +20,7 @@ Rackbops/Tooling, `research/city-hall-task-tracker.md`, section 5 (plan rev17).
 | `text` | `clean`: a person's or a model's text made safe for a DM (no mention pings, no masked link, no control characters, capped); the types package re-exports it |
 | `job-state` | where an execute-lane run's Job stands, from its events: its key, whether it is out, `PENDING_LIMIT_MS` |
 | `budget` | daily ceilings for model runs (plan 5.7, 5.12): `DEFAULT_BUDGET` (2 USD and 20 calls a person, 10 USD and 100 calls in all), days from midnight Eastern, `charge`, `budgetHold`, and the one-time notices; the execute lane charges each run to its owner, holds a person at a ceiling until midnight, stops at the global one, and backs off after a usage limit without charging anyone |
+| `gift-model`, `gift-ports`, `gift-validate`, `gift-ledger`, `gift-memory-store`, `gift-store-contract` | the gift organizer's ledger (plan item 158, epic #94), beside the task types and off the scheduler: recipients (a person or a household, never a tracker user), groups, occasions, roster rows, items, purchase lines and allocations, each with a revision and an archived flag, and one change event per write; money in integer minor units with its currency. `GiftStore` is its own port, so a host without gifts implements nothing new: owner-scoped reads (another owner's row reads as missing), revision-checked updates, idempotency keys, one roster row per occasion and recipient, `forgetOwner`. `GiftLedger` is the one write path: it validates every field (an unknown one is refused, not dropped) and refuses an id that is not the same owner's record of the right kind. `MemoryGiftStore` is the reference; `GIFT_STORE_CONTRACT` the cases a host runs against its own store |
 | `contract`, `capabilities`, `job` | `TaskType`, `defineTaskType`, the grantable capability enum (tier 0 and tier 1 only; tier 2 has no name here), the `JobSpec` and `JobResult` a runner speaks |
 
 ```ts
@@ -38,6 +39,14 @@ for the plain-code types (the price tracker reads pages through it, via `RunCont
 `Executor` that hands Jobs to the runner. The core never calls a model and holds no credential:
 every model call runs in the runner, through the Claude Code CLI on roshne's subscription, never an
 API key.
+
+## Adopting the gift ledger (unreleased)
+
+Nothing changes for a host that offers no gifts: `Store` is untouched. A host that does implements
+`GiftStore` with its own storage, runs every `GIFT_STORE_CONTRACT` case against a fresh one, and
+writes only through `GiftLedger`. Its check-and-write for a revision, an idempotency key and the
+roster pair must be one atomic step (one SQLite transaction), which the contract's at-once cases
+test. Coverage, allocation limits and spend come with #96; groups and occasion snapshots with #97.
 
 ## Adopting 0.18.0
 
