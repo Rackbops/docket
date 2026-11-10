@@ -105,15 +105,23 @@ export type GiftSyncDecision =
   | { action: "reassign"; recipientIds: string[] }
   | { action: "unassign" }
 
-/** An allocation a sync would leave pointing at someone no longer on the roster. */
+/** A live allocation on the occasion naming someone who will not be on its roster. */
 export interface GiftSyncAffected {
   allocationId: string
   revision: number
   recipientIds: string[]
-  /** The recipients the sync drops from it. */
+  /** Its recipients who will not be on the roster. */
   dropped: string[]
   /** It has a purchase behind it (bought gifts are never lost: keep, reassign or unassign). */
   bought: boolean
+}
+
+/** Someone a sync puts on the roster, with what they bring: a restored row keeps its budget. */
+export interface GiftSyncAddition {
+  recipientId: string
+  /** The archived row restored for them, or null when a new row is created. */
+  restore: GiftOccasionRecipient | null
+  coverage: GiftCoverage
 }
 
 export interface GiftSyncRemoval {
@@ -122,27 +130,33 @@ export interface GiftSyncRemoval {
 }
 
 /**
- * A reviewed sync of an open occasion's roster with its groups as they are now: who would be
- * added, who removed (with their coverage and per-recipient budget), and every live allocation
- * on the occasion that names a removed recipient. Nothing is written. A row whose recipient is
- * added back is restored (`restore`), not created again, since its archived row holds its place.
+ * A reviewed sync of an open occasion's roster with its groups as they are now. Nothing is
+ * written. `added` and `removed` carry each person's coverage (from the gifts already on the
+ * occasion) and the row budget that comes or goes. `affected` is every live allocation on the
+ * occasion naming someone who will not be on the roster -- whether their row goes in this sync
+ * or went earlier -- so a gift on someone off the roster is asked about at every sync and never
+ * forgotten, even after a sync that stopped half way. The roster is the groups and overrides: a
+ * row added by hand without `includeIds` is offered for removal.
  */
 export interface GiftSyncPreview {
   occasionId: string
   occasionRevision: number
-  added: string[]
-  /** Archived rows to restore for recipients added back. */
-  restore: GiftOccasionRecipient[]
+  /** The revisions of the occasion's groups as read; a plan is refused if one moved. */
+  groupRevisions: Record<string, number>
+  /** The roster after the sync. */
+  roster: string[]
+  added: GiftSyncAddition[]
   removed: GiftSyncRemoval[]
   affected: GiftSyncAffected[]
-  /** The change to the sum of per-recipient budgets: removed rows' budgets leave it. */
+  /** The change to the sum of row budgets: restored rows' budgets come back, removed ones go. */
   budgetDeltaMinor: number
 }
 
 /**
- * `roster` is every row of this occasion, archived ones included; `allocations` every allocation
- * of the owner; `buckets` from `giftBuckets` over the owner's whole lists. An archived occasion
- * is never synced: it keeps the roster it had.
+ * `roster` is every row of this occasion, archived ones included; `groups` every group the
+ * occasion names (archived ones too: pass `includeArchived`), a missing one is an error;
+ * `allocations` every allocation of the owner; `buckets` from `giftBuckets` over the owner's
+ * whole lists. An archived occasion is never synced: it keeps the roster it had.
  */
 export function previewGroupSync(
   occasion: GiftOccasion,
@@ -154,20 +168,28 @@ export function previewGroupSync(
   if (occasion.archived) {
     throw new GiftValidationError(["an archived occasion keeps its roster; it is never synced"])
   }
+  const chosen = chosenGroups(occasion, groups)
   const mine = roster.filter((r) => r.occasionId === occasion.id)
   const live = mine.filter((r) => !r.archived)
-  const want = rosterIds(
-    previewRoster(chosenGroups(occasion, groups), occasion.includeIds, occasion.excludeIds),
-  )
-  const added = want.filter((id) => !live.some((r) => r.recipientId === id))
-  const restore = mine.filter((r) => r.archived && added.includes(r.recipientId))
+  const want = rosterIds(previewRoster(chosen, occasion.includeIds, occasion.excludeIds))
+  const added = want
+    .filter((id) => !live.some((r) => r.recipientId === id))
+    .map((recipientId) => {
+      const restore = mine.find((r) => r.archived && r.recipientId === recipientId) ?? null
+      const row = restore ?? {
+        occasionId: occasion.id,
+        recipientId,
+        target: null,
+        decision: "planning" as const,
+      }
+      return { recipientId, restore, coverage: giftCoverage(row as GiftOccasionRecipient, buckets) }
+    })
   const removedRows = live.filter((r) => !want.includes(r.recipientId))
   const removed = removedRows.map((row) => ({ row, coverage: giftCoverage(row, buckets) }))
-  const gone = new Set(removedRows.map((r) => r.recipientId))
   const affected: GiftSyncAffected[] = []
   for (const a of allocations) {
     if (a.archived || a.occasionId !== occasion.id) continue
-    const dropped = a.recipientIds.filter((id) => gone.has(id))
+    const dropped = a.recipientIds.filter((id) => !want.includes(id))
     if (dropped.length === 0) continue
     affected.push({
       allocationId: a.id,
@@ -177,62 +199,84 @@ export function previewGroupSync(
       bought: a.purchaseId !== null,
     })
   }
-  const budgetDeltaMinor = -removedRows.reduce((n, r) => n + (r.budgetMinor ?? 0), 0)
+  const back = added.reduce((n, a) => n + (a.restore?.budgetMinor ?? 0), 0)
+  const gone = removedRows.reduce((n, r) => n + (r.budgetMinor ?? 0), 0)
   return {
     occasionId: occasion.id,
     occasionRevision: occasion.revision,
+    groupRevisions: Object.fromEntries(chosen.map((g) => [g.id, g.revision])),
+    roster: want,
     added,
-    restore,
     removed,
     affected,
-    budgetDeltaMinor,
+    budgetDeltaMinor: back - gone,
   }
 }
 
-/** The writes a decided sync makes, in order. */
+/** The writes a decided sync makes, in the order `GiftLedger.applyGiftSync` makes them. */
 export interface GiftSyncPlan {
   occasionId: string
-  createRows: string[]
-  restoreRows: { id: string; revision: number }[]
-  archiveRows: { id: string; revision: number }[]
+  occasionRevision: number
+  groupRevisions: Record<string, number>
   allocations: {
     id: string
     revision: number
     patch: Partial<GiftAllocationFields> & { archived?: boolean }
   }[]
+  createRows: string[]
+  restoreRows: { id: string; revision: number }[]
+  archiveRows: { id: string; revision: number }[]
 }
 
 /**
  * Turns a preview and the owner's decisions into writes. Every affected allocation needs a
- * decision, or nothing is planned: `GiftValidationError` names each one without. `keep` leaves
- * the gift as it is (bought gifts are never dropped by a sync); `reassign` points it at the
- * recipients given; `unassign` takes the dropped recipients off it, and archives it when nobody
- * is left, so its units go back to the stash.
+ * decision, and a decision for anything else is refused, or nothing is planned:
+ * `GiftValidationError` names each problem. `keep` leaves the gift untouched (it is asked about
+ * again next sync); `reassign` points it at recipients who will be on the roster; `unassign`
+ * takes the dropped recipients off it, and archives it when nobody is left, so its units go back
+ * to the stash.
  */
 export function planGroupSync(
   preview: GiftSyncPreview,
   decisions: Readonly<Record<string, GiftSyncDecision>>,
 ): GiftSyncPlan {
-  const missing = preview.affected.filter((a) => decisions[a.allocationId] === undefined)
-  if (missing.length > 0) {
-    throw new GiftValidationError(
-      missing.map((a) => `allocation ${a.allocationId} needs keep, reassign or unassign`),
-    )
+  const problems: string[] = []
+  for (const a of preview.affected) {
+    const d = decisions[a.allocationId]
+    if (d === undefined) {
+      problems.push(`allocation ${a.allocationId} needs keep, reassign or unassign`)
+    } else if (d.action === "reassign") {
+      if (d.recipientIds.length === 0) {
+        problems.push(`allocation ${a.allocationId}: reassign names nobody`)
+      }
+      for (const id of d.recipientIds) {
+        if (!preview.roster.includes(id)) {
+          problems.push(`allocation ${a.allocationId}: ${id} will not be on the roster`)
+        }
+      }
+    }
   }
+  for (const id of Object.keys(decisions)) {
+    if (!preview.affected.some((a) => a.allocationId === id)) {
+      problems.push(`allocation ${id} is not affected by this sync`)
+    }
+  }
+  if (problems.length > 0) throw new GiftValidationError(problems)
   const plan: GiftSyncPlan = {
     occasionId: preview.occasionId,
-    createRows: preview.added.filter((id) => !preview.restore.some((r) => r.recipientId === id)),
-    restoreRows: preview.restore.map((r) => ({ id: r.id, revision: r.revision })),
-    archiveRows: preview.removed.map((r) => ({ id: r.row.id, revision: r.row.revision })),
+    occasionRevision: preview.occasionRevision,
+    groupRevisions: { ...preview.groupRevisions },
     allocations: [],
+    createRows: preview.added.filter((a) => a.restore === null).map((a) => a.recipientId),
+    restoreRows: preview.added.flatMap((a) =>
+      a.restore === null ? [] : [{ id: a.restore.id, revision: a.restore.revision }],
+    ),
+    archiveRows: preview.removed.map((r) => ({ id: r.row.id, revision: r.row.revision })),
   }
   for (const a of preview.affected) {
     const d = decisions[a.allocationId] as GiftSyncDecision
     if (d.action === "keep") continue
     if (d.action === "reassign") {
-      if (d.recipientIds.length === 0) {
-        throw new GiftValidationError([`allocation ${a.allocationId}: reassign names nobody`])
-      }
       plan.allocations.push({
         id: a.allocationId,
         revision: a.revision,

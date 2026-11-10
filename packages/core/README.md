@@ -75,10 +75,17 @@ its purchase keeps, but a later return or cancellation never locks the gifts alr
 (`includeIds`, `excludeIds`); `previewRoster` lists each person once, with the groups they came
 from and the overrides shown. The roster rows are the snapshot: editing a group (`editGroupMembers`,
 then `GiftLedger.update`) changes no occasion until the owner reviews a sync. `previewGroupSync`
-shows who would be added and removed, with their coverage and budget, and every gift naming a
-removed person; `planGroupSync` refuses until each such gift has a keep, reassign or unassign
-decision; `GiftLedger.applyGiftSync` writes the plan (not atomically: a refused write leaves the
-earlier ones, and the owner previews again). An archived occasion is never synced. Group
+shows who would be added (a restored row brings its budget back) and removed, with their coverage,
+the budget change, and every live gift on the occasion naming someone off the roster, whether their
+row goes now or went earlier, so a gift kept on someone off the roster is asked about at every sync.
+The roster is the groups plus overrides: a row added by hand without `includeIds` is offered for
+removal. `planGroupSync` refuses until each such gift has a keep, reassign (to people on the
+roster) or unassign decision, and refuses decisions for other gifts. `GiftLedger.applyGiftSync`
+refuses the whole plan if the occasion was archived or it or a group moved since the preview, then
+writes the gift changes first and the roster rows after; it is not atomic (a refused write leaves
+the earlier ones, and the owner previews again). Retry a plan with the same plan and key: write n
+uses `<key>/n`, so a retry replays what was written; a new preview needs a new key. An archived
+occasion is never synced. Group
 membership is a list of ids; no label decides it.
 
 ## Adopting 0.18.0

@@ -6,6 +6,7 @@ import {
   GiftNotFoundError,
   type GiftPatch,
   type GiftRequest,
+  GiftRevisionError,
   type GiftStore,
   GiftValidationError,
   type GiftWriteMeta,
@@ -64,7 +65,7 @@ function refsOf<K extends GiftKind>(kind: K, fields: GiftFieldsByKind[K]): Refs 
  * Two writes racing on the same records (a person becoming a household while a household adds
  * them) can both pass; a host that needs that closed serializes an owner's writes.
  * An allocation never holds more units than its purchase keeps (`checkFit`); coverage and spend
- * are derived in `gift-rules.ts`. Groups and occasion snapshots are docket#97.
+ * are derived in `gift-rules.ts`; rosters from groups in `gift-groups.ts`.
  */
 export class GiftLedger {
   constructor(private readonly store: GiftStore) {}
@@ -153,13 +154,33 @@ export class GiftLedger {
 
   /**
    * Writes a decided group sync (`planGroupSync`) through this ledger, so each write is checked
-   * like any other: new roster rows (planning, no target or budget), restored rows, archived
-   * rows, then the allocation changes, each at the revision the preview read. The writes are not
-   * one atomic step: one refused (a record moved on) leaves the earlier ones written, and the
-   * owner previews again. With an idempotency key, write n uses `<key>/<n>`, so a retry replays
-   * the writes already made and carries on.
+   * like any other. First it re-reads the occasion and its groups: an archived occasion, or one
+   * of them moved since the preview, refuses the whole plan before anything is written. Then the
+   * allocation changes (so a refused one leaves the roster as it was), new roster rows (planning,
+   * no target or budget), restored rows and archived rows, each at the revision the preview
+   * read. The writes are not one atomic step: one refused (a record moved on) leaves the earlier
+   * ones written, and the owner previews again. With an idempotency key, write n uses
+   * `<key>/<n>`, so retrying the same plan replays the writes already made and carries on; a new
+   * preview needs a new key.
    */
   async applyGiftSync(meta: GiftWriteMeta, plan: GiftSyncPlan): Promise<void> {
+    const occasion = await this.store.get("occasion", meta.ownerId, plan.occasionId)
+    if (occasion === null) throw new GiftNotFoundError(`no occasion ${plan.occasionId}`)
+    if (occasion.archived) {
+      throw new GiftValidationError(["an archived occasion keeps its roster; it is never synced"])
+    }
+    const moved: string[] = []
+    if (occasion.revision !== plan.occasionRevision) moved.push(`occasion ${occasion.id}`)
+    for (const [id, revision] of Object.entries(plan.groupRevisions)) {
+      const g = await this.store.get("group", meta.ownerId, id)
+      if (g?.revision !== revision) moved.push(`group ${id}`)
+    }
+    if (moved.length > 0) {
+      throw new GiftRevisionError(
+        `changed since the preview: ${moved.join(", ")}`,
+        occasion.revision,
+      )
+    }
     let n = 0
     const step = (): GiftWriteMeta => {
       n += 1
@@ -167,6 +188,9 @@ export class GiftLedger {
       return idempotencyKey === undefined
         ? rest
         : { ...rest, idempotencyKey: `${idempotencyKey}/${n}` }
+    }
+    for (const a of plan.allocations) {
+      await this.update("allocation", a.id, step(), a.revision, a.patch)
     }
     for (const recipientId of plan.createRows) {
       await this.create("occasionRecipient", step(), {
@@ -183,9 +207,6 @@ export class GiftLedger {
     }
     for (const r of plan.archiveRows) {
       await this.update("occasionRecipient", r.id, step(), r.revision, { archived: true })
-    }
-    for (const a of plan.allocations) {
-      await this.update("allocation", a.id, step(), a.revision, a.patch)
     }
   }
 

@@ -2,9 +2,11 @@ import { describe, expect, it } from "vitest"
 
 import {
   editGroupMembers,
+  type GiftAllocation,
   type GiftFieldsByKind,
   GiftLedger,
   type GiftOccasion,
+  GiftRevisionError,
   GiftValidationError,
   type GiftWriteMeta,
   giftBuckets,
@@ -303,7 +305,7 @@ describe("occasion rosters", () => {
     expect((await s.ledger.get("allocation", A, both.id))?.recipientIds).toEqual([c3.id])
   })
 
-  it("keeps a bought gift on keep, archives an emptied one on unassign, and restores a re-added row", async () => {
+  it("leaves a gift untouched on keep, archives an emptied one on unassign, and restores a re-added row", async () => {
     const s = setup()
     const [c1, c2] = (await s.people("C1", "C2")) as { id: string }[] as [
       { id: string },
@@ -343,7 +345,13 @@ describe("occasion rosters", () => {
       [kept.id]: { action: "keep" },
       [emptied.id]: { action: "unassign" },
     })
-    expect((await s.ledger.get("allocation", A, kept.id))?.recipientIds).toEqual([c2.id])
+    const after = await s.ledger.get("allocation", A, kept.id)
+    expect([after?.revision, after?.archived, after?.recipientIds]).toEqual([
+      kept.revision,
+      false,
+      [c2.id],
+    ])
+    expect((await s.previewNow(xmas)).affected.map((a) => a.allocationId)).toEqual([kept.id])
     expect((await s.ledger.get("allocation", A, emptied.id))?.archived).toBe(true)
     await s.ledger.update("group", group.id, meta, g2.revision, { memberIds: [c1.id, c2.id] })
     expect(await s.sync(xmas)).toEqual([c1.id, c2.id])
@@ -352,5 +360,215 @@ describe("occasion rosters", () => {
       includeArchived: true,
     })
     expect(rows.length).toBe(2)
+  })
+})
+
+describe("group sync edges", () => {
+  const scarf: GiftFieldsByKind["item"] = {
+    title: "Scarf",
+    url: null,
+    productKey: null,
+    variant: null,
+    notes: null,
+    source: { kind: "manual", ref: null },
+    planning: "idea",
+    estimateMinor: null,
+    currency: null,
+  }
+
+  /** Two people on a group-built Christmas, one scarf planned for the second. */
+  async function pair() {
+    const s = setup()
+    const [c1, c2] = (await s.people("C1", "C2")) as { id: string }[] as [
+      { id: string },
+      { id: string },
+    ]
+    const group = await s.ledger.create("group", meta, { name: "Two", memberIds: [c1.id, c2.id] })
+    const xmas = await s.ledger.create("occasion", meta, christmas(2026, [group.id]))
+    await s.sync(xmas)
+    const item = await s.ledger.create("item", meta, scarf)
+    const gift = (recipientIds: string[], occasionId = xmas.id): Promise<GiftAllocation> =>
+      s.ledger.create("allocation", meta, {
+        itemId: item.id,
+        occasionId,
+        recipientIds,
+        quantity: 1,
+        shared: false,
+        purchaseId: null,
+        handoff: "none",
+        givenOn: null,
+      })
+    return { s, c1, c2, group, xmas, gift }
+  }
+
+  it("refuses an occasion naming a missing or wrong-kind group or person", async () => {
+    const { s, c1, group } = await pair()
+    await expect(s.ledger.create("occasion", meta, christmas(2030, [c1.id]))).rejects.toThrow(
+      `no group ${c1.id}`,
+    )
+    await expect(
+      s.ledger.create("occasion", meta, christmas(2030, [], [group.id])),
+    ).rejects.toThrow(`no recipient ${group.id}`)
+    await expect(
+      s.ledger.create("occasion", meta, christmas(2030, [], [], [group.id])),
+    ).rejects.toThrow(`no recipient ${group.id}`)
+    const other = { ...meta, ownerId: "owner-b", actor: "owner-b" }
+    await expect(s.ledger.create("occasion", other, christmas(2030, [group.id]))).rejects.toThrow(
+      `no group ${group.id}`,
+    )
+    for (const field of ["groupIds", "includeIds", "excludeIds"]) {
+      await expect(
+        s.ledger.create("occasion", meta, { ...christmas(2030, []), [field]: [c1.id, c1.id] }),
+      ).rejects.toThrow("repeats an id")
+      await expect(
+        s.ledger.create("occasion", meta, { ...christmas(2030, []), [field]: "x" } as never),
+      ).rejects.toThrow("must be a list of ids")
+    }
+  })
+
+  it("refuses a preview whose groups were not all given", async () => {
+    const { s, xmas } = await pair()
+    expect(() => previewGroupSync(xmas, [], [], [], [])).toThrow(
+      `occasion names group ${xmas.groupIds[0]}, not given`,
+    )
+    expect(await s.liveRoster(xmas.id)).toHaveLength(2)
+  })
+
+  it("asks about every live gift on this occasion naming someone off the roster, and only those", async () => {
+    const { s, c1, c2, group, xmas, gift } = await pair()
+    const easter = await s.ledger.create("occasion", meta, {
+      ...christmas(2027, []),
+      includeIds: [c2.id],
+    })
+    const asked = await gift([c1.id, c2.id])
+    const gone = await gift([c2.id])
+    await s.ledger.update("allocation", gone.id, meta, gone.revision, { archived: true })
+    await gift([c2.id], easter.id)
+    await gift([c1.id])
+    await s.ledger.update("group", group.id, meta, group.revision, { memberIds: [c1.id] })
+    const preview = await s.previewNow(xmas)
+    expect(preview.affected.map((a) => [a.allocationId, a.dropped])).toEqual([[asked.id, [c2.id]]])
+  })
+
+  it("still asks about a gift whose recipient's row went in an earlier sync", async () => {
+    const { s, c1, c2, group, xmas, gift } = await pair()
+    const g = await gift([c2.id])
+    await s.ledger.update("group", group.id, meta, group.revision, { memberIds: [c1.id] })
+    const row = (await s.ledger.list("occasionRecipient", A, { occasionId: xmas.id })).find(
+      (r) => r.recipientId === c2.id,
+    ) as { id: string; revision: number }
+    await s.ledger.update("occasionRecipient", row.id, meta, row.revision, { archived: true })
+    const preview = await s.previewNow(xmas)
+    expect([preview.removed, preview.affected.map((a) => a.allocationId)]).toEqual([[], [g.id]])
+  })
+
+  it("writes gifts before rows, so a refused gift write leaves the roster as it was", async () => {
+    const { s, c1, c2, group, xmas, gift } = await pair()
+    const g = await gift([c2.id])
+    await s.ledger.update("group", group.id, meta, group.revision, { memberIds: [c1.id] })
+    const preview = await s.previewNow(xmas)
+    const plan = planGroupSync(preview, { [g.id]: { action: "unassign" } })
+    await s.ledger.update("allocation", g.id, meta, g.revision, { quantity: 2 })
+    await expect(s.ledger.applyGiftSync(meta, plan)).rejects.toThrow(GiftRevisionError)
+    expect(await s.liveRoster(xmas.id)).toEqual([c1.id, c2.id])
+    expect((await s.previewNow(xmas)).affected.map((a) => a.allocationId)).toEqual([g.id])
+  })
+
+  it("refuses reassigning to nobody or to someone off the roster, and decisions for other gifts", async () => {
+    const { s, c1, c2, group, xmas, gift } = await pair()
+    const g = await gift([c2.id])
+    const other = await gift([c1.id])
+    await s.ledger.update("group", group.id, meta, group.revision, { memberIds: [c1.id] })
+    const preview = await s.previewNow(xmas)
+    expect(() =>
+      planGroupSync(preview, { [g.id]: { action: "reassign", recipientIds: [] } }),
+    ).toThrow("reassign names nobody")
+    expect(() =>
+      planGroupSync(preview, { [g.id]: { action: "reassign", recipientIds: [c2.id] } }),
+    ).toThrow(`${c2.id} will not be on the roster`)
+    expect(() =>
+      planGroupSync(preview, {
+        [g.id]: { action: "keep" },
+        [other.id]: { action: "unassign" },
+      }),
+    ).toThrow(`allocation ${other.id} is not affected by this sync`)
+  })
+
+  it("refuses a plan when the occasion or a group moved or the occasion was archived", async () => {
+    const { s, c1, c2, group, xmas } = await pair()
+    const g2 = await s.ledger.update("group", group.id, meta, group.revision, {
+      memberIds: [c1.id],
+    })
+    const plan = planGroupSync(await s.previewNow(xmas), {})
+    await s.ledger.update("group", group.id, meta, g2.revision, { name: "Renamed" })
+    await expect(s.ledger.applyGiftSync(meta, plan)).rejects.toThrow(`group ${group.id}`)
+    const fresh = planGroupSync(await s.previewNow(xmas), {})
+    await s.ledger.update("occasion", xmas.id, meta, xmas.revision, { title: "Xmas" })
+    await expect(s.ledger.applyGiftSync(meta, fresh)).rejects.toThrow(`occasion ${xmas.id}`)
+    const now = (await s.ledger.get("occasion", A, xmas.id)) as GiftOccasion
+    const last = planGroupSync(await s.previewNow(now), {})
+    await s.ledger.update("occasion", xmas.id, meta, now.revision, { archived: true })
+    await expect(s.ledger.applyGiftSync(meta, last)).rejects.toThrow("never synced")
+    expect(await s.liveRoster(xmas.id)).toEqual([c1.id, c2.id])
+  })
+
+  it("replays a retried plan with the same key, one write per step", async () => {
+    const s = setup()
+    const [a, b] = (await s.people("A", "B")) as { id: string }[] as [
+      { id: string },
+      { id: string },
+    ]
+    const group = await s.ledger.create("group", meta, { name: "G", memberIds: [a.id, b.id] })
+    const xmas = await s.ledger.create("occasion", meta, christmas(2026, [group.id]))
+    const plan = planGroupSync(await s.previewNow(xmas), {})
+    const keyed = { ...meta, idempotencyKey: "sync-1" }
+    await s.ledger.applyGiftSync(keyed, plan)
+    await s.ledger.applyGiftSync(keyed, plan)
+    expect(await s.liveRoster(xmas.id)).toEqual([a.id, b.id])
+    expect(
+      await s.ledger.list("occasionRecipient", A, { occasionId: xmas.id, includeArchived: true }),
+    ).toHaveLength(2)
+  })
+
+  it("previews coverage and budget for people added and removed", async () => {
+    const { s, c1, c2, group, xmas, gift } = await pair()
+    const rows = await s.ledger.list("occasionRecipient", A, { occasionId: xmas.id })
+    for (const [r, budgetMinor] of rows.map((r, i) => [r, [2000, 3000][i]] as const)) {
+      await s.ledger.update("occasionRecipient", r.id, meta, r.revision, { budgetMinor })
+    }
+    const [c3] = (await s.people("C3")) as { id: string }[]
+    const g1 = await s.ledger.update("group", group.id, meta, group.revision, {
+      memberIds: [c2.id],
+    })
+    await s.sync(xmas)
+    expect(
+      occasionBudget(
+        xmas,
+        await s.ledger.list("occasionRecipient", A, {
+          occasionId: xmas.id,
+          includeArchived: true,
+        }),
+      ),
+    ).toEqual({ currency: "USD", budgetMinor: 50000, recipientBudgetsMinor: 3000, recipients: 1 })
+    await gift([c1.id])
+    await s.ledger.update("group", group.id, meta, g1.revision, {
+      memberIds: [c1.id, (c3 as { id: string }).id],
+    })
+    const preview = await s.previewNow(xmas)
+    expect(
+      preview.added.map((a) => [a.recipientId, a.restore?.budgetMinor ?? null, a.coverage.status]),
+    ).toEqual([
+      [c1.id, 2000, "planned"],
+      [(c3 as { id: string }).id, null, "needs-planning"],
+    ])
+    expect(preview.removed.map((r) => r.row.recipientId)).toEqual([c2.id])
+    expect(preview.budgetDeltaMinor).toBe(2000 - 3000)
+    expect(preview.roster).toEqual([c1.id, (c3 as { id: string }).id])
+  })
+
+  it("a sync that changes no budget reports 0, not -0", async () => {
+    const { s, c1, group, xmas } = await pair()
+    await s.ledger.update("group", group.id, meta, group.revision, { memberIds: [c1.id] })
+    expect((await s.previewNow(xmas)).budgetDeltaMinor).toBe(0)
   })
 })
