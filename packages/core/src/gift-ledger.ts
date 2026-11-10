@@ -1,3 +1,4 @@
+import type { GiftSyncPlan } from "./gift-groups.js"
 import type { GiftBase, GiftEvent, GiftFieldsByKind, GiftKind, GiftRecord } from "./gift-model.js"
 import {
   type GiftEventFilter,
@@ -5,6 +6,7 @@ import {
   GiftNotFoundError,
   type GiftPatch,
   type GiftRequest,
+  GiftRevisionError,
   type GiftStore,
   GiftValidationError,
   type GiftWriteMeta,
@@ -25,6 +27,12 @@ function refsOf<K extends GiftKind>(kind: K, fields: GiftFieldsByKind[K]): Refs 
     case "recipient":
     case "group":
       return many("recipient", "memberIds")
+    case "occasion":
+      return [
+        ...many("group", "groupIds"),
+        ...many("recipient", "includeIds"),
+        ...many("recipient", "excludeIds"),
+      ]
     case "occasionRecipient":
       return [...one("occasion", "occasionId"), ...one("recipient", "recipientId")]
     case "purchase":
@@ -57,7 +65,7 @@ function refsOf<K extends GiftKind>(kind: K, fields: GiftFieldsByKind[K]): Refs 
  * Two writes racing on the same records (a person becoming a household while a household adds
  * them) can both pass; a host that needs that closed serializes an owner's writes.
  * An allocation never holds more units than its purchase keeps (`checkFit`); coverage and spend
- * are derived in `gift-rules.ts`. Groups and occasion snapshots are docket#97.
+ * are derived in `gift-rules.ts`; rosters from groups in `gift-groups.ts`.
  */
 export class GiftLedger {
   constructor(private readonly store: GiftStore) {}
@@ -142,6 +150,65 @@ export class GiftLedger {
       current,
     )
     return this.store.update(kind, id, meta, expectedRevision, clean)
+  }
+
+  /**
+   * Writes a decided group sync (`planGroupSync`) through this ledger, so each write is checked
+   * like any other. First it re-reads the occasion and its groups: an archived occasion, or one
+   * of them moved since the preview, refuses the whole plan before anything is written. Then the
+   * allocation changes (so a refused one leaves the roster as it was), new roster rows (planning,
+   * no target or budget), restored rows and archived rows, each at the revision the preview
+   * read. Gifts added after the preview are not checked here: the next preview asks about any
+   * that name someone off the roster. The writes are not one atomic step: one refused (a record moved on) leaves the earlier
+   * ones written, and the owner previews again. With an idempotency key, write n uses
+   * `<key>/<n>`, so retrying the same plan replays the writes already made and carries on; a new
+   * preview needs a new key.
+   */
+  async applyGiftSync(meta: GiftWriteMeta, plan: GiftSyncPlan): Promise<void> {
+    const occasion = await this.store.get("occasion", meta.ownerId, plan.occasionId)
+    if (occasion === null) throw new GiftNotFoundError(`no occasion ${plan.occasionId}`)
+    if (occasion.archived) {
+      throw new GiftValidationError(["an archived occasion keeps its roster; it is never synced"])
+    }
+    const moved: string[] = []
+    if (occasion.revision !== plan.occasionRevision) moved.push(`occasion ${occasion.id}`)
+    for (const [id, revision] of Object.entries(plan.groupRevisions)) {
+      const g = await this.store.get("group", meta.ownerId, id)
+      if (g?.revision !== revision) moved.push(`group ${id}`)
+    }
+    if (moved.length > 0) {
+      throw new GiftRevisionError(
+        `changed since the preview: ${moved.join(", ")}`,
+        occasion.revision,
+      )
+    }
+    let n = 0
+    const step = (): GiftWriteMeta => {
+      n += 1
+      const { idempotencyKey, ...rest } = meta
+      return idempotencyKey === undefined
+        ? rest
+        : { ...rest, idempotencyKey: `${idempotencyKey}/${n}` }
+    }
+    for (const a of plan.allocations) {
+      await this.update("allocation", a.id, step(), a.revision, a.patch)
+    }
+    for (const recipientId of plan.createRows) {
+      await this.create("occasionRecipient", step(), {
+        occasionId: plan.occasionId,
+        recipientId,
+        target: null,
+        budgetMinor: null,
+        decision: "planning",
+        skipReason: null,
+      })
+    }
+    for (const r of plan.restoreRows) {
+      await this.update("occasionRecipient", r.id, step(), r.revision, { archived: false })
+    }
+    for (const r of plan.archiveRows) {
+      await this.update("occasionRecipient", r.id, step(), r.revision, { archived: true })
+    }
   }
 
   get<K extends GiftKind>(kind: K, ownerId: string, id: string): Promise<GiftRecord<K> | null> {

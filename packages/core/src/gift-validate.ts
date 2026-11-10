@@ -141,6 +141,15 @@ const CHECKS: { [K in GiftKind]: (c: Checker, f: GiftFieldsByKind[K]) => void } 
     }
     c.currency("currency")
     c.money("budgetMinor")
+    c.ids("groupIds", 0)
+    c.ids("includeIds", 0)
+    c.ids("excludeIds", 0)
+    if (Array.isArray(f.includeIds) && Array.isArray(f.excludeIds)) {
+      const both = (f.includeIds as unknown[]).filter((id) =>
+        (f.excludeIds as unknown[]).includes(id),
+      )
+      if (both.length > 0) c.problems.push("a recipient cannot be both included and excluded")
+    }
   },
   occasionRecipient(c, f) {
     c.id("occasionId")
@@ -230,7 +239,18 @@ const CHECKS: { [K in GiftKind]: (c: Checker, f: GiftFieldsByKind[K]) => void } 
 export const GIFT_FIELD_NAMES: { [K in GiftKind]: readonly (keyof GiftFieldsByKind[K])[] } = {
   recipient: ["displayName", "kind", "memberIds", "labels", "interests", "avoid", "notes"],
   group: ["name", "memberIds"],
-  occasion: ["kind", "title", "date", "timeZone", "year", "currency", "budgetMinor"],
+  occasion: [
+    "kind",
+    "title",
+    "date",
+    "timeZone",
+    "year",
+    "currency",
+    "budgetMinor",
+    "groupIds",
+    "includeIds",
+    "excludeIds",
+  ],
   occasionRecipient: [
     "occasionId",
     "recipientId",
