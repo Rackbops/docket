@@ -5,8 +5,9 @@
  * scheduler; it shares no row, id or name with the tracker's `Store` records.
  *
  * Money is an integer count of minor units (cents) with an ISO 4217 code beside it, never a
- * float; totals are kept per currency, never summed across them (the spend rules, docket#96). Gift budgets are spending plans; they have nothing
- * to do with the model-call budgets in `budget.ts`.
+ * float; totals are kept per currency, never summed across them (the spend rules, docket#96).
+ * Gift budgets are spending plans; they have nothing to do with the model-call budgets in
+ * `budget.ts`.
  */
 
 /** Every gift record carries these. `revision` is 1 on create and moves by one on each update. */

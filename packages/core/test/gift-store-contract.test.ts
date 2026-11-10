@@ -116,6 +116,77 @@ describe("the GiftStore contract, on MemoryGiftStore", () => {
     )
   })
 
+  it("fails a store that records an event for a refused write", async () => {
+    const real = new MemoryGiftStore()
+    const broken: GiftStore = Object.assign(Object.create(real), {
+      update: (async (kind, id, meta, rev, patch) => {
+        try {
+          return await real.update(kind, id, meta, rev, patch)
+        } catch (e) {
+          await real.create("item", meta, {
+            title: "noise",
+            url: null,
+            productKey: null,
+            variant: null,
+            notes: null,
+            source: { kind: "manual", ref: null },
+            planning: "idea",
+            estimateMinor: null,
+            currency: null,
+          })
+          throw e
+        }
+      }) as GiftStore["update"],
+    })
+    await expect(caseNamed("a refused write").run(broken)).rejects.toThrow(GiftStoreContractError)
+  })
+
+  it("fails a store that applies base fields from a patch", async () => {
+    const real = new MemoryGiftStore()
+    const broken: GiftStore = Object.assign(Object.create(real), {
+      update: (async (kind, id, meta, rev, patch) => {
+        const next = await real.update(kind, id, meta, rev, patch)
+        return { ...next, ...(patch as object) }
+      }) as GiftStore["update"],
+    })
+    await expect(caseNamed("a patch cannot set base fields").run(broken)).rejects.toThrow(
+      GiftStoreContractError,
+    )
+  })
+
+  it("fails a store whose update skips the roster check", async () => {
+    const real = new MemoryGiftStore()
+    const broken: GiftStore = Object.assign(Object.create(real), {
+      update: (async (kind, id, meta, rev, patch) => {
+        if (kind !== "occasionRecipient") return real.update(kind, id, meta, rev, patch)
+        const now = await real.get(kind, meta.ownerId, id)
+        return { ...now, ...(patch as object), revision: rev + 1 }
+      }) as GiftStore["update"],
+    })
+    await expect(caseNamed("an update cannot move a recipient").run(broken)).rejects.toThrow(
+      GiftStoreContractError,
+    )
+  })
+
+  it("fails a store that frees an archived roster row's place", async () => {
+    const real = new MemoryGiftStore()
+    const broken: GiftStore = Object.assign(Object.create(real), {
+      create: (async (kind, meta, fields) => {
+        if (kind !== "occasionRecipient") return real.create(kind, meta, fields)
+        const f = fields as { occasionId: string; recipientId: string }
+        const all = await real.list("occasionRecipient", meta.ownerId, { includeArchived: true })
+        const archivedOnly = all.some(
+          (r) => r.archived && r.occasionId === f.occasionId && r.recipientId === f.recipientId,
+        )
+        if (!archivedOnly) return real.create(kind, meta, fields)
+        return real.create(kind, meta, { ...f, recipientId: `${f.recipientId}-again` } as never)
+      }) as GiftStore["create"],
+    })
+    await expect(caseNamed("an archived roster row").run(broken)).rejects.toThrow(
+      GiftStoreContractError,
+    )
+  })
+
   it("fails a store that lets an occasion hold a recipient twice", async () => {
     const real = new MemoryGiftStore()
     let n = 0
