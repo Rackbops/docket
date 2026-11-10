@@ -46,7 +46,15 @@ Nothing changes for a host that offers no gifts: `Store` is untouched. A host th
 `GiftStore` with its own storage, runs every `GIFT_STORE_CONTRACT` case against a fresh one, and
 writes only through `GiftLedger`. Its check-and-write for a revision, an idempotency key and the
 roster pair must be one atomic step (one SQLite transaction), which the contract's at-once cases
-test. Coverage, allocation limits and spend come with #96; groups and occasion snapshots with #97.
+test. It also implements `replay`, which the ledger asks first, so a retried write gets its first
+result even after the records moved on; store `giftRequestKey(request)` beside each key, so a
+retry whose JSON keys arrive in another order still matches. Lists come back in the order rows were
+written, not sorted by `createdAt`.
+
+The ledger's reference checks read before the store writes and are not atomic with it: two writes
+racing on the same records can both pass them. A host that needs that closed serializes one
+owner's writes. Coverage, allocation limits and spend come with #96; groups and occasion snapshots
+with #97.
 
 ## Adopting 0.18.0
 

@@ -5,11 +5,11 @@ import {
   type GiftFieldsByKind,
   GiftLedger,
   GiftNotFoundError,
+  GiftRevisionError,
   GiftValidationError,
   type GiftWriteMeta,
   giftProblems,
   MemoryGiftStore,
-  MemoryStore,
 } from "../src/index.js"
 
 const AT = "2026-11-01T12:00:00.000Z"
@@ -157,6 +157,28 @@ describe("gift validation", () => {
     expect(
       giftProblems("allocation", { ...allocation("i", "o", ["r"]), givenOn: "2026-12-25" }),
     ).toEqual(["givenOn is only for a given gift"])
+    expect(giftProblems("occasion", { ...occasion, date: "2026-02-31" })).toEqual([
+      "date must be a date YYYY-MM-DD",
+    ])
+    expect(giftProblems("occasion", { ...occasion, date: "2028-02-29", year: 2028 })).toEqual([])
+    expect(giftProblems("occasion", { ...occasion, date: "2027-12-25" })).toEqual([
+      "year must be the date's year",
+    ])
+  })
+
+  it("marks a purchase's total complete only when tax, shipping and discount are known", () => {
+    expect(giftProblems("purchase", { ...purchase("i"), totalComplete: true })).toEqual([
+      "totalComplete needs tax, shipping and discount, each 0 when there is none",
+    ])
+    expect(
+      giftProblems("purchase", {
+        ...purchase("i"),
+        totalComplete: true,
+        taxMinor: 150,
+        shippingMinor: 0,
+        discountMinor: 0,
+      }),
+    ).toEqual([])
   })
 
   it("lists every field name of every kind", () => {
@@ -259,9 +281,138 @@ describe("gift references", () => {
   })
 })
 
+describe("rules kept from both sides", () => {
+  it("refuses a recipient that lists itself", async () => {
+    const ledger = fresh()
+    const p = await ledger.create("recipient", meta(), person())
+    await expect(
+      ledger.update("recipient", p.id, meta(), 1, { kind: "household", memberIds: [p.id] }),
+    ).rejects.toThrow(GiftValidationError)
+  })
+
+  it("keeps a household's member a person", async () => {
+    const ledger = fresh()
+    const p = await ledger.create("recipient", meta(), person("P"))
+    const q = await ledger.create("recipient", meta(), person("Q"))
+    await ledger.create("recipient", meta(), {
+      ...person("Home"),
+      kind: "household",
+      memberIds: [p.id],
+    })
+    await expect(
+      ledger.update("recipient", p.id, meta(), 1, { kind: "household", memberIds: [q.id] }),
+    ).rejects.toThrow(GiftValidationError)
+    expect((await ledger.get("recipient", A, p.id))?.kind).toBe("person")
+    const free = await ledger.update("recipient", q.id, meta(), 1, {
+      kind: "household",
+      memberIds: [p.id],
+    })
+    expect(free.kind).toBe("household")
+  })
+
+  it("keeps an allocated purchase on its item", async () => {
+    const ledger = fresh()
+    const i1 = await ledger.create("item", meta(), item)
+    const i2 = await ledger.create("item", meta(), { ...item, title: "Other" })
+    const o = await ledger.create("occasion", meta(), occasion)
+    const r = await ledger.create("recipient", meta(), person())
+    const bought = await ledger.create("purchase", meta(), purchase(i1.id))
+    const spare = await ledger.create("purchase", meta(), purchase(i1.id))
+    await ledger.create("allocation", meta(), allocation(i1.id, o.id, [r.id], bought.id))
+    await expect(
+      ledger.update("purchase", bought.id, meta(), 1, { itemId: i2.id }),
+    ).rejects.toThrow(GiftValidationError)
+    expect((await ledger.update("purchase", spare.id, meta(), 1, { itemId: i2.id })).itemId).toBe(
+      i2.id,
+    )
+  })
+
+  it("lets a record point at an archived one", async () => {
+    const ledger = fresh()
+    const r = await ledger.create("recipient", meta(), person())
+    await ledger.update("recipient", r.id, meta(), 1, { archived: true })
+    const g = await ledger.create("group", meta(), { name: "Old friends", memberIds: [r.id] })
+    expect(g.memberIds).toEqual([r.id])
+  })
+})
+
+describe("retries and stale writes through the ledger", () => {
+  it("answers a replayed update with the first result after the record moved on", async () => {
+    const ledger = fresh()
+    const i = await ledger.create("item", meta(), item)
+    const p = await ledger.create("purchase", meta(), { ...purchase(i.id), ordered: 1 })
+    const keyed = { ...meta(), idempotencyKey: "retry-1" }
+    const first = await ledger.update("purchase", p.id, keyed, 1, { received: 1 })
+    await ledger.update("purchase", p.id, meta(), 2, { received: 0, cancelled: 1 })
+    const again = await ledger.update("purchase", p.id, keyed, 1, { received: 1 })
+    expect([again.revision, again.received]).toEqual([first.revision, 1])
+    expect((await ledger.get("purchase", A, p.id))?.revision).toBe(3)
+  })
+
+  it("answers a replayed create with the first record after a reference changed", async () => {
+    const ledger = fresh()
+    const p = await ledger.create("recipient", meta(), person("P"))
+    const keyed = { ...meta(), idempotencyKey: "retry-2" }
+    const home = { ...person("Home"), kind: "household" as const, memberIds: [p.id] }
+    const first = await ledger.create("recipient", keyed, home)
+    await ledger.update("recipient", p.id, meta(), 1, { archived: true })
+    const reordered = Object.fromEntries(Object.entries(home).reverse()) as typeof home
+    expect((await ledger.create("recipient", keyed, reordered)).id).toBe(first.id)
+    expect(await ledger.list("recipient", A, { includeArchived: true })).toHaveLength(2)
+  })
+
+  it("answers a retry from the store before reading or judging anything", async () => {
+    const store = new MemoryGiftStore()
+    let reads = 0
+    const counted = Object.assign(Object.create(store), {
+      get: ((...args: Parameters<MemoryGiftStore["get"]>) => {
+        reads += 1
+        return store.get(...args)
+      }) as MemoryGiftStore["get"],
+    }) as MemoryGiftStore
+    const ledger = new GiftLedger(counted)
+    const p = await ledger.create("recipient", meta(), person("P"))
+    const keyed = { ...meta(), idempotencyKey: "retry-3" }
+    const home = { ...person("Home"), kind: "household" as const, memberIds: [p.id] }
+    const first = await ledger.create("recipient", keyed, home)
+    reads = 0
+    expect((await ledger.create("recipient", keyed, home)).id).toBe(first.id)
+    expect(reads).toBe(0)
+    const k2 = { ...meta(), idempotencyKey: "retry-4" }
+    const again = await ledger.update("recipient", p.id, k2, 1, { notes: "y" })
+    reads = 0
+    expect((await ledger.update("recipient", p.id, k2, 1, { notes: "y" })).revision).toBe(
+      again.revision,
+    )
+    expect(reads).toBe(0)
+  })
+
+  it("refuses a stale update as stale, not as bad fields", async () => {
+    const ledger = fresh()
+    const i = await ledger.create("item", meta(), item)
+    const p = await ledger.create("purchase", meta(), { ...purchase(i.id), ordered: 1 })
+    await ledger.update("purchase", p.id, meta(), 1, { cancelled: 1 })
+    await expect(ledger.update("purchase", p.id, meta(), 1, { received: 1 })).rejects.toThrow(
+      GiftRevisionError,
+    )
+  })
+
+  it("ignores an undefined key and refuses a patch that is not an object", async () => {
+    const ledger = fresh()
+    const r = await ledger.create("recipient", meta(), person())
+    const next = await ledger.update("recipient", r.id, meta(), 1, {
+      archived: undefined,
+      notes: "tea",
+    })
+    expect([next.archived, next.notes]).toEqual([false, "tea"])
+    await expect(ledger.update("recipient", r.id, meta(), 2, null as never)).rejects.toThrow(
+      GiftValidationError,
+    )
+  })
+})
+
 describe("a gift recipient is not a tracker person", () => {
-  it("carries no user, Discord, login or delivery field and writes nothing to the tracker store", async () => {
-    const tracker = new MemoryStore()
+  it("carries no user, Discord, login or delivery field", async () => {
     const ledger = fresh()
     const r = await ledger.create("recipient", meta(), person())
     expect(Object.keys(r).sort()).toEqual([
@@ -279,8 +430,6 @@ describe("a gift recipient is not a tracker person", () => {
       "revision",
       "updatedAt",
     ])
-    expect(await tracker.listUsers()).toEqual([])
-    expect(await tracker.listTasks()).toEqual([])
     expect(giftProblems("recipient", { ...person(), discordId: "d1" } as never)).toEqual([
       "discordId is not a recipient field",
     ])

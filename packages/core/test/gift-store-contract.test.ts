@@ -71,6 +71,51 @@ describe("the GiftStore contract, on MemoryGiftStore", () => {
     await expect(caseNamed("two creates").run(broken)).rejects.toThrow(GiftStoreContractError)
   })
 
+  it("fails a store that keeps owners apart for recipients only", async () => {
+    const real = new MemoryGiftStore()
+    const broken: GiftStore = Object.assign(Object.create(real), {
+      get: (async (kind, owner, id) => {
+        if (kind === "recipient") return real.get(kind, owner, id)
+        for (const o of ["owner-a", "owner-b"]) {
+          const row = await real.get(kind, o, id)
+          if (row !== null) return row
+        }
+        return null
+      }) as GiftStore["get"],
+    })
+    await expect(caseNamed("another owner's").run(broken)).rejects.toThrow(GiftStoreContractError)
+  })
+
+  it("fails a store whose replay answers with the record as it is now", async () => {
+    const real = new MemoryGiftStore()
+    const broken: GiftStore = Object.assign(Object.create(real), {
+      update: (async (kind, id, meta, rev, patch) => {
+        const first = await real.replay(meta, {
+          op: "update",
+          kind,
+          id,
+          expectedRevision: rev,
+          patch,
+        })
+        if (first !== null) return real.get(kind, meta.ownerId, id)
+        return real.update(kind, id, meta, rev, patch)
+      }) as GiftStore["update"],
+    })
+    await expect(caseNamed("a replay after the record moved on").run(broken)).rejects.toThrow(
+      GiftStoreContractError,
+    )
+  })
+
+  it("fails a store whose replay lookup forgets keys", async () => {
+    const real = new MemoryGiftStore()
+    const broken: GiftStore = Object.assign(Object.create(real), {
+      replay: (async () => null) as GiftStore["replay"],
+    })
+    await expect(caseNamed("replay answers null").run(broken)).rejects.toThrow(
+      GiftStoreContractError,
+    )
+  })
+
   it("fails a store that lets an occasion hold a recipient twice", async () => {
     const real = new MemoryGiftStore()
     let n = 0

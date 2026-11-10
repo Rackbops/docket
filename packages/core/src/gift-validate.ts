@@ -12,6 +12,13 @@ export const GIFT_LABELS_MAX = 20
 export const GIFT_IDS_MAX = 500
 
 const DATE = /^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/
+
+/** A calendar date that exists: 2026-02-31 does not. */
+function realDate(v: string): boolean {
+  const [y, m, d] = v.split("-").map(Number) as [number, number, number]
+  const t = new Date(Date.UTC(y, m - 1, d))
+  return t.getUTCFullYear() === y && t.getUTCMonth() === m - 1 && t.getUTCDate() === d
+}
 const CURRENCY = /^[A-Z]{3}$/
 
 type Fields = Record<string, unknown>
@@ -61,7 +68,9 @@ class Checker {
   date(name: string): void {
     const v = this.f[name]
     if (v === null) return
-    if (typeof v !== "string" || !DATE.test(v)) this.bad(name, "must be a date YYYY-MM-DD")
+    if (typeof v !== "string" || !DATE.test(v) || !realDate(v)) {
+      this.bad(name, "must be a date YYYY-MM-DD")
+    }
   }
 
   flag(name: string): void {
@@ -123,6 +132,13 @@ const CHECKS: { [K in GiftKind]: (c: Checker, f: GiftFieldsByKind[K]) => void } 
     if (f.year !== null && (!Number.isSafeInteger(f.year) || f.year < 1900 || f.year > 9999)) {
       c.problems.push("year must be a year between 1900 and 9999")
     }
+    if (
+      typeof f.year === "number" &&
+      typeof f.date === "string" &&
+      !f.date.startsWith(`${f.year}-`)
+    ) {
+      c.problems.push("year must be the date's year")
+    }
     c.currency("currency")
     c.money("budgetMinor")
   },
@@ -178,6 +194,9 @@ const CHECKS: { [K in GiftKind]: (c: Checker, f: GiftFieldsByKind[K]) => void } 
       c.problems.push("received and cancelled together cannot exceed ordered")
     }
     if (n(f.returned) > n(f.received)) c.problems.push("returned cannot exceed received")
+    if (f.totalComplete === true && [f.taxMinor, f.shippingMinor, f.discountMinor].includes(null)) {
+      c.problems.push("totalComplete needs tax, shipping and discount, each 0 when there is none")
+    }
   },
   allocation(c, f) {
     c.id("itemId")

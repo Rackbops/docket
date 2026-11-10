@@ -5,7 +5,7 @@
  * scheduler; it shares no row, id or name with the tracker's `Store` records.
  *
  * Money is an integer count of minor units (cents) with an ISO 4217 code beside it, never a
- * float, and never summed across currencies. Gift budgets are spending plans; they have nothing
+ * float; totals are kept per currency, never summed across them (the spend rules, docket#96). Gift budgets are spending plans; they have nothing
  * to do with the model-call budgets in `budget.ts`.
  */
 
@@ -111,7 +111,10 @@ export interface GiftPurchaseFields {
   taxMinor: number | null
   shippingMinor: number | null
   discountMinor: number | null
-  /** False when tax, shipping or discounts are not all known, so a total is marked incomplete. */
+  /**
+   * True only when tax, shipping and discount are all known (0 when there is none); otherwise the
+   * line's total is shown as incomplete.
+   */
   totalComplete: boolean
   refundedMinor: number
   /** Local date `YYYY-MM-DD`. */

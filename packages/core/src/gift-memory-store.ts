@@ -6,9 +6,11 @@ import {
   type GiftListFilter,
   GiftNotFoundError,
   type GiftPatch,
+  type GiftRequest,
   GiftRevisionError,
   type GiftStore,
   type GiftWriteMeta,
+  giftRequestKey,
 } from "./gift-ports.js"
 
 const PREFIX: Record<GiftKind, string> = {
@@ -34,7 +36,8 @@ interface Remembered {
 export class MemoryGiftStore implements GiftStore {
   private readonly rows = new Map<string, { kind: GiftKind; row: GiftBase }>()
   private readonly events: GiftEvent[] = []
-  private readonly keys = new Map<string, Remembered>()
+  /** Owner, then key: two owners' keys never meet, whatever characters they hold. */
+  private readonly keys = new Map<string, Map<string, Remembered>>()
   private seq = 0
 
   private next(prefix: string): string {
@@ -47,9 +50,9 @@ export class MemoryGiftStore implements GiftStore {
   }
 
   /** The remembered result for a key, or undefined; throws when the key named another request. */
-  private replay(meta: GiftWriteMeta, request: string): GiftBase | undefined {
+  private replay_(meta: GiftWriteMeta, request: string): GiftBase | undefined {
     if (meta.idempotencyKey === undefined) return undefined
-    const seen = this.keys.get(`${meta.ownerId}\u0000${meta.idempotencyKey}`)
+    const seen = this.keys.get(meta.ownerId)?.get(meta.idempotencyKey)
     if (seen === undefined) return undefined
     if (seen.request !== request) {
       throw new GiftIdempotencyError(`idempotency key reused for another request`)
@@ -59,10 +62,12 @@ export class MemoryGiftStore implements GiftStore {
 
   private remember(meta: GiftWriteMeta, request: string, result: GiftBase): void {
     if (meta.idempotencyKey === undefined) return
-    this.keys.set(`${meta.ownerId}\u0000${meta.idempotencyKey}`, {
-      request,
-      result: MemoryGiftStore.copy(result),
-    })
+    let owned = this.keys.get(meta.ownerId)
+    if (owned === undefined) {
+      owned = new Map()
+      this.keys.set(meta.ownerId, owned)
+    }
+    owned.set(meta.idempotencyKey, { request, result: MemoryGiftStore.copy(result) })
   }
 
   private checkPair(ownerId: string, row: GiftBase, selfId: string | null): void {
@@ -95,8 +100,8 @@ export class MemoryGiftStore implements GiftStore {
     meta: GiftWriteMeta,
     fields: GiftFieldsByKind[K],
   ): Promise<GiftRecord<K>> {
-    const request = JSON.stringify(["create", kind, fields])
-    const replayed = this.replay(meta, request)
+    const request = giftRequestKey({ op: "create", kind, fields })
+    const replayed = this.replay_(meta, request)
     if (replayed !== undefined) return replayed as GiftRecord<K>
     const row = {
       ...MemoryGiftStore.copy(fields),
@@ -121,8 +126,8 @@ export class MemoryGiftStore implements GiftStore {
     expectedRevision: number,
     patch: GiftPatch<K>,
   ): Promise<GiftRecord<K>> {
-    const request = JSON.stringify(["update", kind, id, expectedRevision, patch])
-    const replayed = this.replay(meta, request)
+    const request = giftRequestKey({ op: "update", kind, id, expectedRevision, patch })
+    const replayed = this.replay_(meta, request)
     if (replayed !== undefined) return replayed as GiftRecord<K>
     const found = this.rows.get(id)
     if (found === undefined || found.kind !== kind || found.row.ownerId !== meta.ownerId) {
@@ -143,6 +148,11 @@ export class MemoryGiftStore implements GiftStore {
       updatedAt: _u,
       ...allowed
     } = patch as GiftPatch<K> & Partial<GiftBase>
+    for (const key of Object.keys(allowed)) {
+      if ((allowed as Record<string, unknown>)[key] === undefined) {
+        delete (allowed as Record<string, unknown>)[key]
+      }
+    }
     const next = {
       ...MemoryGiftStore.copy(prior),
       ...MemoryGiftStore.copy(allowed),
@@ -183,6 +193,10 @@ export class MemoryGiftStore implements GiftStore {
     return out
   }
 
+  async replay(meta: GiftWriteMeta, request: GiftRequest): Promise<GiftBase | null> {
+    return this.replay_(meta, giftRequestKey(request)) ?? null
+  }
+
   async listEvents(ownerId: string, filter: GiftEventFilter = {}): Promise<GiftEvent[]> {
     return MemoryGiftStore.copy(
       this.events.filter(
@@ -208,9 +222,7 @@ export class MemoryGiftStore implements GiftStore {
         erased += 1
       }
     }
-    for (const key of this.keys.keys()) {
-      if (key.startsWith(`${ownerId}\u0000`)) this.keys.delete(key)
-    }
+    this.keys.delete(ownerId)
     return erased
   }
 }

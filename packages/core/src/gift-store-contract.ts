@@ -169,19 +169,27 @@ export const GIFT_STORE_CONTRACT: readonly GiftStoreContractCase[] = [
     },
   },
   {
-    name: "gift: another owner's record reads as missing and cannot be changed",
+    name: "gift: another owner's record of every kind reads as missing and cannot be changed",
     async run(store) {
-      const r = await store.create("recipient", meta(A), person())
-      check((await store.get("recipient", B, r.id)) === null, "get as another owner is null")
-      same((await store.list("recipient", B)).length, 0, "list as another owner is empty")
-      await refuses(
-        () => store.update("recipient", r.id, meta(B), 1, { notes: "mine now" }),
-        GiftNotFoundError,
-        "update as another owner",
-      )
+      const made = [
+        ["recipient", await store.create("recipient", meta(A), person())],
+        ["group", await store.create("group", meta(A), { name: "Cousins", memberIds: [] })],
+        ["occasion", await store.create("occasion", meta(A), occasion())],
+        ["item", await store.create("item", meta(A), item())],
+      ] as const
+      for (const [kind, row] of made) {
+        check((await store.get(kind, B, row.id)) === null, `get ${kind} as another owner is null`)
+        same((await store.list(kind, B)).length, 0, `list ${kind} as another owner is empty`)
+        await refuses(
+          () => store.update(kind, row.id, meta(B), 1, { archived: true }),
+          GiftNotFoundError,
+          `update ${kind} as another owner`,
+        )
+        const now = await store.get(kind, A, row.id)
+        same([now?.revision, now?.archived], [1, false], `${kind} unchanged`)
+      }
       same((await store.listEvents(B)).length, 0, "no events for the other owner")
-      const now = await store.get("recipient", A, r.id)
-      same([now?.revision, now?.notes], [1, null], "unchanged")
+      same((await store.listEvents(A)).length, made.length, "only the creates")
     },
   },
   {
@@ -216,6 +224,48 @@ export const GIFT_STORE_CONTRACT: readonly GiftStoreContractCase[] = [
       const again = await store.update("item", r.id, m, 1, { planning: "selected" })
       same([first.revision, again.revision], [2, 2], "same result")
       same((await store.get("item", A, r.id))?.revision, 2, "one bump")
+    },
+  },
+  {
+    name: "gift: a replay after the record moved on returns the first result",
+    async run(store) {
+      const r = await store.create("item", meta(), item())
+      const m = meta(A, { idempotencyKey: "u2" })
+      const first = await store.update("item", r.id, m, 1, { planning: "selected" })
+      await store.update("item", r.id, meta(), 2, { planning: "rejected" })
+      const again = await store.update("item", r.id, m, 1, { planning: "selected" })
+      same([again.revision, again.planning], [first.revision, "selected"], "the first result")
+      const asked = await store.replay(m, {
+        op: "update",
+        kind: "item",
+        id: r.id,
+        expectedRevision: 1,
+        patch: { planning: "selected" },
+      })
+      same(asked?.revision, 2, "replay names the first result")
+      const now = await store.get("item", A, r.id)
+      same([now?.revision, now?.planning], [3, "rejected"], "nothing written by the replay")
+      same((await store.listEvents(A)).length, 3, "three writes")
+    },
+  },
+  {
+    name: "gift: replay answers null for an unused key and refuses another request's key",
+    async run(store) {
+      const m = meta(A, { idempotencyKey: "r1" })
+      same(await store.replay(m, { op: "create", kind: "item", fields: item() }), null, "unused")
+      const made = await store.create("item", m, item())
+      const shuffled = Object.fromEntries(Object.entries(item()).reverse())
+      same(
+        (await store.replay(m, { op: "create", kind: "item", fields: shuffled }))?.id,
+        made.id,
+        "the same request with its keys in another order",
+      )
+      await refuses(
+        () => store.replay(m, { op: "create", kind: "item", fields: item("other") }),
+        GiftIdempotencyError,
+        "another request",
+      )
+      same((await store.list("item", A)).length, 1, "replay writes nothing")
     },
   },
   {
@@ -270,6 +320,80 @@ export const GIFT_STORE_CONTRACT: readonly GiftStoreContractCase[] = [
       ])
       same(results.filter((x) => x.status === "fulfilled").length, 1, "one of two at once")
       same((await store.list("occasionRecipient", A, { occasionId: o.id })).length, 2, "roster")
+    },
+  },
+  {
+    name: "gift: an update cannot move a recipient onto an occasion that already has them",
+    async run(store) {
+      const o = await store.create("occasion", meta(), occasion())
+      const r1 = await store.create("recipient", meta(), person("One"))
+      const r2 = await store.create("recipient", meta(), person("Two"))
+      await store.create("occasionRecipient", meta(), pair(o.id, r1.id))
+      const second = await store.create("occasionRecipient", meta(), pair(o.id, r2.id))
+      await refuses(
+        () => store.update("occasionRecipient", second.id, meta(), 1, { recipientId: r1.id }),
+        GiftDuplicateError,
+        "a duplicate by update",
+      )
+      same((await store.get("occasionRecipient", A, second.id))?.recipientId, r2.id, "unchanged")
+      same((await store.listEvents(A)).length, 5, "the refused update records no event")
+    },
+  },
+  {
+    name: "gift: an archived roster row still holds its place",
+    async run(store) {
+      const o = await store.create("occasion", meta(), occasion())
+      const r = await store.create("recipient", meta(), person())
+      const row = await store.create("occasionRecipient", meta(), pair(o.id, r.id))
+      await store.update("occasionRecipient", row.id, meta(), 1, { archived: true })
+      await refuses(
+        () => store.create("occasionRecipient", meta(), pair(o.id, r.id)),
+        GiftDuplicateError,
+        "re-adding beside an archived row",
+      )
+    },
+  },
+  {
+    name: "gift: a patch cannot set base fields, and an undefined key changes nothing",
+    async run(store) {
+      const r = await store.create("recipient", meta(), person())
+      const patch = {
+        notes: "kept",
+        archived: undefined,
+        id: "other",
+        ownerId: B,
+        revision: 99,
+        createdAt: LATER,
+        updatedAt: LATER,
+      } as never
+      const next = await store.update("recipient", r.id, meta(), 1, patch)
+      same(
+        [next.id, next.ownerId, next.revision, next.createdAt, next.updatedAt, next.archived],
+        [r.id, A, 2, AT, AT, false],
+        "base fields kept",
+      )
+      same(next.notes, "kept", "the field changed")
+      check((await store.get("recipient", B, r.id)) === null, "still not the other owner's")
+    },
+  },
+  {
+    name: "gift: a refused write records no event",
+    async run(store) {
+      const r = await store.create("recipient", meta(), person())
+      await refuses(
+        () => store.update("recipient", r.id, meta(), 5, { notes: "stale" }),
+        GiftRevisionError,
+        "stale",
+      )
+      await refuses(
+        () => store.update("recipient", "gr-none", meta(), 1, { notes: "x" }),
+        GiftNotFoundError,
+        "missing",
+      )
+      const m = meta(A, { idempotencyKey: "e1" })
+      await store.create("item", m, item("one"))
+      await refuses(() => store.create("item", m, item("two")), GiftIdempotencyError, "reused")
+      same((await store.listEvents(A)).length, 2, "only the two creates")
     },
   },
   {
