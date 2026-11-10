@@ -197,6 +197,19 @@ const CHECKS: { [K in GiftKind]: (c: Checker, f: GiftFieldsByKind[K]) => void } 
     if (f.totalComplete === true && [f.taxMinor, f.shippingMinor, f.discountMinor].includes(null)) {
       c.problems.push("totalComplete needs tax, shipping and discount, each 0 when there is none")
     }
+    const price = n(f.unitPriceMinor)
+    const extras = n(f.taxMinor) + n(f.shippingMinor)
+    const bought = Math.max(0, n(f.ordered) - n(f.cancelled))
+    if (n(f.discountMinor) > price * bought + extras) {
+      c.problems.push("discountMinor cannot exceed the line's price plus tax and shipping")
+    }
+    // Money back never exceeds what the line cost, so net spend never goes below 0. Cancelled
+    // units were never charged and are already out of the total: a refund is for returns and
+    // price adjustments, not for a cancellation.
+    const total = price * bought + extras - n(f.discountMinor)
+    if (n(f.refundedMinor) > Math.max(0, total)) {
+      c.problems.push("refundedMinor cannot exceed the line's total")
+    }
   },
   allocation(c, f) {
     c.id("itemId")
