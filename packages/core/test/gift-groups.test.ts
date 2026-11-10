@@ -484,6 +484,9 @@ describe("group sync edges", () => {
       planGroupSync(preview, { [g.id]: { action: "reassign", recipientIds: [] } }),
     ).toThrow("reassign names nobody")
     expect(() =>
+      planGroupSync(preview, { [g.id]: { action: "reassign", recipientIds: [c1.id, c1.id] } }),
+    ).toThrow("reassign repeats a recipient")
+    expect(() =>
       planGroupSync(preview, { [g.id]: { action: "reassign", recipientIds: [c2.id] } }),
     ).toThrow(`${c2.id} will not be on the roster`)
     expect(() =>

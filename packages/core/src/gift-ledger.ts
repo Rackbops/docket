@@ -158,7 +158,8 @@ export class GiftLedger {
    * of them moved since the preview, refuses the whole plan before anything is written. Then the
    * allocation changes (so a refused one leaves the roster as it was), new roster rows (planning,
    * no target or budget), restored rows and archived rows, each at the revision the preview
-   * read. The writes are not one atomic step: one refused (a record moved on) leaves the earlier
+   * read. Gifts added after the preview are not checked here: the next preview asks about any
+   * that name someone off the roster. The writes are not one atomic step: one refused (a record moved on) leaves the earlier
    * ones written, and the owner previews again. With an idempotency key, write n uses
    * `<key>/<n>`, so retrying the same plan replays the writes already made and carries on; a new
    * preview needs a new key.

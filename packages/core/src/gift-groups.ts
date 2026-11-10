@@ -249,6 +249,9 @@ export function planGroupSync(
       if (d.recipientIds.length === 0) {
         problems.push(`allocation ${a.allocationId}: reassign names nobody`)
       }
+      if (new Set(d.recipientIds).size !== d.recipientIds.length) {
+        problems.push(`allocation ${a.allocationId}: reassign repeats a recipient`)
+      }
       for (const id of d.recipientIds) {
         if (!preview.roster.includes(id)) {
           problems.push(`allocation ${a.allocationId}: ${id} will not be on the roster`)
