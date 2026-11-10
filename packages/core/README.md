@@ -20,7 +20,7 @@ Rackbops/Tooling, `research/city-hall-task-tracker.md`, section 5 (plan rev17).
 | `text` | `clean`: a person's or a model's text made safe for a DM (no mention pings, no masked link, no control characters, capped); the types package re-exports it |
 | `job-state` | where an execute-lane run's Job stands, from its events: its key, whether it is out, `PENDING_LIMIT_MS` |
 | `budget` | daily ceilings for model runs (plan 5.7, 5.12): `DEFAULT_BUDGET` (2 USD and 20 calls a person, 10 USD and 100 calls in all), days from midnight Eastern, `charge`, `budgetHold`, and the one-time notices; the execute lane charges each run to its owner, holds a person at a ceiling until midnight, stops at the global one, and backs off after a usage limit without charging anyone |
-| `gift-model`, `gift-ports`, `gift-validate`, `gift-ledger`, `gift-memory-store`, `gift-store-contract`, `gift-rules` | the gift organizer's ledger (plan item 158, epic #94), beside the task types and off the scheduler: recipients (a person or a household, never a tracker user), groups, occasions, roster rows, items, purchase lines and allocations, each with a revision and an archived flag, and one change event per write; money in integer minor units with its currency. `GiftStore` is its own port, so a host without gifts implements nothing new: owner-scoped reads (another owner's row reads as missing), revision-checked updates, idempotency keys, one roster row per occasion and recipient, `forgetOwner`. `GiftLedger` is the one write path: it validates every field (an unknown one is refused, not dropped) and refuses an id that is not the same owner's record of the right kind. `MemoryGiftStore` is the reference; `GIFT_STORE_CONTRACT` the cases a host runs against its own store. `gift-rules` derives coverage, allocation fills and per-currency spend from the records |
+| `gift-model`, `gift-ports`, `gift-validate`, `gift-ledger`, `gift-memory-store`, `gift-store-contract`, `gift-rules`, `gift-groups` | the gift organizer's ledger (plan item 158, epic #94), beside the task types and off the scheduler: recipients (a person or a household, never a tracker user), groups, occasions, roster rows, items, purchase lines and allocations, each with a revision and an archived flag, and one change event per write; money in integer minor units with its currency. `GiftStore` is its own port, so a host without gifts implements nothing new: owner-scoped reads (another owner's row reads as missing), revision-checked updates, idempotency keys, one roster row per occasion and recipient, `forgetOwner`. `GiftLedger` is the one write path: it validates every field (an unknown one is refused, not dropped) and refuses an id that is not the same owner's record of the right kind. `MemoryGiftStore` is the reference; `GIFT_STORE_CONTRACT` the cases a host runs against its own store. `gift-rules` derives coverage, allocation fills and per-currency spend from the records; `gift-groups` previews rosters from groups and reviewed syncs |
 | `contract`, `capabilities`, `job` | `TaskType`, `defineTaskType`, the grantable capability enum (tier 0 and tier 1 only; tier 2 has no name here), the `JobSpec` and `JobResult` a runner speaks |
 
 ```ts
@@ -70,7 +70,16 @@ row per currency; cancelled units were never charged and are out of the total, s
 line's total. `purchaseShares` splits a line's total over its units so the parts
 sum to it exactly. The ledger refuses a write that would make an allocation hold more units than
 its purchase keeps, but a later return or cancellation never locks the gifts already on it.
-Groups and occasion snapshots come with #97.
+
+`gift-groups` builds rosters. An occasion names its groups (`groupIds`) and hand overrides
+(`includeIds`, `excludeIds`); `previewRoster` lists each person once, with the groups they came
+from and the overrides shown. The roster rows are the snapshot: editing a group (`editGroupMembers`,
+then `GiftLedger.update`) changes no occasion until the owner reviews a sync. `previewGroupSync`
+shows who would be added and removed, with their coverage and budget, and every gift naming a
+removed person; `planGroupSync` refuses until each such gift has a keep, reassign or unassign
+decision; `GiftLedger.applyGiftSync` writes the plan (not atomically: a refused write leaves the
+earlier ones, and the owner previews again). An archived occasion is never synced. Group
+membership is a list of ids; no label decides it.
 
 ## Adopting 0.18.0
 

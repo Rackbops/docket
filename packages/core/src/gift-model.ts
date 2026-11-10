@@ -56,6 +56,14 @@ export interface GiftOccasionFields {
   year: number | null
   currency: string
   budgetMinor: number | null
+  /**
+   * Where the roster came from (docket#97): the groups chosen, then recipients added or left out
+   * by hand. The roster rows are the snapshot; editing a group later changes them only through a
+   * reviewed sync (`previewGroupSync`).
+   */
+  groupIds: string[]
+  includeIds: string[]
+  excludeIds: string[]
 }
 
 export type GiftCoverageDecision = "planning" | "complete" | "skipped"

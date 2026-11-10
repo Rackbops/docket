@@ -93,6 +93,9 @@ async function family(n: number, target: number | null = null) {
     year: 2026,
     currency: "USD",
     budgetMinor: null,
+    groupIds: [],
+    includeIds: [],
+    excludeIds: [],
   })
   const people = []
   for (let i = 1; i <= n; i += 1) {
@@ -151,6 +154,9 @@ describe("allocation", () => {
       year: null,
       currency: "USD",
       budgetMinor: null,
+      groupIds: [],
+      includeIds: [],
+      excludeIds: [],
     })
     const r = f.people[0] as { id: string }
     const p = await f.ledger.create("purchase", meta, purchase(f.game.id, 1))

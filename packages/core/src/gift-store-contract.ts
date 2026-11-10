@@ -81,6 +81,9 @@ function occasion(): GiftFieldsByKind["occasion"] {
     year: 2026,
     currency: "USD",
     budgetMinor: null,
+    groupIds: [],
+    includeIds: [],
+    excludeIds: [],
   }
 }
 

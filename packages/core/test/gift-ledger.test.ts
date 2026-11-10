@@ -35,6 +35,9 @@ const occasion: GiftFieldsByKind["occasion"] = {
   year: 2026,
   currency: "USD",
   budgetMinor: 20000,
+  groupIds: [],
+  includeIds: [],
+  excludeIds: [],
 }
 
 const item: GiftFieldsByKind["item"] = {
