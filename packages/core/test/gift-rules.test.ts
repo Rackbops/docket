@@ -178,7 +178,7 @@ describe("allocation", () => {
     expect(giftSpend(v.purchases, v.allocations, [])[0]?.spentMinor).toBe(8000)
     const split = purchaseShares(v.purchases[0] as never, v.buckets, v.allocations)
     expect(split.shares.map((s) => s.minor)).toEqual([4000, 4000])
-    expect(split.stashMinor).toBe(0)
+    expect(split.unallocatedMinor).toBe(0)
   })
 
   it("a stash bought before it is assigned covers nobody until it is", async () => {
@@ -220,7 +220,7 @@ describe("allocation", () => {
     ])
   })
 
-  it("a partial return with refund reopens only the last gap, refunds once, then a replacement fills it", async () => {
+  it("a partial return with refund reopens only the last gap and refunds once", async () => {
     const f = await family(3)
     const p = await f.ledger.create("purchase", meta, purchase(f.game.id, 3))
     await f.ledger.create(
@@ -242,16 +242,92 @@ describe("allocation", () => {
     v = await f.view()
     ;[usd] = giftSpend(v.purchases, v.allocations, [])
     expect([usd?.spentMinor, usd?.pendingRefundMinor, usd?.netMinor]).toEqual([7500, 0, 5000])
-    await f.ledger.update("purchase", p.id, meta, 3, { ordered: 4 })
-    v = await f.view()
-    expect(f.people.map((r) => v.coverage(r).status)).toEqual([
-      "purchased",
-      "purchased",
-      "awaiting",
-    ])
   })
 
-  it("a return reopens the gift allocated last, not an earlier one", async () => {
+  it("a replacement fills the gap a return reopened", async () => {
+    const f = await family(2)
+    const p = await f.ledger.create("purchase", meta, purchase(f.game.id, 2))
+    await f.ledger.create(
+      "allocation",
+      meta,
+      allocation(
+        f.game.id,
+        f.xmas.id,
+        f.people.map((r) => r.id),
+        p.id,
+      ),
+    )
+    await f.ledger.update("purchase", p.id, meta, 1, { received: 2, returned: 1 })
+    let v = await f.view()
+    expect(f.people.map((r) => v.coverage(r).status)).toEqual(["purchased", "planned"])
+    await f.ledger.update("purchase", p.id, meta, 2, { ordered: 3 })
+    v = await f.view()
+    expect(f.people.map((r) => v.coverage(r).status)).toEqual(["purchased", "awaiting"])
+  })
+
+  it("after a return, gifts on that purchase stay editable, but none may grow", async () => {
+    const f = await family(3)
+    const [p1, p2, p3] = f.people as [{ id: string }, { id: string }, { id: string }]
+    const p = await f.ledger.create("purchase", meta, purchase(f.game.id, 3))
+    const a1 = await f.ledger.create(
+      "allocation",
+      meta,
+      allocation(f.game.id, f.xmas.id, [p1.id], p.id),
+    )
+    await f.ledger.create("allocation", meta, allocation(f.game.id, f.xmas.id, [p2.id], p.id))
+    const a3 = await f.ledger.create(
+      "allocation",
+      meta,
+      allocation(f.game.id, f.xmas.id, [p3.id], p.id),
+    )
+    await f.ledger.update("purchase", p.id, meta, 1, { received: 3, returned: 1 })
+    const given = await f.ledger.update("allocation", a1.id, meta, 1, {
+      handoff: "given",
+      givenOn: "2026-12-25",
+    })
+    expect(given.handoff).toBe("given")
+    await expect(f.ledger.update("allocation", a1.id, meta, 2, { quantity: 2 })).rejects.toThrow(
+      "keeps 2 units; this would allocate 4",
+    )
+    const moved = await f.ledger.update("allocation", a3.id, meta, 1, { purchaseId: null })
+    expect(moved.purchaseId).toBeNull()
+  })
+
+  it("an archived allocation may change while its purchase is full", async () => {
+    const f = await family(2)
+    const [p1, p2] = f.people as [{ id: string }, { id: string }]
+    const p = await f.ledger.create("purchase", meta, purchase(f.game.id, 1))
+    const old = await f.ledger.create(
+      "allocation",
+      meta,
+      allocation(f.game.id, f.xmas.id, [p1.id], p.id),
+    )
+    await f.ledger.update("allocation", old.id, meta, 1, { archived: true })
+    const freed = await f.view()
+    expect(stashUnits(freed.purchases[0] as never, freed.allocations)).toBe(1)
+    await f.ledger.create("allocation", meta, allocation(f.game.id, f.xmas.id, [p2.id], p.id))
+    const edited = await f.ledger.update("allocation", old.id, meta, 2, { quantity: 2 })
+    expect([edited.archived, edited.quantity]).toEqual([true, 2])
+    const v = await f.view()
+    expect(stashUnits(v.purchases[0] as never, v.allocations)).toBe(0)
+  })
+
+  it("an archived purchase fills nothing, costs nothing and takes no new gift", async () => {
+    const f = await family(2)
+    const [p1, p2] = f.people as [{ id: string }, { id: string }]
+    const p = await f.ledger.create("purchase", meta, purchase(f.game.id, 2))
+    await f.ledger.create("allocation", meta, allocation(f.game.id, f.xmas.id, [p1.id], p.id))
+    await f.ledger.update("purchase", p.id, meta, 1, { archived: true })
+    const v = await f.view()
+    expect(v.coverage(p1).status).toBe("planned")
+    expect(stashUnits(v.purchases[0] as never, v.allocations)).toBe(0)
+    expect(giftSpend(v.purchases, v.allocations, [f.game])).toEqual([])
+    await expect(
+      f.ledger.create("allocation", meta, allocation(f.game.id, f.xmas.id, [p2.id], p.id)),
+    ).rejects.toThrow("keeps 0 units")
+  })
+
+  it("a cancellation reopens the gift allocated last, not an earlier one", async () => {
     const f = await family(3)
     const p = await f.ledger.create("purchase", meta, purchase(f.game.id, 3))
     for (const r of f.people) {
@@ -350,6 +426,21 @@ describe("coverage", () => {
     ])
   })
 
+  it("a given gift is given whatever its purchase says, and a target of 0 is a skip", async () => {
+    const f = await family(2, 0)
+    const [p1, p2] = f.people as [{ id: string }, { id: string }]
+    await f.ledger.create("allocation", meta, {
+      ...allocation(f.game.id, f.xmas.id, [p1.id], null),
+      handoff: "given",
+    })
+    const v = await f.view()
+    const row1 = v.roster.find((x) => x.recipientId === p1.id) as GiftOccasionRecipient
+    await f.ledger.update("occasionRecipient", row1.id, meta, 1, { target: 1 })
+    const w = await f.view()
+    expect(w.coverage(p1).status).toBe("given")
+    expect([v.coverage(p2).status, v.coverage(p2).done]).toEqual(["skipped", true])
+  })
+
   it("a planned gift with no purchase is planned, not bought", async () => {
     const f = await family(1)
     const r = f.people[0] as { id: string }
@@ -363,6 +454,21 @@ describe("coverage", () => {
     const v = await f.view()
     expect([v.coverage(r).status, v.coverage(r).bought]).toEqual(["planned", 0])
     expect(giftSpend([], v.allocations, [f.game])[0]?.plannedMinor).toBe(2000)
+  })
+
+  it("plans a shared gift once, and a bought gift not at all", async () => {
+    const f = await family(2)
+    const [p1, p2] = f.people as [{ id: string }, { id: string }]
+    await f.ledger.create(
+      "allocation",
+      meta,
+      allocation(f.game.id, f.xmas.id, [p1.id, p2.id], null, true),
+    )
+    const p = await f.ledger.create("purchase", meta, purchase(f.game.id, 1))
+    await f.ledger.create("allocation", meta, allocation(f.game.id, f.xmas.id, [p1.id], p.id))
+    const v = await f.view()
+    const [usd] = giftSpend(v.purchases, v.allocations, [f.game])
+    expect([usd?.plannedMinor, usd?.spentMinor]).toEqual([2000, 2500])
   })
 })
 
@@ -400,7 +506,31 @@ describe("spend", () => {
     ])
     const split = purchaseShares(v.purchases[0] as never, v.buckets, v.allocations)
     expect(split.shares.map((s) => s.minor)).toEqual([334, 333, 333])
-    expect(split.shares.reduce((n, s) => n + s.minor, 0) + split.stashMinor).toBe(1000)
+    expect(split.shares.reduce((n, s) => n + s.minor, 0) + split.unallocatedMinor).toBe(1000)
+  })
+
+  it("leaves cancelled units out of spend, and a refund only for returns", async () => {
+    const f = await family(1)
+    const p = await f.ledger.create("purchase", meta, purchase(f.game.id, 2))
+    await f.ledger.update("purchase", p.id, meta, 1, { cancelled: 1 })
+    const v = await f.view()
+    expect(giftSpend(v.purchases, v.allocations, [])[0]?.spentMinor).toBe(2500)
+    await expect(
+      f.ledger.update("purchase", p.id, meta, 2, { refundedMinor: 2500 }),
+    ).rejects.toThrow("refundedMinor cannot exceed")
+    await expect(
+      f.ledger.update("purchase", p.id, meta, 2, { discountMinor: 2600 }),
+    ).rejects.toThrow("discountMinor cannot exceed")
+  })
+
+  it("gives units no gift holds their share of the line", async () => {
+    const f = await family(1)
+    const r = f.people[0] as { id: string }
+    const p = await f.ledger.create("purchase", meta, purchase(f.game.id, 3, 1000))
+    await f.ledger.create("allocation", meta, allocation(f.game.id, f.xmas.id, [r.id], p.id))
+    const v = await f.view()
+    const split = purchaseShares(v.purchases[0] as never, v.buckets, v.allocations)
+    expect([split.shares.map((s) => s.minor), split.unallocatedMinor]).toEqual([[1000], 2000])
   })
 
   it("splits exactly by largest remainder", () => {

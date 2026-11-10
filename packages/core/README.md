@@ -57,15 +57,19 @@ The ledger's reference checks read before the store writes and are not atomic wi
 racing on the same records can both pass them. A host that needs that closed serializes one
 owner's writes.
 
-`gift-rules` derives the views from records read back: `giftBuckets` fills each purchase's kept
-units (bought, less cancelled and returned) into its allocations in creation order, so a return
-reopens only the gift filled last; `giftCoverage` gives each roster row its status (needs
-planning, planned, awaiting, purchased, ready, given, skipped) and whether it is done, which needs
-the owner's "shopping complete" call or a met target, never one purchase alone; `giftSpend` keeps
-planned, spent, pending refunds, refunded and net apart, one row per currency; `purchaseShares`
-splits a line's total over its units so the parts sum to it exactly. The ledger refuses an
-allocation that would hold more units than its purchase keeps. Groups and occasion snapshots come
-with #97.
+`gift-rules` derives the views from records read back. Pass it every allocation and purchase of
+the owner, archived or not, in creation order (a subset moves units between gifts that share a
+purchase). `giftBuckets` fills each live purchase's kept units (ordered, less cancelled and
+returned) into its live allocations in that order, so a return or cancellation reopens only the
+gift filled last. `giftCoverage` gives each roster row its status (needs planning, planned,
+awaiting, purchased, ready, given, skipped) and whether it is done: the owner's "shopping
+complete" call, a skip, a target of 0, or a met target; with no target, a purchase alone never
+marks someone done. `giftSpend` keeps planned, spent, pending refunds, refunded and net apart, one
+row per currency; cancelled units were never charged, so a refund is for returned units (and
+their tax and shipping) only. `purchaseShares` splits a line's total over its units so the parts
+sum to it exactly. The ledger refuses a write that would make an allocation hold more units than
+its purchase keeps, but a later return or cancellation never locks the gifts already on it.
+Groups and occasion snapshots come with #97.
 
 ## Adopting 0.18.0
 

@@ -11,12 +11,12 @@ export function allocationUnits(a: Pick<GiftAllocation, "shared" | "quantity" | 
   return a.shared ? a.quantity : a.quantity * a.recipientIds.length
 }
 
-/** Units bought and not cancelled. */
+/** Units ordered and not cancelled. Cancelled units were never charged. */
 export function boughtUnits(p: GiftPurchase): number {
   return Math.max(0, p.ordered - p.cancelled)
 }
 
-/** Units bought and not cancelled or returned: what allocations may hold. */
+/** Units ordered, less cancelled and returned: what allocations may hold. */
 export function keptUnits(p: GiftPurchase): number {
   return Math.max(0, p.ordered - p.cancelled - p.returned)
 }
@@ -65,7 +65,10 @@ function bucketsOf(a: GiftAllocation): { recipientIds: string[]; units: number }
  * its allocations in the order given (creation order, as `GiftStore.list` returns them), and
  * within one allocation to its recipients in order; so a return or cancellation empties the
  * last buckets filled and reopens only those gaps, and a replacement fills them again.
- * Archived allocations hold nothing and give no bucket.
+ * Archived allocations hold nothing and give no bucket; an archived purchase fills nothing.
+ *
+ * Pass every allocation and purchase of the owner, archived or not, in creation order: a subset
+ * (one occasion's allocations, say) moves units between the gifts that share a purchase.
  */
 export function giftBuckets(
   allocations: readonly GiftAllocation[],
@@ -73,7 +76,7 @@ export function giftBuckets(
 ): GiftBucket[] {
   const left = new Map<string, { kept: number; arrived: number }>()
   for (const p of purchases) {
-    left.set(p.id, { kept: keptUnits(p), arrived: Math.min(arrivedUnits(p), keptUnits(p)) })
+    if (!p.archived) left.set(p.id, { kept: keptUnits(p), arrived: arrivedUnits(p) })
   }
   const out: GiftBucket[] = []
   for (const a of allocations) {
@@ -102,6 +105,7 @@ export function giftBuckets(
 
 /** Kept units of a purchase that no live allocation holds: a stash, covering nobody. */
 export function stashUnits(purchase: GiftPurchase, allocations: readonly GiftAllocation[]): number {
+  if (purchase.archived) return 0
   const held = allocations
     .filter((a) => !a.archived && a.purchaseId === purchase.id)
     .reduce((n, a) => n + allocationUnits(a), 0)
@@ -179,7 +183,7 @@ export interface GiftSpend {
   plannedMinor: number
   /** Bought units at their price, plus tax and shipping, less discounts. */
   spentMinor: number
-  /** Returned units' value not yet refunded. */
+  /** Returned units' value at their unit price, less what was refunded (never below 0). */
   pendingRefundMinor: number
   refundedMinor: number
   /** Spent less refunded: each refund counts once. */
@@ -188,7 +192,10 @@ export interface GiftSpend {
   incomplete: boolean
 }
 
-/** A purchase line's total: bought units at their price, plus tax and shipping, less discount. */
+/**
+ * A purchase line's total: units ordered and not cancelled at their price, plus tax and
+ * shipping, less discount. Returned units stay in it until they are refunded.
+ */
 export function purchaseTotal(p: GiftPurchase): number {
   return (
     p.unitPriceMinor * boughtUnits(p) +
@@ -198,7 +205,10 @@ export function purchaseTotal(p: GiftPurchase): number {
   )
 }
 
-/** Money per currency, never summed across currencies, in the order each currency first appears. */
+/**
+ * Money per currency, never summed across currencies, in the order each currency first appears.
+ * Archived purchases and allocations count nowhere.
+ */
 export function giftSpend(
   purchases: readonly GiftPurchase[],
   allocations: readonly GiftAllocation[],
@@ -266,21 +276,21 @@ export interface GiftShare {
 }
 
 /**
- * A purchase line's total split over its bought units (largest remainder, so the parts sum to
- * the line total exactly): first the units its buckets got, in fill order, then the rest (stash,
- * returned or unallocated units) as `stashMinor`.
+ * A purchase line's total split over its units ordered and not cancelled (largest remainder, so
+ * the parts sum to the line total exactly): first the units its buckets got, in fill order, then
+ * the rest -- a stash, returned units, or units no allocation holds -- as `unallocatedMinor`.
  */
 export function purchaseShares(
   purchase: GiftPurchase,
   buckets: readonly GiftBucket[],
   allocations: readonly GiftAllocation[],
-): { shares: GiftShare[]; stashMinor: number; totalMinor: number } {
+): { shares: GiftShare[]; unallocatedMinor: number; totalMinor: number } {
   const own = new Set(allocations.filter((a) => a.purchaseId === purchase.id).map((a) => a.id))
   const mine = buckets.filter((b) => own.has(b.allocationId) && b.filled > 0)
   const totalMinor = purchaseTotal(purchase)
   const filled = mine.reduce((n, b) => n + b.filled, 0)
   const rest = Math.max(0, boughtUnits(purchase) - filled)
-  if (filled + rest === 0) return { shares: [], stashMinor: totalMinor, totalMinor }
+  if (filled + rest === 0) return { shares: [], unallocatedMinor: totalMinor, totalMinor }
   const parts = splitMinor(totalMinor, [...mine.map((b) => b.filled), rest])
   const shares: GiftShare[] = []
   mine.forEach((b, i) => {
@@ -292,5 +302,5 @@ export function purchaseShares(
       shares.push({ allocationId: b.allocationId, recipientId, minor: each[j] ?? 0 })
     })
   })
-  return { shares, stashMinor: parts[mine.length] ?? 0, totalMinor }
+  return { shares, unallocatedMinor: parts[mine.length] ?? 0, totalMinor }
 }

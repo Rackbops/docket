@@ -72,7 +72,7 @@ export class GiftLedger {
     const problems = giftProblems(kind, fields)
     if (problems.length > 0) throw new GiftValidationError(problems)
     await this.checkRefs(kind, meta.ownerId, fields, null)
-    await this.checkFit(kind, meta.ownerId, null, fields, false)
+    await this.checkFit(kind, meta.ownerId, null, fields, false, null)
     return this.store.create(kind, meta, fields)
   }
 
@@ -139,6 +139,7 @@ export class GiftLedger {
       id,
       merged,
       (archived as boolean | undefined) ?? current.archived,
+      current,
     )
     return this.store.update(kind, id, meta, expectedRevision, clean)
   }
@@ -198,9 +199,11 @@ export class GiftLedger {
   }
 
   /**
-   * A purchase never holds more units in live allocations than it keeps (bought, less cancelled
-   * and returned). One allocation names one occasion, so a unit is never on two. A later return
-   * or cancellation is not refused here: it reopens a gap (`giftBuckets`).
+   * A write never makes a purchase hold more units in live allocations than it keeps (ordered,
+   * less cancelled and returned; an archived purchase keeps none). One allocation names one
+   * occasion, so a unit is never on two. A later return or cancellation is not refused: it
+   * reopens a gap (`giftBuckets`), and an allocation on that purchase stays editable as long as
+   * the edit does not raise the units it holds there.
    */
   private async checkFit<K extends GiftKind>(
     kind: K,
@@ -208,6 +211,7 @@ export class GiftLedger {
     selfId: string | null,
     fields: GiftFieldsByKind[K],
     archived: boolean,
+    was: GiftRecord<K> | null,
   ): Promise<void> {
     if (kind !== "allocation" || archived) return
     const a = fields as GiftFieldsByKind["allocation"]
@@ -218,8 +222,14 @@ export class GiftLedger {
     const held = others
       .filter((o) => o.purchaseId === a.purchaseId && o.id !== selfId)
       .reduce((n, o) => n + allocationUnits(o), 0)
-    const kept = keptUnits(purchase)
-    if (held + allocationUnits(a) > kept) {
+    const kept = purchase.archived ? 0 : keptUnits(purchase)
+    const prior = was as GiftRecord<"allocation"> | null
+    const before =
+      held +
+      (prior !== null && !prior.archived && prior.purchaseId === a.purchaseId
+        ? allocationUnits(prior)
+        : 0)
+    if (held + allocationUnits(a) > kept && held + allocationUnits(a) > before) {
       throw new GiftValidationError([
         `purchase ${a.purchaseId} keeps ${kept} units; this would allocate ${held + allocationUnits(a)}`,
       ])
