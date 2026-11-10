@@ -9,6 +9,7 @@ import {
   GiftValidationError,
   type GiftWriteMeta,
 } from "./gift-ports.js"
+import { allocationUnits, keptUnits } from "./gift-rules.js"
 import { giftProblems } from "./gift-validate.js"
 
 /** The ids one record points at, by the kind each must be. */
@@ -55,7 +56,8 @@ function refsOf<K extends GiftKind>(kind: K, fields: GiftFieldsByKind[K]): Refs 
  * The reference checks read, then the store writes: they are not one atomic step with the write.
  * Two writes racing on the same records (a person becoming a household while a household adds
  * them) can both pass; a host that needs that closed serializes an owner's writes.
- * Coverage, allocation limits and spend are docket#96; groups and occasion snapshots docket#97.
+ * An allocation never holds more units than its purchase keeps (`checkFit`); coverage and spend
+ * are derived in `gift-rules.ts`. Groups and occasion snapshots are docket#97.
  */
 export class GiftLedger {
   constructor(private readonly store: GiftStore) {}
@@ -70,6 +72,7 @@ export class GiftLedger {
     const problems = giftProblems(kind, fields)
     if (problems.length > 0) throw new GiftValidationError(problems)
     await this.checkRefs(kind, meta.ownerId, fields, null)
+    await this.checkFit(kind, meta.ownerId, null, fields, false)
     return this.store.create(kind, meta, fields)
   }
 
@@ -130,6 +133,13 @@ export class GiftLedger {
     if (problems.length > 0) throw new GiftValidationError(problems)
     await this.checkRefs(kind, meta.ownerId, merged, id)
     await this.checkReferrers(kind, meta.ownerId, id, current, merged)
+    await this.checkFit(
+      kind,
+      meta.ownerId,
+      id,
+      merged,
+      (archived as boolean | undefined) ?? current.archived,
+    )
     return this.store.update(kind, id, meta, expectedRevision, clean)
   }
 
@@ -184,6 +194,35 @@ export class GiftLedger {
           throw new GiftValidationError([`purchase ${id} is allocated, so its item stays`])
         }
       }
+    }
+  }
+
+  /**
+   * A purchase never holds more units in live allocations than it keeps (bought, less cancelled
+   * and returned). One allocation names one occasion, so a unit is never on two. A later return
+   * or cancellation is not refused here: it reopens a gap (`giftBuckets`).
+   */
+  private async checkFit<K extends GiftKind>(
+    kind: K,
+    ownerId: string,
+    selfId: string | null,
+    fields: GiftFieldsByKind[K],
+    archived: boolean,
+  ): Promise<void> {
+    if (kind !== "allocation" || archived) return
+    const a = fields as GiftFieldsByKind["allocation"]
+    if (a.purchaseId === null) return
+    const purchase = await this.store.get("purchase", ownerId, a.purchaseId)
+    if (purchase === null) throw new GiftNotFoundError(`no purchase ${a.purchaseId}`)
+    const others = await this.store.list("allocation", ownerId, { itemId: a.itemId })
+    const held = others
+      .filter((o) => o.purchaseId === a.purchaseId && o.id !== selfId)
+      .reduce((n, o) => n + allocationUnits(o), 0)
+    const kept = keptUnits(purchase)
+    if (held + allocationUnits(a) > kept) {
+      throw new GiftValidationError([
+        `purchase ${a.purchaseId} keeps ${kept} units; this would allocate ${held + allocationUnits(a)}`,
+      ])
     }
   }
 
