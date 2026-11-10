@@ -291,6 +291,15 @@ describe("allocation", () => {
     )
     const moved = await f.ledger.update("allocation", a3.id, meta, 1, { purchaseId: null })
     expect(moved.purchaseId).toBeNull()
+    const other = await f.ledger.create("purchase", meta, purchase(f.game.id, 1))
+    const elsewhere = await f.ledger.create(
+      "allocation",
+      meta,
+      allocation(f.game.id, f.xmas.id, [p3.id], other.id),
+    )
+    await expect(
+      f.ledger.update("allocation", elsewhere.id, meta, 1, { purchaseId: p.id }),
+    ).rejects.toThrow("keeps 2 units; this would allocate 3")
   })
 
   it("an archived allocation may change while its purchase is full", async () => {
@@ -509,17 +518,19 @@ describe("spend", () => {
     expect(split.shares.reduce((n, s) => n + s.minor, 0) + split.unallocatedMinor).toBe(1000)
   })
 
-  it("leaves cancelled units out of spend, and a refund only for returns", async () => {
+  it("leaves cancelled units out of spend, and refunds never exceed the line", async () => {
     const f = await family(1)
     const p = await f.ledger.create("purchase", meta, purchase(f.game.id, 2))
     await f.ledger.update("purchase", p.id, meta, 1, { cancelled: 1 })
     const v = await f.view()
     expect(giftSpend(v.purchases, v.allocations, [])[0]?.spentMinor).toBe(2500)
     await expect(
-      f.ledger.update("purchase", p.id, meta, 2, { refundedMinor: 2500 }),
-    ).rejects.toThrow("refundedMinor cannot exceed")
+      f.ledger.update("purchase", p.id, meta, 2, { refundedMinor: 2501 }),
+    ).rejects.toThrow("refundedMinor cannot exceed the line's total")
+    const adjusted = await f.ledger.update("purchase", p.id, meta, 2, { refundedMinor: 500 })
+    expect(giftSpend([adjusted], [], [])[0]?.netMinor).toBe(2000)
     await expect(
-      f.ledger.update("purchase", p.id, meta, 2, { discountMinor: 2600 }),
+      f.ledger.update("purchase", p.id, meta, 3, { discountMinor: 2600 }),
     ).rejects.toThrow("discountMinor cannot exceed")
   })
 
@@ -531,6 +542,43 @@ describe("spend", () => {
     const v = await f.view()
     const split = purchaseShares(v.purchases[0] as never, v.buckets, v.allocations)
     expect([split.shares.map((s) => s.minor), split.unallocatedMinor]).toEqual([[1000], 2000])
+  })
+
+  it("splits a line with a returned unit over every unit it charged", async () => {
+    const f = await family(2)
+    const p = await f.ledger.create("purchase", meta, purchase(f.game.id, 2, 1000))
+    await f.ledger.create(
+      "allocation",
+      meta,
+      allocation(
+        f.game.id,
+        f.xmas.id,
+        f.people.map((r) => r.id),
+        p.id,
+      ),
+    )
+    await f.ledger.update("purchase", p.id, meta, 1, { received: 2, returned: 1 })
+    const v = await f.view()
+    const split = purchaseShares(v.purchases[0] as never, v.buckets, v.allocations)
+    expect([split.shares.map((s) => s.minor), split.unallocatedMinor]).toEqual([[1000], 1000])
+  })
+
+  it("keeps planned spend per currency too", async () => {
+    const f = await family(1)
+    const r = f.people[0] as { id: string }
+    const euro = await f.ledger.create("item", meta, {
+      ...item("Book", 1500),
+      currency: "EUR",
+    })
+    await f.ledger.create("allocation", meta, allocation(f.game.id, f.xmas.id, [r.id], null))
+    await f.ledger.create("allocation", meta, allocation(euro.id, f.xmas.id, [r.id], null))
+    const v = await f.view()
+    expect(
+      giftSpend([], v.allocations, [f.game, euro]).map((s) => [s.currency, s.plannedMinor]),
+    ).toEqual([
+      ["USD", 2000],
+      ["EUR", 1500],
+    ])
   })
 
   it("splits exactly by largest remainder", () => {

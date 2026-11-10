@@ -65,8 +65,9 @@ gift filled last. `giftCoverage` gives each roster row its status (needs plannin
 awaiting, purchased, ready, given, skipped) and whether it is done: the owner's "shopping
 complete" call, a skip, a target of 0, or a met target; with no target, a purchase alone never
 marks someone done. `giftSpend` keeps planned, spent, pending refunds, refunded and net apart, one
-row per currency; cancelled units were never charged, so a refund is for returned units (and
-their tax and shipping) only. `purchaseShares` splits a line's total over its units so the parts
+row per currency; cancelled units were never charged and are out of the total, so a refund
+(for returns or a price adjustment) is never recorded for a cancellation, and never exceeds the
+line's total. `purchaseShares` splits a line's total over its units so the parts
 sum to it exactly. The ledger refuses a write that would make an allocation hold more units than
 its purchase keeps, but a later return or cancellation never locks the gifts already on it.
 Groups and occasion snapshots come with #97.

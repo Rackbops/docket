@@ -279,6 +279,7 @@ export interface GiftShare {
  * A purchase line's total split over its units ordered and not cancelled (largest remainder, so
  * the parts sum to the line total exactly): first the units its buckets got, in fill order, then
  * the rest -- a stash, returned units, or units no allocation holds -- as `unallocatedMinor`.
+ * An archived purchase fills no bucket, so its whole total is unallocated.
  */
 export function purchaseShares(
   purchase: GiftPurchase,

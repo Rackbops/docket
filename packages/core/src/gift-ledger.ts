@@ -203,7 +203,8 @@ export class GiftLedger {
    * less cancelled and returned; an archived purchase keeps none). One allocation names one
    * occasion, so a unit is never on two. A later return or cancellation is not refused: it
    * reopens a gap (`giftBuckets`), and an allocation on that purchase stays editable as long as
-   * the edit does not raise the units it holds there.
+   * the edit does not raise the units it holds there. Only allocation writes are checked: an edit
+   * to the purchase (fewer ordered, archived) is never refused for the gifts on it.
    */
   private async checkFit<K extends GiftKind>(
     kind: K,
