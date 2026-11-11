@@ -300,10 +300,9 @@ export function ebaySource(browse: EbayBrowse): Source {
       try {
         ;({ status, body } = await browse(ebayRequest({ query: target, ...limits })))
       } catch (err) {
-        throw new SourceMiss(
-          `eBay could not be searched: ${clean(err instanceof Error ? err.message : String(err), 200, true)}`,
-          { cause: err },
-        )
+        // A fixed message, as for `reread`: the host's own may echo the request or eBay's answer
+        // into run history, which outlives the six hours an eBay watch may keep eBay data (#111).
+        throw new SourceMiss("eBay could not be searched", { cause: err })
       }
       // Keys eBay refuses, or an app without Browse access: no later look succeeds until someone acts.
       checkSearchStatus(status, "eBay", "eBay refused the app's keys")
