@@ -204,13 +204,18 @@ describe("the eBay source", () => {
     await expect(browse(400, null).source.search(QUERY, undefined)).rejects.toThrow("HTTP 400")
   })
 
-  it("counts a failed request as a miss, with the host's own words", async () => {
+  it("counts a failed request as a miss, in fixed words that never echo the host's (#111)", async () => {
+    const said = "HTTP 500 from api.ebay.com: Arkham Horror Edge of the Earth by seller_a"
     const source = ebaySource(async () => {
-      throw new Error("eBay could not be reached")
+      throw new Error(said)
     })
-    await expect(source.search(QUERY, undefined)).rejects.toThrow(
-      "eBay could not be searched: eBay could not be reached",
+    const thrown = await source.search(QUERY, undefined).then(
+      () => null,
+      (err: unknown) => err,
     )
+    expect(thrown).toBeInstanceOf(SourceMiss)
+    expect((thrown as Error).message).toBe("eBay could not be searched")
+    expect(((thrown as Error).cause as Error).message).toBe(said)
   })
 
   it("makes no request without words to search for", async () => {
