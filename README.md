@@ -300,6 +300,14 @@ what terms, is recorded in [`docs/social-sources.md`](docs/social-sources.md) (d
   0.23.0 shows a "Social:" line of platforms skipped, "not reported by the run", once. No core
   change. Release order: docket 0.23.0 first,
   then the tracker change that offers `social` and `since` (and refuses `reddit`).
+- **0.24.0 -- the gift ledger core** (epic [#94](https://github.com/Rackbops/docket/issues/94):
+  [#95](https://github.com/Rackbops/docket/issues/95), [#96](https://github.com/Rackbops/docket/issues/96),
+  [#97](https://github.com/Rackbops/docket/issues/97); plan item 158). Additive, core only: the
+  gift model, its own `GiftStore` port with `MemoryGiftStore` and `GIFT_STORE_CONTRACT`, the
+  `GiftLedger` write path, coverage/allocation/spend rules (`gift-rules`) and groups with reviewed
+  occasion syncs (`gift-groups`). `Store` and every task type are untouched, so a host that offers
+  no gifts changes nothing (`packages/core/README.md`, "Adopting the gift ledger (0.24.0)").
+  Release order: docket 0.24.0 first, then the tracker gift store (rackbops-bot-plugins#382).
 
 ## Use
 

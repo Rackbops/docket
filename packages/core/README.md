@@ -40,7 +40,7 @@ for the plain-code types (the price tracker reads pages through it, via `RunCont
 every model call runs in the runner, through the Claude Code CLI on roshne's subscription, never an
 API key.
 
-## Adopting the gift ledger (unreleased)
+## Adopting the gift ledger (0.24.0)
 
 Nothing changes for a host that offers no gifts: `Store` is untouched. A host that does implements
 `GiftStore` with its own storage, runs every `GIFT_STORE_CONTRACT` case against a fresh one, and
