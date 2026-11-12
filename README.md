@@ -308,6 +308,16 @@ what terms, is recorded in [`docs/social-sources.md`](docs/social-sources.md) (d
   occasion syncs (`gift-groups`). `Store` and every task type are untouched, so a host that offers
   no gifts changes nothing (`packages/core/README.md`, "Adopting the gift ledger (0.24.0)").
   Release order: docket 0.24.0 first, then the tracker gift store (rackbops-bot-plugins#382).
+- **0.25.0 -- a shop check before a Shopify listing is told**
+  ([#120](https://github.com/Rackbops/docket/issues/120); plan item 162). Additive, types only:
+  `shop-vet` (`ShopVet`, the host's shop list; `vetListings`, `shopStanding`, `shopDomain`) and
+  `shopcheckType`, an execute-lane Job that runs one web search, "is <shop> a legitimate
+  website", with `WebSearch` only. `wantlistType(sources, { shops })` and `wantjudgeType(sources,
+  { shops })` vet a Shopify watch's listings by shop: a passed shop's are told; an unknown one's
+  are told marked "unvetted shop -- check before buying"; a flagged one's are kept as findings and
+  never told; one with no fresh check is held and a check asked for. Passed and flagged stand for
+  6 months, unknown for 30 days. Without `shops` nothing changes. Release order: docket 0.25.0
+  first, then the tracker's shop list (migration, `shopcheck` registered hidden).
 
 ## Use
 
