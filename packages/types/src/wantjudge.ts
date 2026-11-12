@@ -17,6 +17,7 @@ import {
 import { currencyCode, money } from "./money.js"
 import { safeUrl } from "./research-answer.js"
 import { retryOutcome } from "./retry.js"
+import type { ShopVet, Vetted } from "./shop-vet.js"
 import { BGG_HOST, BGG_SPACING_MS } from "./want-bgg.js"
 import { EBAY_ITEM_ID } from "./want-ebay.js"
 import {
@@ -152,7 +153,7 @@ export const JUDGE_SCHEMA = {
 const str = (v: unknown, max: number): string => (typeof v === "string" ? clean(v, max, true) : "")
 
 /** One stored listing, re-checked as stored data must be; null when unusable. */
-function pendingListing(v: unknown): Listing | null {
+function pendingListing(v: unknown): Vetted | null {
   if (!isObj(v) || typeof v.id !== "string") return null
   const url = safeUrl(v.url)
   const title = str(v.title, PENDING_TITLE)
@@ -168,6 +169,7 @@ function pendingListing(v: unknown): Listing | null {
     ...(/^[A-Z]{3}$/.test(currency) ? { currency } : {}),
     ...(condition ? { condition } : {}),
     ...(seller ? { seller } : {}),
+    ...(v.shop === "unvetted" ? { shop: "unvetted" as const } : {}),
   }
 }
 
@@ -637,6 +639,8 @@ async function finishHeld(
 export interface JudgeOptions {
   /** How a deferred BGG read waits before its one second try (tests pass a no-op). */
   wait?: (ms: number) => Promise<void>
+  /** The host's shop list: a Shopify watch's listings are vetted by shop before the look (docket#120). */
+  shops?: ShopVet
 }
 
 /**
@@ -652,13 +656,14 @@ export function wantjudgeType(
   o: JudgeOptions = {},
 ): TaskType<WantConfig> {
   const wait = o.wait ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)))
+  const poll = o.shops ? { ...NO_DETAIL, shops: o.shops } : NO_DETAIL
   const look = async (ctx: RunContext<WantConfig>, state: JudgeState) => {
     try {
-      return await pollWant(ctx, sources, state, NO_DETAIL)
+      return await pollWant(ctx, sources, state, poll)
     } catch (err) {
       if (!(err instanceof ExecutorUnavailableError)) throw err
       await wait(BGG_SPACING_MS)
-      return pollWant(ctx, sources, state, NO_DETAIL)
+      return pollWant(ctx, sources, state, poll)
     }
   }
   return defineTaskType<WantConfig>({
@@ -781,6 +786,7 @@ export function wantjudgeType(
           state: { ...state, ...polled.state, pending: polled.fresh, failures: 0 },
           followUp: {},
           summary: `${polled.summary}; checking them`,
+          ...(polled.findings.length > 0 ? { findings: polled.findings } : {}),
         },
       }
     },

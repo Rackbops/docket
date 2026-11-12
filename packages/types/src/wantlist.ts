@@ -9,6 +9,13 @@ import {
 } from "@rackbops/docket-core"
 import { currencyCode, money } from "./money.js"
 import { MISSES_BEFORE_TELLING } from "./price.js"
+import {
+  flaggedFinding,
+  SHOP_UNVETTED,
+  type ShopVet,
+  type Vetted,
+  vetListings,
+} from "./shop-vet.js"
 import { EBAY_CURRENCY } from "./want-ebay.js"
 import { wordsOf } from "./want-shopify.js"
 import {
@@ -210,6 +217,7 @@ export function checkMark(config: WantConfig): string {
 /** One DM line: what, how much, its shipping, condition and seller, then the link in <...> (no embed). */
 export function listingLine(l: Listing, config: WantConfig, unconfirmed = false): string {
   const parts = [
+    ...((l as Vetted).shop === "unvetted" ? [SHOP_UNVETTED] : []),
     ...(unconfirmed ? [checkMark(config)] : []),
     inert(l.title),
     priceText(l, config),
@@ -296,13 +304,15 @@ export type Polled =
       summary: string
       /** The ids of fresh listings `confirm` did not confirm: told marked for the owner to check. */
       unchecked: Set<string>
+      /** Listings not told because their shop was flagged (docket#120): stored once, never told. */
+      findings: Finding[]
     }
 
 export async function pollWant(
   ctx: RunContext<WantConfig>,
   sources: Partial<Record<SourceId, Source>>,
   stored?: WantState,
-  o: { detail?: boolean } = {},
+  o: { detail?: boolean; shops?: ShopVet } = {},
 ): Promise<Polled> {
   const state = stored ?? wantState(ctx.state)
   const source = sources[ctx.config.source]
@@ -347,16 +357,30 @@ export async function pollWant(
   const told = new Set(state.reported)
   const limited = listings.filter((l) => withinLimits(l, ctx.config))
   const within = limited.filter((l) => !isExcluded(l.title, ctx.config.exclude))
-  const candidates = within.filter((l) => !told.has(listingKey(l.id))).slice(0, MAX_NEW_PER_RUN)
+  const unseen = within.filter((l) => !told.has(listingKey(l.id)))
+  // A Shopify listing can come from any store: its shop is vetted before it is told (docket#120).
+  // Vetted before the per-run cap, so a flagged store's many listings never take the slots of a
+  // good one. Held and flagged ones are not remembered, so a later look tells them once their shop
+  // passes.
+  const vetted =
+    o.shops && ctx.config.source === "shopify"
+      ? await vetListings(unseen, o.shops, ctx.now, { taskId: ctx.task.id, ownerId: ctx.owner.id })
+      : { send: unseen, flagged: [], held: [] }
+  const candidates = vetted.send.slice(0, MAX_NEW_PER_RUN)
   const checked = await confirmListings(candidates, ctx.config, source, o.detail !== false)
   const fresh = checked.kept
+  const findings = vetted.flagged
+    .slice(0, MAX_NEW_PER_RUN)
+    .map((f) => flaggedFinding(f.listing, f.check, ctx.config.source))
   const dropped = limited.length - within.length
   const ruled = checked.ruledOut.length
   const summary =
     `${listings.length} listed, ${limited.length} within limits, ` +
     `${dropped > 0 ? `${dropped} excluded, ` : ""}` +
     `${ruled > 0 ? `${ruled} not confirmed and ruled out, ` : ""}` +
-    `${checked.unchecked.size > 0 ? `${checked.unchecked.size} to check, ` : ""}${fresh.length} new`
+    `${checked.unchecked.size > 0 ? `${checked.unchecked.size} to check, ` : ""}` +
+    `${vetted.flagged.length > 0 ? `${vetted.flagged.length} from a flagged shop, ` : ""}` +
+    `${vetted.held.length > 0 ? `${vetted.held.length} held for a shop check, ` : ""}${fresh.length} new`
   // A listing ruled out is remembered as told, so it is not read in full again on every look.
   const read: WantState = {
     ...state,
@@ -366,8 +390,12 @@ export async function pollWant(
       -MAX_REPORTED,
     ),
   }
-  if (fresh.length === 0) return { kind: "done", outcome: { state: read, summary } }
-  return { kind: "fresh", state: read, fresh, summary, unchecked: checked.unchecked }
+  if (fresh.length === 0)
+    return {
+      kind: "done",
+      outcome: { state: read, summary, ...(findings.length > 0 ? { findings } : {}) },
+    }
+  return { kind: "fresh", state: read, fresh, summary, unchecked: checked.unchecked, findings }
 }
 
 /** Whether `text` has a `confirm` entry: the same whole-word match as `exclude`'s. */
@@ -436,7 +464,10 @@ export async function confirmListings(
 }
 
 /** The type over `sources`: a task whose source this bot lacks (BGG without its token) counts misses. */
-export function wantlistType(sources: Partial<Record<SourceId, Source>>): TaskType<WantConfig> {
+export function wantlistType(
+  sources: Partial<Record<SourceId, Source>>,
+  o: { shops?: ShopVet } = {},
+): TaskType<WantConfig> {
   return defineTaskType<WantConfig>({
     id: "wantlist",
     lane: "notify",
@@ -493,9 +524,12 @@ export function wantlistType(sources: Partial<Record<SourceId, Source>>): TaskTy
       ],
     },
     async run(ctx: RunContext<WantConfig>): Promise<Outcome> {
-      const polled = await pollWant(ctx, sources)
+      const polled = await pollWant(ctx, sources, undefined, o.shops ? { shops: o.shops } : {})
       if (polled.kind === "done") return polled.outcome
-      const { state, fresh, summary, unchecked } = polled
+      const { state, fresh, summary, unchecked, findings } = polled
+      const told = keepsFindings(ctx.config)
+        ? fresh.map((l) => listingFinding(l, ctx.config, priceText(l, ctx.config)))
+        : []
       return {
         state: {
           ...state,
@@ -506,9 +540,7 @@ export function wantlistType(sources: Partial<Record<SourceId, Source>>): TaskTy
           text: renderWant(ctx.task.title, ctx.task.id, fresh, ctx.config, unchecked),
           actions: ["done"],
         },
-        ...(keepsFindings(ctx.config)
-          ? { findings: fresh.map((l) => listingFinding(l, ctx.config, priceText(l, ctx.config))) }
-          : {}),
+        ...(told.length + findings.length > 0 ? { findings: [...told, ...findings] } : {}),
         summary,
       }
     },

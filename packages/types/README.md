@@ -335,6 +335,19 @@ host:
   first; the host decides who may send to an inbox and keeps it from growing without end;
 - the DM text names the tracker plugin's `/task history` command, and a judged watch with no
   Fetch says "this bot reads no pages".
+- `wantlistType(sources, { shops })` and `wantjudgeType(sources, { shops })` take the host's shop
+  list (`ShopVet`, docket#120): `get(domains)` must return the stored `ShopCheck` of each domain
+  it has, and `request(domain, { taskId, ownerId })` must make one `shopcheck` task for that
+  domain unless one is already waiting, charged to that owner (the library asks again on every
+  look while the shop has no fresh check, so a failing check costs one model run per look; the
+  host's dedupe keeps it to one at a time). The host registers
+  `shopcheckType({ record })` -- `record` writes the check to the list -- and keeps that type out
+  of its intake and its lists of types. Only Shopify watches are vetted; a listing whose shop has
+  no fresh check is held, not remembered, so the next look tells it once its shop has passed, and
+  a failed check records nothing, so it stays held. A pass stands 6 months and a flag 6 months; an
+  `unknown`, or a pass with no source behind it, 30 days. One look asks for at most
+  `SHOP_CHECKS_PER_LOOK` (5) new checks; a list `get` that fails holds every listing and asks for
+  none.
 
 `wantjudgeType`'s `wait` (BGG's spacing, default `setTimeout`) and `bggSource`'s `now` (default
 `Date.now`) can be injected; a host that keeps time behind its Clock passes them.
