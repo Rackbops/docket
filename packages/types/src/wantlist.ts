@@ -357,19 +357,21 @@ export async function pollWant(
   const told = new Set(state.reported)
   const limited = listings.filter((l) => withinLimits(l, ctx.config))
   const within = limited.filter((l) => !isExcluded(l.title, ctx.config.exclude))
-  const candidates = within.filter((l) => !told.has(listingKey(l.id))).slice(0, MAX_NEW_PER_RUN)
-  const checked = await confirmListings(candidates, ctx.config, source, o.detail !== false)
+  const unseen = within.filter((l) => !told.has(listingKey(l.id)))
   // A Shopify listing can come from any store: its shop is vetted before it is told (docket#120).
-  // Held and flagged ones are not remembered, so a later look tells them once their shop passes.
+  // Vetted before the per-run cap, so a flagged store's many listings never take the slots of a
+  // good one. Held and flagged ones are not remembered, so a later look tells them once their shop
+  // passes.
   const vetted =
     o.shops && ctx.config.source === "shopify"
-      ? await vetListings(checked.kept, o.shops, ctx.now, {
-          taskId: ctx.task.id,
-          ownerId: ctx.owner.id,
-        })
-      : { send: checked.kept, flagged: [], held: [] }
-  const fresh = vetted.send
-  const findings = vetted.flagged.map((f) => flaggedFinding(f.listing, f.check, ctx.config.source))
+      ? await vetListings(unseen, o.shops, ctx.now, { taskId: ctx.task.id, ownerId: ctx.owner.id })
+      : { send: unseen, flagged: [], held: [] }
+  const candidates = vetted.send.slice(0, MAX_NEW_PER_RUN)
+  const checked = await confirmListings(candidates, ctx.config, source, o.detail !== false)
+  const fresh = checked.kept
+  const findings = vetted.flagged
+    .slice(0, MAX_NEW_PER_RUN)
+    .map((f) => flaggedFinding(f.listing, f.check, ctx.config.source))
   const dropped = limited.length - within.length
   const ruled = checked.ruledOut.length
   const summary =

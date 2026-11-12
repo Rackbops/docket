@@ -2,8 +2,10 @@ import type { JobResult, Occurrence, RunContext, Task, User } from "@rackbops/do
 import { describe, expect, it } from "vitest"
 import {
   judgeState,
+  type Listing,
   listingKey,
   parseShopCheck,
+  renderJudged,
   SHOP_UNVETTED,
   type ShopCheck,
   type ShopCheckConfig,
@@ -131,6 +133,19 @@ describe("vetListings", () => {
     expect(out.held.map((x) => x.id)).toEqual(["4", "5", "6"])
     expect(asked).toEqual([{ domain: "never.seen", from }])
   })
+  it("holds everything, and asks, when the host cannot read its list", async () => {
+    const { vet, asked } = fakeVet([check("good.com", "ok", "2026-11-01T00:00:00Z")])
+    const broken: ShopVet = {
+      ...vet,
+      get: async () => {
+        throw new Error("db locked")
+      },
+    }
+    const out = await vetListings([l("1", "https://good.com/a")], broken, NOW, from)
+    expect(out.send).toEqual([])
+    expect(out.held).toHaveLength(1)
+    expect(asked.map((a) => a.domain)).toEqual(["good.com"])
+  })
   it("still holds when the host cannot take the request", async () => {
     const { vet } = fakeVet([], true)
     const out = await vetListings([l("1", "https://never.seen/a")], vet, NOW, from)
@@ -166,6 +181,16 @@ describe("the check's Job", () => {
     expect(c?.reasons[0]?.length).toBeLessThanOrEqual(200)
     expect(c?.sources).toEqual(["https://www.trustpilot.com/review/x"])
     expect(c?.checkedAt).toBe(NOW.toISOString())
+  })
+  it("reads a pass with no source as unknown, never a six-month pass", () => {
+    const c = parseShopCheck({ verdict: "ok", reasons: ["looks fine"], sources: [] }, "x.us", NOW)
+    expect(c?.verdict).toBe("unknown")
+    const backed = parseShopCheck(
+      { verdict: "ok", reasons: [], sources: ["https://www.trustpilot.com/review/x.us"] },
+      "x.us",
+      NOW,
+    )
+    expect(backed?.verdict).toBe("ok")
   })
   it("refuses an answer that is not one", () => {
     expect(parseShopCheck(null, "x.us", NOW)).toBeNull()
@@ -330,6 +355,42 @@ describe("a Shopify watch with the shop list", () => {
     const out = await wantlistType({ shopify }, { shops: vet }).run?.(ctx("wantlist"))
     const flagged = out?.findings?.find((f) => f.tags?.includes("shop-flagged"))
     expect(flagged?.key).not.toBe(listingKey("shopify:gid://shopify/ProductVariant/1"))
+  })
+
+  it("never lets a flagged shop's many listings take a good shop's place", async () => {
+    const many = [
+      ...Array.from({ length: 25 }, (_, i) => `https://tradingcardgame.us/p?variant=${i}`),
+      "https://good.com/p?variant=99",
+    ]
+    const source = shopifySource(async () => ({ status: 200, body: answer(many) }))
+    const { vet } = shops()
+    const type = wantlistType({ shopify: source }, { shops: vet })
+    const first = await type.run?.(ctx("wantlist"))
+    expect(first?.notify?.text).toContain("good.com")
+    expect(first?.findings?.filter((f) => f.tags?.includes("shop-flagged")).length).toBe(20)
+    const again = await type.run?.(ctx("wantlist", first?.state))
+    expect(again?.notify).toBeUndefined()
+  })
+
+  it("shows the unvetted mark in the judged watch's DM", () => {
+    const text = renderJudged(
+      QUERY,
+      "t7",
+      [
+        {
+          l: {
+            id: "x",
+            title: "Feast of Hemlock Vale",
+            url: "https://new.shop/p",
+            shop: "unvetted",
+          } as Listing,
+          v: { fit: "match", why: "the campaign box", seller: "" },
+        },
+      ],
+      0,
+      config,
+    )
+    expect(text).toContain(`- ${SHOP_UNVETTED} -- Feast of Hemlock Vale`)
   })
 
   it("leaves a watch on another source alone", async () => {

@@ -143,8 +143,8 @@ export interface VetResult {
 
 /**
  * Splits `listings` by their shop's standing, and asks the host for a check of each shop that needs
- * one. A listing with no usable shop address is held: it cannot be vetted. Throws only what the
- * host's `get` throws; a `request` that fails is the next look's to ask again.
+ * one. A listing with no usable shop address is held: it cannot be vetted. Never throws: a `get`
+ * that fails holds every listing, and a `request` that fails is the next look's to ask again.
  */
 export async function vetListings(
   listings: readonly Listing[],
@@ -155,7 +155,12 @@ export async function vetListings(
   const domainOf = new Map<string, string | null>()
   for (const l of listings) domainOf.set(l.id, shopDomain(l.url))
   const domains = [...new Set([...domainOf.values()].filter((d): d is string => d !== null))]
-  const checks = domains.length > 0 ? await vet.get(domains) : new Map<string, ShopCheck>()
+  let checks = new Map<string, ShopCheck>()
+  try {
+    if (domains.length > 0) checks = await vet.get(domains)
+  } catch {
+    // The host's list could not be read: every listing is held (and a check asked for), never told unvetted.
+  }
   const out: VetResult = { send: [], flagged: [], held: [] }
   const ask = new Set<string>()
   for (const l of listings) {
@@ -252,7 +257,10 @@ export function parseShopCheck(value: unknown, domain: string, now: Date): ShopC
     .map((s) => safeUrl(s))
     .filter((s): s is string => s !== null)
     .slice(0, SHOP_SOURCES)
-  return { domain, verdict: verdict as ShopVerdict, reasons, sources, checkedAt: now.toISOString() }
+  // A pass with no result behind it (the search did not run, or found nothing it could name) is not
+  // a pass: it is told marked, and checked again in 30 days, not trusted for six months.
+  const said = verdict === "ok" && sources.length === 0 ? "unknown" : (verdict as ShopVerdict)
+  return { domain, verdict: said, reasons, sources, checkedAt: now.toISOString() }
 }
 
 export interface ShopCheckConfig {
