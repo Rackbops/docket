@@ -344,7 +344,10 @@ host:
   `shopcheckType({ record })` -- `record` writes the check to the list -- and keeps that type out
   of its intake and its lists of types. Only Shopify watches are vetted; a listing whose shop has
   no fresh check is held, not remembered, so the next look tells it once its shop has passed, and
-  a failed check records nothing, so it stays held.
+  a failed check records nothing, so it stays held. A pass stands 6 months and a flag 6 months; an
+  `unknown`, or a pass with no source behind it, 30 days. One look asks for at most
+  `SHOP_CHECKS_PER_LOOK` (5) new checks; a list `get` that fails holds every listing and asks for
+  none.
 
 `wantjudgeType`'s `wait` (BGG's spacing, default `setTimeout`) and `bggSource`'s `now` (default
 `Date.now`) can be injected; a host that keeps time behind its Clock passes them.

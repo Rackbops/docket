@@ -316,7 +316,8 @@ what terms, is recorded in [`docs/social-sources.md`](docs/social-sources.md) (d
   { shops })` vet a Shopify watch's listings by shop: a passed shop's are told; an unknown one's
   are told marked "unvetted shop -- check before buying"; a flagged one's are kept as findings and
   never told; one with no fresh check is held and a check asked for. Passed and flagged stand for
-  6 months, unknown for 30 days. Without `shops` nothing changes. Release order: docket 0.25.0
+  6 months, unknown for 30 days; a pass with no source behind it is read as unknown. At most
+  `SHOP_CHECKS_PER_LOOK` (5) new checks a look. Without `shops` nothing changes. Release order: docket 0.25.0
   first, then the tracker's shop list (migration, `shopcheck` registered hidden).
 
 ## Use

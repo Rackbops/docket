@@ -264,6 +264,7 @@ export {
   parseShopCheck,
   type RecordShopCheck,
   SHOP_ALLOWED_TOOLS,
+  SHOP_CHECKS_PER_LOOK,
   SHOP_DISALLOWED_TOOLS,
   SHOP_MAX_BUDGET_USD,
   SHOP_MAX_TURNS,

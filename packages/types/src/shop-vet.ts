@@ -56,6 +56,8 @@ export const SHOP_RECHECK_MONTHS = 6
 export const SHOP_UNKNOWN_DAYS = 30
 export const SHOP_REASONS = 5
 export const SHOP_SOURCES = 5
+/** The most new checks one look asks for. */
+export const SHOP_CHECKS_PER_LOOK = 5
 const REASON_CHARS = 200
 export const SHOP_UNVETTED = "unvetted shop -- check before buying"
 
@@ -159,7 +161,9 @@ export async function vetListings(
   try {
     if (domains.length > 0) checks = await vet.get(domains)
   } catch {
-    // The host's list could not be read: every listing is held (and a check asked for), never told unvetted.
+    // The host's list could not be read: every listing is held, never told unvetted, and no check
+    // is asked for (a shop that passed must not cost a model run because the list was down).
+    return { send: [], flagged: [], held: [...listings] }
   }
   const out: VetResult = { send: [], flagged: [], held: [] }
   const ask = new Set<string>()
@@ -179,7 +183,10 @@ export async function vetListings(
       ask.add(domain)
     }
   }
-  for (const domain of ask) {
+  // At most a few new checks a look, in the order the search ranked their shops: a broad search
+  // over many unchecked stores cannot queue dozens of model runs at once. The rest stay held and
+  // are asked for on later looks.
+  for (const domain of [...ask].slice(0, SHOP_CHECKS_PER_LOOK)) {
     try {
       await vet.request(domain, from)
     } catch {

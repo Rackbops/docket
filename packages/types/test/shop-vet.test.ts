@@ -133,7 +133,7 @@ describe("vetListings", () => {
     expect(out.held.map((x) => x.id)).toEqual(["4", "5", "6"])
     expect(asked).toEqual([{ domain: "never.seen", from }])
   })
-  it("holds everything, and asks, when the host cannot read its list", async () => {
+  it("holds everything, and asks for nothing, when the host cannot read its list", async () => {
     const { vet, asked } = fakeVet([check("good.com", "ok", "2026-11-01T00:00:00Z")])
     const broken: ShopVet = {
       ...vet,
@@ -144,7 +144,20 @@ describe("vetListings", () => {
     const out = await vetListings([l("1", "https://good.com/a")], broken, NOW, from)
     expect(out.send).toEqual([])
     expect(out.held).toHaveLength(1)
-    expect(asked.map((a) => a.domain)).toEqual(["good.com"])
+    expect(asked).toEqual([])
+  })
+  it("asks for at most a few new checks a look, in the search's order", async () => {
+    const { vet, asked } = fakeVet()
+    const many = Array.from({ length: 12 }, (_, i) => l(String(i), `https://shop${i}.com/a`))
+    const out = await vetListings(many, vet, NOW, from)
+    expect(out.held).toHaveLength(12)
+    expect(asked.map((a) => a.domain)).toEqual([
+      "shop0.com",
+      "shop1.com",
+      "shop2.com",
+      "shop3.com",
+      "shop4.com",
+    ])
   })
   it("still holds when the host cannot take the request", async () => {
     const { vet } = fakeVet([], true)
