@@ -319,6 +319,8 @@ what terms, is recorded in [`docs/social-sources.md`](docs/social-sources.md) (d
   6 months, unknown for 30 days; a pass with no source behind it is read as unknown. At most
   `SHOP_CHECKS_PER_LOOK` (5) new checks a look. Without `shops` nothing changes. Release order: docket 0.25.0
   first, then the tracker's shop list (migration, `shopcheck` registered hidden).
+  Also two eBay fixes: a judged eBay watch's failed look keeps no runner detail in its summary
+  (#108, #109), and a failed eBay search is said in fixed words (#111, #121).
 
 ## Use
 
