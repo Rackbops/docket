@@ -2,8 +2,10 @@ import type {
   GiftAllocation,
   GiftAllocationFields,
   GiftGroup,
+  GiftGroupFilter,
   GiftOccasion,
   GiftOccasionRecipient,
+  GiftRecipient,
 } from "./gift-model.js"
 import { GiftValidationError } from "./gift-ports.js"
 import { type GiftBucket, type GiftCoverage, giftCoverage } from "./gift-rules.js"
@@ -11,8 +13,51 @@ import { type GiftBucket, type GiftCoverage, giftCoverage } from "./gift-rules.j
 /**
  * Groups, membership edits and occasion rosters (plan item 158, docket#97). Pure: each function
  * reads records and returns what to write; `applyGiftSync` in `gift-ledger.ts` writes it. A
- * group is a list of recipient ids and nothing else: membership never depends on a label.
+ * static group is a list of recipient ids; a filter group (docket#98) is a rule over the labels
+ * the owner typed on each recipient, never anything read from a name. Either way an occasion
+ * takes its members as they are when it is synced: a snapshot, which a later change to the list,
+ * the rule or a label leaves alone until the next sync.
  */
+
+const fold = (s: string): string => s.trim().replace(/\s+/g, " ").toLowerCase()
+
+/**
+ * Whether a recipient carries every label of a filter, compared trimmed, spaced once and
+ * case-folded. A blank label matches nothing, on either side.
+ */
+export function matchesGroupFilter(
+  filter: GiftGroupFilter,
+  recipient: Pick<GiftRecipient, "labels">,
+): boolean {
+  const want = filter.labels.map(fold)
+  if (want.length === 0 || want.includes("")) return false
+  const have = new Set(recipient.labels.map(fold).filter((l) => l !== ""))
+  return want.every((l) => have.has(l))
+}
+
+/**
+ * A group's members now: a static group's list, or a filter group's matches among `recipients`
+ * -- the owner's own live ones, in the order given (creation order from a store list). A
+ * recipient of another owner, or an archived one, never matches.
+ */
+export function groupMembers(
+  group: Pick<GiftGroup, "ownerId" | "memberIds" | "filter">,
+  recipients: readonly GiftRecipient[],
+): string[] {
+  const filter = group.filter
+  if (filter === undefined || filter === null) return [...group.memberIds]
+  return recipients
+    .filter((r) => r.ownerId === group.ownerId && !r.archived && matchesGroupFilter(filter, r))
+    .map((r) => r.id)
+}
+
+/** Groups as `previewRoster` takes them: each filter group's matches as its list, its filter null. */
+export function resolveGroups(
+  groups: readonly GiftGroup[],
+  recipients: readonly GiftRecipient[],
+): GiftGroup[] {
+  return groups.map((g) => ({ ...g, memberIds: groupMembers(g, recipients), filter: null }))
+}
 
 /** A reviewed membership edit: what would really change, and the group's next `memberIds`. */
 export interface GiftMembershipEdit {
@@ -58,13 +103,20 @@ export interface GiftRosterEntry {
  * chosen groups hold them (Aunts and Cousins sharing one member is one entry). Order: the groups
  * in the order chosen, each group's members in order, then hand-added ones. Excluded people are
  * listed with `excluded: true` so the override stays visible; `rosterIds` leaves them out.
- * Archived groups count like any other: the choice was made.
+ * Archived groups count like any other: the choice was made. A filter group must be resolved
+ * first (`resolveGroups`): one passed as it is stored is refused, never read as empty.
  */
 export function previewRoster(
-  groups: readonly Pick<GiftGroup, "id" | "memberIds">[],
+  groups: readonly (Pick<GiftGroup, "id" | "memberIds"> & Partial<Pick<GiftGroup, "filter">>)[],
   includeIds: readonly string[],
   excludeIds: readonly string[],
 ): GiftRosterEntry[] {
+  const unresolved = groups.filter((g) => g.filter !== undefined && g.filter !== null)
+  if (unresolved.length > 0) {
+    throw new GiftValidationError(
+      unresolved.map((g) => `group ${g.id} is a filter group: resolve it with resolveGroups first`),
+    )
+  }
   const out = new Map<string, GiftRosterEntry>()
   const entry = (recipientId: string): GiftRosterEntry => {
     let e = out.get(recipientId)
@@ -156,7 +208,8 @@ export interface GiftSyncPreview {
  * `roster` is every row of this occasion, archived ones included; `groups` every group the
  * occasion names (archived ones too: pass `includeArchived`), a missing one is an error;
  * `allocations` every allocation of the owner; `buckets` from `giftBuckets` over the owner's
- * whole lists. An archived occasion is never synced: it keeps the roster it had.
+ * whole lists; `recipients` every recipient of the owner, archived ones too, which filter groups
+ * are resolved over. An archived occasion is never synced: it keeps the roster it had.
  */
 export function previewGroupSync(
   occasion: GiftOccasion,
@@ -164,6 +217,7 @@ export function previewGroupSync(
   roster: readonly GiftOccasionRecipient[],
   allocations: readonly GiftAllocation[],
   buckets: readonly GiftBucket[],
+  recipients: readonly GiftRecipient[],
 ): GiftSyncPreview {
   if (occasion.archived) {
     throw new GiftValidationError(["an archived occasion keeps its roster; it is never synced"])
@@ -171,7 +225,9 @@ export function previewGroupSync(
   const chosen = chosenGroups(occasion, groups)
   const mine = roster.filter((r) => r.occasionId === occasion.id)
   const live = mine.filter((r) => !r.archived)
-  const want = rosterIds(previewRoster(chosen, occasion.includeIds, occasion.excludeIds))
+  const want = rosterIds(
+    previewRoster(resolveGroups(chosen, recipients), occasion.includeIds, occasion.excludeIds),
+  )
   const added = want
     .filter((id) => !live.some((r) => r.recipientId === id))
     .map((recipientId) => {
@@ -218,6 +274,9 @@ export interface GiftSyncPlan {
   occasionId: string
   occasionRevision: number
   groupRevisions: Record<string, number>
+  /** The roster the preview showed; applying re-resolves the occasion's groups and refuses a
+   *  different one (a filter group's matches move with labels, not with its revision). */
+  roster: string[]
   allocations: {
     id: string
     revision: number
@@ -269,6 +328,7 @@ export function planGroupSync(
     occasionId: preview.occasionId,
     occasionRevision: preview.occasionRevision,
     groupRevisions: { ...preview.groupRevisions },
+    roster: [...preview.roster],
     allocations: [],
     createRows: preview.added.filter((a) => a.restore === null).map((a) => a.recipientId),
     restoreRows: preview.added.flatMap((a) =>

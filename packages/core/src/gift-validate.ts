@@ -120,9 +120,32 @@ const CHECKS: { [K in GiftKind]: (c: Checker, f: GiftFieldsByKind[K]) => void } 
     c.labels("avoid")
     c.text("notes", GIFT_NOTES_MAX, true)
   },
-  group(c) {
+  group(c, f) {
     c.text("name")
     c.ids("memberIds", 0)
+    const filter = f.filter
+    if (filter === undefined || filter === null) return
+    if (typeof filter !== "object" || Array.isArray(filter)) {
+      c.problems.push("filter must be null or an object with labels")
+      return
+    }
+    const extra = Object.keys(filter).filter((k) => k !== "labels")
+    if (extra.length > 0) c.problems.push(`filter takes only labels, not ${extra.join(", ")}`)
+    const labels = (filter as { labels?: unknown }).labels
+    if (!Array.isArray(labels) || labels.some((x) => typeof x !== "string")) {
+      c.problems.push("filter labels must be a list of text")
+    } else {
+      if (labels.length === 0) c.problems.push("filter needs at least 1 label")
+      if (labels.length > GIFT_LABELS_MAX) {
+        c.problems.push(`filter labels holds more than ${GIFT_LABELS_MAX} entries`)
+      }
+      if (labels.some((x: string) => x.trim() === "" || x.length > GIFT_LABEL_MAX)) {
+        c.problems.push(`filter labels must be 1 to ${GIFT_LABEL_MAX} characters`)
+      }
+    }
+    if (Array.isArray(f.memberIds) && f.memberIds.length > 0) {
+      c.problems.push("a filter group has no memberIds: its members are the recipients it matches")
+    }
   },
   occasion(c, f) {
     c.oneOf("kind", ["christmas", "birthday", "anniversary", "custom"])
@@ -238,7 +261,7 @@ const CHECKS: { [K in GiftKind]: (c: Checker, f: GiftFieldsByKind[K]) => void } 
 /** The field names of each kind, exactly: a record with any other key is refused, not trimmed. */
 export const GIFT_FIELD_NAMES: { [K in GiftKind]: readonly (keyof GiftFieldsByKind[K])[] } = {
   recipient: ["displayName", "kind", "memberIds", "labels", "interests", "avoid", "notes"],
-  group: ["name", "memberIds"],
+  group: ["name", "memberIds", "filter"],
   occasion: [
     "kind",
     "title",
@@ -299,6 +322,11 @@ export const GIFT_FIELD_NAMES: { [K in GiftKind]: readonly (keyof GiftFieldsByKi
   ],
 }
 
+/** Fields a record may leave out, read as null: added after records without them were stored. */
+export const GIFT_OPTIONAL_FIELDS: { [K in GiftKind]?: readonly string[] } = {
+  group: ["filter"],
+}
+
 /** Every problem with one record's complete fields; empty when it may be written. */
 export function giftProblems<K extends GiftKind>(kind: K, fields: GiftFieldsByKind[K]): string[] {
   if (typeof fields !== "object" || fields === null || Array.isArray(fields)) {
@@ -309,8 +337,9 @@ export function giftProblems<K extends GiftKind>(kind: K, fields: GiftFieldsByKi
   for (const key of Object.keys(fields)) {
     if (!names.includes(key)) problems.push(`${key} is not a ${kind} field`)
   }
+  const optional: readonly string[] = GIFT_OPTIONAL_FIELDS[kind] ?? []
   for (const name of names) {
-    if (!(name in fields)) problems.push(`${name} is missing`)
+    if (!(name in fields) && !optional.includes(name)) problems.push(`${name} is missing`)
   }
   if (problems.length > 0) return problems
   const c = new Checker(fields as unknown as Fields)

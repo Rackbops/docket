@@ -79,9 +79,15 @@ shows who would be added (a restored row brings its budget back) and removed, wi
 the budget change, and every live gift on the occasion naming someone off the roster, whether their
 row goes now or went earlier, so a gift kept on someone off the roster is asked about at every sync.
 The roster is the groups plus overrides: a row added by hand without `includeIds` is offered for
-removal. `planGroupSync` refuses until each such gift has a keep, reassign (to people on the
+removal. A group is a static list or, with `filter: {labels}`, a saved rule (docket#98): its members
+are the owner's live recipients carrying every one of those labels (trimmed, case-folded), only
+labels the owner typed, so a blank or missing label never matches. `groupMembers` and
+`resolveGroups` resolve one; `previewRoster` refuses a filter group passed unresolved, and
+`previewGroupSync` takes the owner's recipients to resolve them. A group made before docket#98
+has no `filter` key and reads as a static list. `planGroupSync` refuses until each such gift has a keep, reassign (to people on the
 roster) or unassign decision, and refuses decisions for other gifts. `GiftLedger.applyGiftSync`
-refuses the whole plan if the occasion was archived or it or a group moved since the preview, then
+refuses the whole plan if the occasion was archived, it or a group moved since the preview, or a
+filter group's matches moved (the roster is resolved again and compared), then
 writes the gift changes first and the roster rows after; it is not atomic (a refused write leaves
 the earlier ones, and the owner previews again). Retry a plan with the same plan and key: write n
 uses `<key>/n`, so a retry replays what was written; a new preview needs a new key. An archived

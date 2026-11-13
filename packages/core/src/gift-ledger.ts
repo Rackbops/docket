@@ -1,4 +1,4 @@
-import type { GiftSyncPlan } from "./gift-groups.js"
+import { type GiftSyncPlan, previewRoster, resolveGroups, rosterIds } from "./gift-groups.js"
 import type { GiftBase, GiftEvent, GiftFieldsByKind, GiftKind, GiftRecord } from "./gift-model.js"
 import {
   type GiftEventFilter,
@@ -175,6 +175,28 @@ export class GiftLedger {
     for (const [id, revision] of Object.entries(plan.groupRevisions)) {
       const g = await this.store.get("group", meta.ownerId, id)
       if (g?.revision !== revision) moved.push(`group ${id}`)
+    }
+    if (moved.length === 0) {
+      // A filter group's matches move with recipients' labels, not with the group's revision: the
+      // roster is resolved again, and a different one is refused like a moved record.
+      const groups = await this.store.list("group", meta.ownerId, { includeArchived: true })
+      const chosen = groups.filter((g) => Object.hasOwn(plan.groupRevisions, g.id))
+      if (chosen.some((g) => g.filter !== undefined && g.filter !== null)) {
+        const recipients = await this.store.list("recipient", meta.ownerId, {
+          includeArchived: true,
+        })
+        const ordered = occasion.groupIds.flatMap((id) => chosen.filter((g) => g.id === id))
+        const now = rosterIds(
+          previewRoster(
+            resolveGroups(ordered, recipients),
+            occasion.includeIds,
+            occasion.excludeIds,
+          ),
+        )
+        if (JSON.stringify(now) !== JSON.stringify(plan.roster)) {
+          moved.push("the recipients a filter group matches")
+        }
+      }
     }
     if (moved.length > 0) {
       throw new GiftRevisionError(

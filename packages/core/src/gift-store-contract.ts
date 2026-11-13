@@ -1,3 +1,4 @@
+import { groupMembers } from "./gift-groups.js"
 import type { GiftFieldsByKind } from "./gift-model.js"
 import {
   GiftDuplicateError,
@@ -193,6 +194,29 @@ export const GIFT_STORE_CONTRACT: readonly GiftStoreContractCase[] = [
       }
       same((await store.listEvents(B)).length, 0, "no events for the other owner")
       same((await store.listEvents(A)).length, made.length, "only the creates")
+    },
+  },
+  {
+    name: "gift: a filter group keeps its rule, and matches only its owner's recipients",
+    async run(store) {
+      const labelled = (name: string) => ({ ...person(name), labels: ["cousin"] })
+      const mine = await store.create("recipient", meta(A), labelled("Ann"))
+      await store.create("recipient", meta(B), labelled("Bea"))
+      const group = await store.create("group", meta(A), {
+        name: "Cousins",
+        memberIds: [],
+        filter: { labels: ["cousin"] },
+      })
+      same(
+        (await store.get("group", A, group.id))?.filter,
+        { labels: ["cousin"] },
+        "the filter reads back",
+      )
+      const owned = await store.list("recipient", A, { includeArchived: true })
+      same(groupMembers(group, owned), [mine.id], "matches among the owner's own list")
+      // Even handed every owner's rows, a filter matches only its own owner's.
+      const theirs = await store.list("recipient", B, { includeArchived: true })
+      same(groupMembers(group, [...owned, ...theirs]), [mine.id], "another owner's never match")
     },
   },
   {
