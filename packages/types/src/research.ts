@@ -121,11 +121,11 @@ import { retryOutcome } from "./retry.js"
  *
  * **Social platforms** (0.23.0, docket#107; `research-social.ts`): a web first pass may search
  * YouTube, TikTok and Instagram for what people say, through `firecrawl_scrape`'s typed bodies
- * (Bluesky too, until docket#125 suspended it), when the request's `social` asks (`auto`, the
- * default: when the question asks for opinions; `none`; or a list of platforms) and from `since`
- * on. It gets `SOCIAL_MAX_TURNS` then. A post finding carries its platform, date and whether the
- * post was opened; the answer carries `coverage`, one row per platform and one each for Bluesky
- * and Reddit (never searched),
+ * (and, until docket#125, Bluesky's public search by WebFetch), when the request's `social` asks
+ * (`auto`, the default: when the question asks for opinions; `none`; or a list of platforms) and
+ * from `since` on. It gets `SOCIAL_MAX_TURNS` then. A post finding carries its platform, date and
+ * whether the post was opened; the answer carries `coverage`, one row per platform and one each
+ * for Bluesky and Reddit (never searched),
  * shown as the DM's "Social:" line. Plain code (`socialOutgoing`) counts a copied link once,
  * moves a stock, price or availability claim resting on posts alone and a dated post before
  * `since` to `uncertain`, and completes the coverage. Runs on gathered pages search no platform.

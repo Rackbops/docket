@@ -208,8 +208,8 @@ The tracker's task types, built on `@rackbops/docket-core`'s contract. Shipped s
   live that endpoint answered 403 to the runner (2026-11-11), to WebFetch and to Firecrawl
   (2026-11-12), so since docket#125 (roshne's decision, 2026-11-13) no run searches it until the
   own read-only service: `SOCIAL_AUTO_PLATFORMS` leaves it out, `socialPlatforms` drops it from a
-  list, the prompt tells the run never to try it, and every answer's `coverage` lists it
-  `unavailable` (`BLUESKY_NOTE`), like Reddit. The request's `social` says when: `auto` (the
+  list, the prompt tells the run never to try it, and every answer that carries `coverage` lists
+  it `unavailable` (`BLUESKY_NOTE`), like Reddit. The request's `social` says when: `auto` (the
   default, and what an absent value means) searches when the question asks what people
   recommend, think or experienced; `none` never; a list of `youtube`, `tiktok`, `instagram` (or
   `yt`, `insta`, `ig`) always searches those; `bluesky` (or `bsky`) still parses, so an existing
@@ -231,7 +231,8 @@ The tracker's task types, built on `@rackbops/docket-core`'s contract. Shipped s
   on it, or infers the platform when every source's host agrees, and drops them on a web page.
   The DM shows them: `- <claim> (YouTube, about 2026-10-19, snippet only) <url>`. The answer
   carries `coverage`, one row per platform (`searched`, `empty`, `unavailable` with which call
-  failed, or `skipped` with why) and one for Reddit, shown as one "Social:" line before the
+  failed, or `skipped` with why) and one each for Bluesky and Reddit (both `unavailable`), shown
+  as one "Social:" line before the
   reviewer's note, kept whole like the "Couldn't open:" tail (at most 500 characters). The DM is
   one Discord message (1900 characters): when the whole answer fits, the findings are full lines
   with their links; when it does not (docket#126, docket#132), the room left by the Social line,
@@ -270,8 +271,9 @@ The tracker's task types, built on `@rackbops/docket-core`'s contract. Shipped s
   checked or may vary claims nothing, docket#127, while an amount or a stock status moves whatever
   else the sentence says) moves to `uncertain` "(said in a post, not verified)"; and `coverage` is
   rebuilt (`withCoverage`): every chosen platform present (`skipped`, "not reported by the run", when the
-  run left one out), Reddit always `unavailable` with `REDDIT_NOTE` ("needs your own browser";
-  the prompt gives the run the full reason, `REDDIT_WHY`, docket#126), the run's other rows after,
+  run left one out), Bluesky and Reddit always `unavailable` with `BLUESKY_NOTE` (docket#125)
+  and `REDDIT_NOTE` ("needs your own browser"; the prompt gives the run the full reasons,
+  `BLUESKY_WHY` and `REDDIT_WHY`, docket#126), the run's other rows after,
   at most 8; `none`, and a `sent` request, drop it. `uncertain` stays within its cap of 6, the
   run's own lines first; past it, the last line says how many more were moved.
 

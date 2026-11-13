@@ -49,9 +49,9 @@ export const SOCIAL_AUTO: SocialChoice = { mode: "auto" }
 /**
  * The platforms `auto` searches: the first set less Bluesky (docket#125, roshne's decision of
  * 2026-11-13). Bluesky's public search answered 403 to every fetcher the runs have (the runner on
- * 2026-11-11, WebFetch and Firecrawl on 2026-11-12), so no run searches it until the own
- * read-only service (route 2); `bluesky` still parses, and every answer's `coverage` lists it
- * unavailable, like Reddit.
+ * 2026-11-11, WebFetch and Firecrawl on 2026-11-12), so no run searches it until phase 2 (the
+ * own read-only service); `bluesky` still parses, and every answer that carries `coverage` lists
+ * it unavailable, like Reddit.
  */
 export const SOCIAL_AUTO_PLATFORMS: readonly SocialPlatform[] = ["youtube", "tiktok", "instagram"]
 
@@ -127,7 +127,8 @@ export const SOCIAL_MAX_CREDITS =
  * directory, read 2026-11-07 and 2026-11-09): no authentication on `public.api.bsky.app`; `q`,
  * `sort` (`top` or `latest`), `since` and `until` (filtering on `sortAt`, not `createdAt`),
  * `limit` up to 100. Live it answered 403 to the runner (2026-11-11), to WebFetch and to
- * Firecrawl (2026-11-12), so no prompt names it since docket#125; kept for route 2.
+ * Firecrawl (2026-11-12), so no prompt names it since docket#125; kept for phase 2 (the own
+ * read-only service).
  */
 export const BLUESKY_SEARCH_URL = "https://public.api.bsky.app/xrpc/app.bsky.feed.searchPosts"
 
@@ -379,7 +380,8 @@ export const NOT_REPORTED = "not reported by the run"
  * when it gave one, else `skipped` (`NOT_REPORTED`); then Bluesky (docket#125) and Reddit, always
  * `unavailable` with `BLUESKY_NOTE` and `REDDIT_NOTE`, whatever the run wrote; then any other
  * platform the run reported on, up to `MAX_COVERAGE`. Empty with `none`: a run not asked to
- * search reports nothing. An `only` Bluesky choice gives the two fixed rows alone.
+ * search reports nothing. An `only` Bluesky choice gives the two fixed rows, then any row the
+ * run volunteered for another platform.
  */
 export function withCoverage(coverage: readonly Coverage[], choice: SocialChoice): Coverage[] {
   if (choice.mode === "none") return []
