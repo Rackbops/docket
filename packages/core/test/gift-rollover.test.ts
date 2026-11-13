@@ -310,6 +310,40 @@ describe("setting up next year", () => {
     expect(await s.ledger.list("occasion", A, { includeArchived: true })).toHaveLength(2)
   })
 
+  it.each([
+    ["2026-05-01", "2027-05-01"],
+    [null, null],
+  ])(
+    "rolls over a live year-less occasion (date %s) without a key, then refuses the repeat",
+    async (date, next) => {
+      const store = new MemoryGiftStore()
+      const ledger = new GiftLedger(store)
+      const mum = await ledger.create("occasion", meta, {
+        kind: "birthday",
+        title: "Mum's birthday",
+        date,
+        timeZone: null,
+        year: null,
+        currency: "USD",
+        budgetMinor: null,
+        groupIds: [],
+        includeIds: [],
+        excludeIds: [],
+      })
+      const p = previewGiftRollover({
+        occasion: mum,
+        groups: [],
+        recipients: [],
+        roster: [],
+        allocations: [],
+      })
+      expect(p.occasion).toMatchObject({ title: "Mum's birthday", date: next, year: null })
+      await ledger.applyGiftRollover(meta, p)
+      await expect(ledger.applyGiftRollover(meta, p)).rejects.toBeInstanceOf(GiftValidationError)
+      expect(await ledger.list("occasion", A)).toHaveLength(2)
+    },
+  )
+
   it("does not refuse for list order, key order or an unpicked gift bought since", async () => {
     const s = await lastYear()
     const data = await s.read(s.old)

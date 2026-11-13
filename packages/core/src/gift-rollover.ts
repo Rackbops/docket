@@ -73,8 +73,9 @@ export interface GiftRolloverInput {
   /** The new title; default: the old one with its year moved on. */
   title?: string
   /**
-   * The new date; default: a year after the old one (29 February becomes the 28th). The new year
-   * is this date's year, or the old year moved on when the date is null.
+   * The new date; default: a year after the old one (29 February becomes the 28th). When the old
+   * occasion has a year, the new one is this date's year (or the old year moved on when the date
+   * is null); a year-less occasion stays year-less.
    */
   date?: string | null
 }

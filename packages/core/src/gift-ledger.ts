@@ -160,12 +160,14 @@ export class GiftLedger {
    * date, and refuses (`GiftRevisionError`) before anything is written when what it would write
    * differs: the old occasion's or a group's revision moved, or the new occasion, the roster (who,
    * with what target and budget) or a picked idea (its people, quantity or sharing) came out
-   * different. Order and key order do not count; a gift bought or added that was not picked does
-   * not either. A picked gift's item that is gone, archived or rejected is refused the same way.
+   * different. Order and key order do not count for the check; a gift bought or added that was
+   * not picked does not either. A picked gift's item that is gone, archived or rejected is refused
+   * the same way (unpick it).
    * The old occasion is never written. Not atomic: a refused write leaves the earlier ones
    * (preview again). With an idempotency key, write n uses `<key>/<n>`, so retrying replays what
    * was made; the check runs first, so a retry after something moved is refused, not replayed.
-   * Without a key, a live occasion of the same kind, title and year refuses it
+   * Without a key, a live occasion other than the old one with the same kind, title, year and
+   * date refuses it
    * (`GiftValidationError`), so a lost answer retried does not make a second one.
    */
   async applyGiftRollover(
@@ -211,7 +213,7 @@ export class GiftLedger {
       const it = await this.store.get("item", meta.ownerId, idea.itemId)
       if (it === null || it.archived || it.planning === "rejected") {
         throw new GiftRevisionError(
-          `item ${idea.itemId} was archived or rejected since the preview; preview again`,
+          `item ${idea.itemId} is gone, archived or rejected; unpick it and preview again`,
           old.revision,
         )
       }
@@ -219,7 +221,13 @@ export class GiftLedger {
     if (meta.idempotencyKey === undefined) {
       const live = await this.store.list("occasion", meta.ownerId)
       const o = preview.occasion
-      if (live.some((x) => x.kind === o.kind && x.title === o.title && x.year === o.year)) {
+      const same = (x: GiftRecord<"occasion">) =>
+        x.id !== preview.fromOccasionId &&
+        x.kind === o.kind &&
+        x.title === o.title &&
+        x.year === o.year &&
+        x.date === o.date
+      if (live.some(same)) {
         throw new GiftValidationError([
           `a live ${o.kind} occasion "${o.title}" already exists: this rollover may have been made`,
         ])
