@@ -9,6 +9,7 @@ import type {
 } from "./gift-model.js"
 import { GiftValidationError } from "./gift-ports.js"
 import { giftProblems } from "./gift-validate.js"
+import { dayNumber, fromDayNumber } from "./local-date.js"
 
 /**
  * "Set up next year" (docket#99, plan item 158): a reviewed copy of an occasion -- Christmas 2027
@@ -16,7 +17,8 @@ import { giftProblems } from "./gift-validate.js"
  * `GiftLedger.applyGiftRollover` makes it, and nothing is written until then. The old occasion is
  * never changed, archived or not, so its purchases, states and history stay readable.
  *
- * Carried: the occasion's own settings (its title's year moved on, its date a year later), its
+ * Carried: the occasion's own settings (its title's year moved on, its date a year later, its
+ * shop-by day the same number of days before the new date, its digest choice), its
  * people -- the groups re-resolved against today's membership and labels, plus the hand-picked
  * overrides -- each staying person's target and budget, and only the ideas the owner picks. Never
  * carried: any purchase, received, wrapped, ready or given state, or a gift with a purchase behind
@@ -89,6 +91,28 @@ function nextYearDate(date: string | null): string | null {
   return `${year}-${m}-${day}`
 }
 
+const toDay = (date: string): number => {
+  const [y, m, d] = date.split("-").map(Number)
+  return dayNumber({ year: y ?? 0, month: m ?? 1, day: d ?? 1 })
+}
+
+const fromDay = (n: number): string => {
+  const d = fromDayNumber(n)
+  return `${String(d.year).padStart(4, "0")}-${String(d.month).padStart(2, "0")}-${String(d.day).padStart(2, "0")}`
+}
+
+/**
+ * The new shop-by day (docket#103): as many days before the new date as the old one was before
+ * the old date; a year on when either date is missing.
+ */
+function nextDeadline(old: GiftOccasion, date: string | null): string | null {
+  if (old.deadline === undefined || old.deadline === null) return null
+  if (old.date !== null && date !== null) {
+    return fromDay(toDay(date) - (toDay(old.date) - toDay(old.deadline)))
+  }
+  return nextYearDate(old.deadline)
+}
+
 function nextTitle(title: string, year: number | null, date: string | null): string {
   if (year === null && date !== null) year = Number(date.slice(0, 4))
   if (year === null) return title
@@ -159,6 +183,11 @@ export function previewGiftRollover(input: GiftRolloverInput): GiftRolloverPrevi
     groupIds: [...old.groupIds],
     includeIds: [...old.includeIds],
     excludeIds: [...old.excludeIds],
+    // Left out when the old occasion had none, as an occasion from before docket#103 reads.
+    ...(old.deadline === undefined || old.deadline === null
+      ? {}
+      : { deadline: nextDeadline(old, date) }),
+    ...(old.digest === undefined || old.digest === null ? {} : { digest: old.digest }),
   }
   problems.push(...giftProblems("occasion", occasion))
   if (problems.length > 0) throw new GiftValidationError(problems)
