@@ -250,8 +250,9 @@ export function socialChecks(choice: SocialChoice, since: Date | null): string[]
       "youtube-com call and no oriane call. A finding marked `read` with no sign the post was " +
       "opened becomes `snippet`.",
     "- A claim about stock, a price or availability that rests on posts alone moves to " +
-      "`uncertain`; a poster's opinion stated as fact is reworded as what posters say; a repost " +
-      "counted twice is counted once; where posters disagree, the answer says so.",
+      "`uncertain` (a sentence that only says prices or availability are unverified claims " +
+      "nothing and stays); a poster's opinion stated as fact is reworded as what posters say; " +
+      "a repost counted twice is counted once; where posters disagree, the answer says so.",
     `- \`coverage\` names every platform in scope (${names(platforms)}) and Reddit as ` +
       "unavailable" +
       (since
@@ -281,20 +282,40 @@ const FACT_FROM_POST = new RegExp(
 )
 
 /**
- * Words that disclaim a fact rather than assert it (docket#127). The first live run's best post
- * finding said "Prices are from the caption and unverified", doing as the prompt asks, and the
- * belt moved the whole recommendation to `uncertain` for the word "Prices".
+ * The topic nouns in `FACT_FROM_POST` that a sentence can name without asserting anything about
+ * them (docket#127); a status phrase ("sold out") or an amount ("$4.99") asserts whatever else the
+ * sentence says.
  */
-const DISCLAIMED = /\b(?:unverified|unconfirmed|not (?:verified|checked|confirmed)|may vary)\b/i
+const FACT_TOPIC = /\b(?:pric(?:e|es|ing)|availability)\b/gi
+
+/**
+ * Words that disclaim a fact rather than assert it (docket#127). The first live run's best post
+ * finding said "Prices are from the caption and unverified", as the 0.23.0 prompt was read, and
+ * the belt moved the whole recommendation to `uncertain` for the word "Prices".
+ */
+const DISCLAIMED = new RegExp(
+  "\\bun(?:verified|verifiable|confirmed)\\b|" +
+    "\\b(?:not|\\w+n['\\u2019]t|cannot) (?:\\w+ ){0,2}" +
+    "(?:verif(?:y|ied|iable)|check(?:ed)?|confirm(?:ed)?)\\b|" +
+    "\\b(?:may|might) vary\\b|\\bvar(?:y|ies) by\\b",
+  "i",
+)
+
+/** A sentence ends at `.`, `!` or `?`, any closing quote or bracket, then white space. */
+const SENTENCE_END = /(?<=[.!?]["')\]\u2019\u201d]*)\s+/
 
 /**
  * True when the claim asserts stock, a price or availability: some sentence of it matches
- * `FACT_FROM_POST` and does not disclaim it (`DISCLAIMED`). "It costs $4.99." asserts; "Prices
- * are from the caption and unverified." does not; "It is back in stock. Prices are unverified."
- * asserts in its first sentence.
+ * `FACT_FROM_POST` and either names a status or an amount, or names only a topic noun
+ * (`FACT_TOPIC`) without disclaiming it (`DISCLAIMED`). "It costs $4.99." asserts, and so does
+ * "It costs $4.99, unverified."; "Prices are from the caption and unverified." does not; "It is
+ * back in stock. Prices are unverified." asserts in its first sentence.
  */
 export function assertsFactFromPost(claim: string): boolean {
-  return claim.split(/(?<=[.!?])\s+/).some((s) => FACT_FROM_POST.test(s) && !DISCLAIMED.test(s))
+  return claim.split(SENTENCE_END).some((s) => {
+    if (!FACT_FROM_POST.test(s)) return false
+    return FACT_FROM_POST.test(s.replace(FACT_TOPIC, "")) || !DISCLAIMED.test(s)
+  })
 }
 
 /** True when every source of `f` is a post, a channel or a profile on a social platform. */
@@ -361,10 +382,9 @@ export function withCoverage(coverage: readonly Coverage[], choice: SocialChoice
  * dropped, so a copied link to one post counts once (a re-upload under another account is the
  * prompt's rule); with `since`, a post finding dated (`postDate`) before the start of its UTC
  * day moves to `uncertain`, saying when it was posted; a finding whose every source is on a
- * social platform and whose claim asserts stock, a price or availability
- * (`assertsFactFromPost`: a sentence that says the fact is unverified is not a claim of it,
- * docket#127) moves to `uncertain` as `SAID_IN_POST`; and `coverage` is rebuilt by
- * `withCoverage`. The run's
+ * social platform and whose claim asserts stock, a price or availability (`assertsFactFromPost`;
+ * a sentence that only names prices or availability as unverified is no such claim, docket#127)
+ * moves to `uncertain` as `SAID_IN_POST`; and `coverage` is rebuilt by `withCoverage`. The run's
  * own `uncertain` lines come first, each moved line is cut to `MAX_UNCERTAIN_CHARS`, and past
  * `MAX_UNCERTAIN` the last line says how many more were moved, so none vanishes without a trace.
  * `blocked` is kept as it was. Every claim moved stays out of the findings saved, since those are

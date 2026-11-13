@@ -560,10 +560,13 @@ describe("the belt under the prompts: stock, price and availability off posts al
       ...DRAFT,
       findings: [
         { claim: live, sources: [TIKTOK], platform: "tiktok", evidence: "read" },
-        { claim: "It is back in stock, posters say; not verified.", sources: [BSKY] },
         { claim: "The price may vary by store, one poster notes.", sources: [TIKTOK] },
+        { claim: "Prices couldn't be verified from the post.", sources: [BSKY] },
         // A disclaimer in another sentence does not cover the sentence that asserts.
         { claim: "It is back in stock. Prices are unverified.", sources: [BSKY] },
+        // A stock status or an amount asserts whatever else its sentence says.
+        { claim: "It is back in stock, posters say; not verified.", sources: [BSKY] },
+        { claim: "It costs $4.99 per the caption, unverified.", sources: [TIKTOK] },
         { claim: "It costs $4.99 at most stores.", sources: [TIKTOK] },
       ],
     })
@@ -571,16 +574,26 @@ describe("the belt under the prompts: stock, price and availability off posts al
     const out = socialOutgoing(answer, { mode: "auto" }, null)
     expect(out.findings.map((f) => f.claim)).toEqual([
       live,
-      "It is back in stock, posters say; not verified.",
       "The price may vary by store, one poster notes.",
+      "Prices couldn't be verified from the post.",
     ])
     expect(out.uncertain).toEqual([
       DRAFT.uncertain[0],
       `It is back in stock. Prices are unverified. (${SAID_IN_POST})`,
+      `It is back in stock, posters say; not verified. (${SAID_IN_POST})`,
+      `It costs $4.99 per the caption, unverified. (${SAID_IN_POST})`,
       `It costs $4.99 at most stores. (${SAID_IN_POST})`,
     ])
     expect(assertsFactFromPost("Posters say it is sold out everywhere!")).toBe(true)
-    expect(assertsFactFromPost("Stock was not checked.")).toBe(false)
+    expect(assertsFactFromPost("The price was not checked.")).toBe(false)
+    expect(assertsFactFromPost("Availability wasn't confirmed; prices vary by store.")).toBe(false)
+    // A closing bracket or quote after the stop still ends the sentence.
+    expect(assertsFactFromPost("(Prices are unverified.) It is sold out.")).toBe(true)
+    expect(assertsFactFromPost('He said "it is sold out." Prices are unverified.')).toBe(true)
+    // The reviewer is told the same rule, so it does not revise the sentence out first.
+    expect(reviewJob(WEB, DRAFT).prompt).toContain(
+      "a sentence that only says prices or availability are unverified claims nothing and stays",
+    )
     // The prompt tells the run to keep price words out of a post finding altogether.
     expect(researchJob(WEB).prompt).toContain(
       "a post finding itself says nothing about them, not even that they are unverified",
