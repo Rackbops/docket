@@ -350,8 +350,9 @@ what terms, is recorded in [`docs/social-sources.md`](docs/social-sources.md) (d
   `decideGiftDigest` for the notify lane (`gift-digest`, #103). Types: the research DM cuts a long
   summary instead of dropping it and counts caveats and findings it leaves out (#132, PR #135);
   Bluesky leaves research's default social set -- `bluesky` still parses, is never searched, and
-  every coverage lists it unavailable (#125, PR #143). Release order: docket 0.27.0 first, then the
-  tracker's adoption (rackbops-bot-plugins#386, which moves to the new `previewGroupSync`).
+  every answer that carries `coverage` lists it unavailable (#125, PR #143). Release order: docket
+  0.27.0 first, then the tracker's adoption (issue rackbops-bot-plugins#386; it must move to the new
+  `previewGroupSync`).
 
 ## Use
 
