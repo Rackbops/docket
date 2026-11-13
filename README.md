@@ -337,6 +337,22 @@ what terms, is recorded in [`docs/social-sources.md`](docs/social-sources.md) (d
   location), and a page still in another currency, or a copy in stock that no longer reads, is a
   miss. A copy is told once; a later price drop on it is not told again. The tracker plugin must
   wire the source in before any watch can use it (a plugin PR in Rackbops/rackbops-bot-plugins).
+- **0.27.0 -- the gift organizer's MVP B, and two research fixes** (epic
+  [#94](https://github.com/Rackbops/docket/issues/94): [#98](https://github.com/Rackbops/docket/issues/98)
+  to [#103](https://github.com/Rackbops/docket/issues/103); [#125](https://github.com/Rackbops/docket/issues/125),
+  [#132](https://github.com/Rackbops/docket/issues/132)). Breaking, core: `previewGroupSync` takes the
+  owner's recipients as a sixth argument, and `GiftSyncPlan` carries the previewed roster (#98).
+  Additive, core: saved filter groups over the owner's own labels (`resolveGroups`; a group made
+  before this reads as static, #98); a reviewed rollover of an occasion to next year that carries
+  no purchased or given state (#99); duplicate gift warnings across occasions and `repeatOf` (#100);
+  a scout finding saved as a gift idea, and watch links on an item (#101); a reviewed CSV or
+  pasted-list import (`gift-import`, #102); occasion `deadline` and opt-in `digest`, with
+  `decideGiftDigest` for the notify lane (`gift-digest`, #103). Types: the research DM cuts a long
+  summary instead of dropping it and counts caveats and findings it leaves out (#132, PR #135);
+  Bluesky leaves research's default social set -- `bluesky` still parses, is never searched, and
+  every answer that carries `coverage` lists it unavailable (#125, PR #143). Release order: docket
+  0.27.0 first, then the tracker's adoption (issue rackbops-bot-plugins#386; it must move to the new
+  `previewGroupSync`).
 
 ## Use
 
