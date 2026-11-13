@@ -285,7 +285,11 @@ The tracker's task types, built on `@rackbops/docket-core`'s contract. Shipped s
   Shopify's catalog search through Firecrawl's Alexandria, 5 credits a look; a product counts only
   when every word of the search is in its title, and the judge opens no store for it) and
   `ebaySource` (eBay listings from eBay's own Browse API, with the host's eBay app token; the
-  judge opens no eBay page for it). A watch's optional `exclude` (words or phrases) drops any
+  judge opens no eBay page for it) and `nobleKnightSource` (the copies in stock on one Noble
+  Knight Games product page, `/P/<id>`, through the host's Fetch port: each copy a listing with
+  its grade, note and sale price, Noble Knight named as the seller; a trusted seller, so no shop
+  check runs; each look asks for US dollars, and a page in another currency is a miss;
+  `nobleKnightProduct` reads the page's address into its one form). A watch's optional `exclude` (words or phrases) drops any
   listing whose title holds one of them, as whole words in order on the target's word split,
   when the source is read, so it is never told, from every source; a judged watch checks its
   waiting listings again when it settles them (docket#77); `parseExclude` reads the list from

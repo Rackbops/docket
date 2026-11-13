@@ -43,6 +43,12 @@ export const SOURCE_TEXT: Readonly<Record<SourceId, SourceText>> = {
     missing: "Shopify search (no Firecrawl key)",
     judgeWhere: "a search of Shopify stores' catalogs (new copies in stock)",
   },
+  nobleknight: {
+    attribution: null,
+    where: "Noble Knight's product page",
+    missing: "such source",
+    judgeWhere: "the copies in stock on a Noble Knight Games product page they gave",
+  },
   ebay: {
     attribution: EBAY_ATTRIBUTION,
     where: "eBay's search",

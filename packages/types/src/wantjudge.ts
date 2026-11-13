@@ -675,14 +675,14 @@ export function wantjudgeType(
       options: [
         {
           name: "source",
-          description: "Where to look: page, bgg, inbox, shopify or ebay",
+          description: "Where to look: page, bgg, inbox, shopify, ebay or nobleknight",
           required: true,
           kind: "string",
         },
         {
           name: "target",
           description:
-            "The page's address, the BGG game, the inbox's key, or the words to search Shopify or eBay for",
+            "The page's address (a Noble Knight product page for nobleknight), the BGG game, the inbox's key, or the words to search Shopify or eBay for",
           required: true,
           kind: "string",
         },

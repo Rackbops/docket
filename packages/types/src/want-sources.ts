@@ -59,8 +59,15 @@ export interface ListingDetail {
   listing?: Listing
 }
 
-export type SourceId = "page" | "bgg" | "inbox" | "shopify" | "ebay"
-export const SOURCE_IDS: readonly SourceId[] = ["page", "bgg", "inbox", "shopify", "ebay"]
+export type SourceId = "page" | "bgg" | "inbox" | "shopify" | "ebay" | "nobleknight"
+export const SOURCE_IDS: readonly SourceId[] = [
+  "page",
+  "bgg",
+  "inbox",
+  "shopify",
+  "ebay",
+  "nobleknight",
+]
 
 /** The watch's own limits, for a source that can narrow its search by them (Shopify's, eBay's); the type still checks every listing against them. */
 export interface SearchLimits {

@@ -333,6 +333,13 @@ export {
   parseEbayItem,
 } from "./want-ebay.js"
 export {
+  NOBLE_KNIGHT,
+  NOBLE_KNIGHT_MAX_COPIES,
+  nobleKnightProduct,
+  nobleKnightSource,
+  readNobleKnightCopies,
+} from "./want-nobleknight.js"
+export {
   matchesWords,
   minorUnits,
   parseShopifyAnswer,
