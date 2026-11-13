@@ -17,6 +17,7 @@ import {
   vetListings,
 } from "./shop-vet.js"
 import { EBAY_CURRENCY } from "./want-ebay.js"
+import { NOBLE_KNIGHT } from "./want-nobleknight.js"
 import { wordsOf } from "./want-shopify.js"
 import {
   type Listing,
@@ -328,17 +329,23 @@ export async function pollWant(
   }
   // The eBay source searches eBay US, which lists prices in USD only, so a watch in any other
   // currency would read fine every time and drop every listing on currency: say so at once
-  // rather than look healthy forever.
+  // rather than look healthy forever. A Noble Knight watch reads its page in USD too.
   // An invalid code counts as none named, as everywhere (`currencyCode`, docket#58).
   const currency = currencyCode(ctx.config.currency)
-  if (ctx.config.source === "ebay" && currency && currency !== EBAY_CURRENCY) {
+  const usdOnly =
+    ctx.config.source === "ebay"
+      ? "eBay US"
+      : ctx.config.source === "nobleknight"
+        ? NOBLE_KNIGHT
+        : null
+  if (usdOnly && currency && currency !== EBAY_CURRENCY) {
     return {
       kind: "done",
       outcome: miss(
         ctx,
         state,
         new SourceUnavailableError(
-          `eBay US lists prices in ${EBAY_CURRENCY} only, so a watch in ${currency} never matches; ` +
+          `${usdOnly} lists prices in ${EBAY_CURRENCY} only, so a watch in ${currency} never matches; ` +
             `set the currency to ${EBAY_CURRENCY} or leave it out`,
         ),
       ),

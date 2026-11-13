@@ -125,13 +125,17 @@ export function readNobleKnightCopies(
   // Each row runs from its condition column to its own Add to Cart button. Related products further
   // down the page have buttons too, under other product ids, so a row counts only with this one's.
   const rows = html.split(/<div[^>]*class="[^"]*\bcondition-col\b/i).slice(1)
+  // A layout change must not read as sold out: a copy's button with no row around it, or a row in
+  // stock without this product's button or a label that reads, is a page this no longer reads.
+  if (rows.length === 0 && new RegExp(`\\bid="${productId}#\\d`).test(html)) return null
   for (const rest of rows) {
     if (out.length >= NOBLE_KNIGHT_MAX_COPIES) break
     const open = /^([^"]*)"/.exec(rest)
     if (!open || !/\bin_stock\b/.test(open[1] ?? "")) continue
     const button = new RegExp(`\\bid="${productId}#(\\d{4,14})"`).exec(rest)
     const sku = button?.[1]
-    if (!sku || seen.has(sku)) continue
+    if (!sku) return null
+    if (seen.has(sku)) continue
     const row = rest.slice(0, button.index)
     const label = /aria-label="Edit quantity Condition ([^"]*?) Price ([^"]*)"/i.exec(row)
     if (!label) return null
@@ -181,7 +185,13 @@ export const nobleKnightSource: Source = {
     }
     checkSearchStatus(status, NOBLE_KNIGHT, `${NOBLE_KNIGHT} refused the read (HTTP ${status})`)
     const copies = readNobleKnightCopies(body, product.id, product.url)
-    if (copies === null) throw new SourceMiss("the page is not the product's page")
+    if (copies === null) {
+      throw new SourceMiss(
+        new RegExp(`\\bppn_${product.id}\\b`).test(body)
+          ? "the product's page no longer reads as it did (its layout may have changed)"
+          : "the page is not the product's page",
+      )
+    }
     const other = copies.find((c) => c.currency !== "USD")
     if (other) {
       throw new SourceMiss(

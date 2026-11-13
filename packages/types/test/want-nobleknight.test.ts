@@ -1,3 +1,4 @@
+import type { Occurrence, RunContext, Task, User } from "@rackbops/docket-core"
 import { describe, expect, it } from "vitest"
 import {
   NEVER_EBAY,
@@ -8,6 +9,8 @@ import {
   SourceMiss,
   SourceUnavailableError,
   sourceText,
+  type WantConfig,
+  wantlistType,
 } from "../src/index.js"
 import { EDGE_UK } from "./nobleknight-fixture.js"
 
@@ -114,12 +117,24 @@ describe("readNobleKnightCopies", () => {
     expect(readNobleKnightCopies(none, "2147942033", URL_)).toEqual([])
     expect(readNobleKnightCopies(US, "2148112695", URL_)).toBeNull()
     expect(readNobleKnightCopies("<html>Access denied</html>", "2147942033", URL_)).toBeNull()
-    expect(readNobleKnightCopies(US, "2147942033|.*", URL_)).toBeNull()
+    // A non-digit id that would still match the heading as a pattern is refused.
+    expect(readNobleKnightCopies(US, "214794203.", URL_)).toBeNull()
   })
 
   it("answers null when a copy in stock no longer reads, so a changed layout is a miss", () => {
     const changed = US.replace("Edit quantity Condition", "Change quantity Grade")
     expect(readNobleKnightCopies(changed, "2147942033", URL_)).toBeNull()
+    const noButton = US.replaceAll('id="2147942033#', 'data-sku="2147942033-')
+    expect(readNobleKnightCopies(noButton, "2147942033", URL_)).toBeNull()
+    const noRows = US.replaceAll("condition-col", "copy-col")
+    expect(readNobleKnightCopies(noRows, "2147942033", URL_)).toBeNull()
+  })
+
+  it("says a changed layout apart from another page", async () => {
+    const changed = US.replace("Edit quantity Condition", "Change quantity Grade")
+    await expect(nobleKnightSource.search(URL_, fakeFetch(200, changed).fetch)).rejects.toThrow(
+      "no longer reads as it did",
+    )
   })
 })
 
@@ -160,5 +175,33 @@ describe("nobleKnightSource", () => {
 
   it("has its own words for a watch", () => {
     expect(sourceText("nobleknight").where).toBe("Noble Knight's product page")
+  })
+})
+
+describe("a nobleknight watch", () => {
+  function ctx(fetch: unknown, over: Partial<WantConfig> = {}): RunContext<WantConfig> {
+    return {
+      task: { id: "t1", title: "Edge of the Earth" } as Task,
+      occurrence: { id: "o1", taskId: "t1" } as Occurrence,
+      owner: { id: "u1" } as User,
+      recipients: [],
+      config: { source: "nobleknight", target: URL_, ...over } as WantConfig,
+      state: null,
+      now: new Date("2026-11-13T19:00:00Z"),
+      ports: { fetch } as RunContext<WantConfig>["ports"],
+      history: { events: [], replies: [], series: [] },
+    }
+  }
+
+  it("refuses a watch in a currency other than USD at once, without reading the page", async () => {
+    const f = fakeFetch(200, US)
+    const type = wantlistType({ nobleknight: nobleKnightSource })
+    const out = await type.run(ctx(f.fetch, { currency: "gbp" }))
+    expect(f.calls).toEqual([])
+    expect(out.summary).toContain(
+      "Noble Knight Games lists prices in USD only, so a watch in GBP never matches",
+    )
+    const usd = await type.run(ctx(f.fetch, { currency: "USD", maxPrice: 250 }))
+    expect(usd.summary).toBe("3 listed, 2 within limits, 2 new")
   })
 })
