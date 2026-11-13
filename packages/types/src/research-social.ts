@@ -153,7 +153,7 @@ export function socialLines(choice: SocialChoice, since: Date | null): string[] 
         'say"), also search the social platforms below; when it asks for facts alone (a date, ' +
         "a specification, a rule, a price), skip them and say so in `coverage`.",
     "Search them only through these routes, never another platform, and never Reddit " +
-      `(${REDDIT_WHY}): list Reddit in \`coverage\` as unavailable with that reason.`,
+      `(${REDDIT_WHY}): list Reddit in \`coverage\` as unavailable.`,
     ...(has("youtube") ? [youtubeLine(sinceDay)] : []),
     ...(oriane.length > 0 ? [orianeLine(oriane)] : []),
     ...(has("bluesky") ? [blueskyLine(since)] : []),

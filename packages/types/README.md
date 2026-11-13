@@ -186,7 +186,8 @@ The tracker's task types, built on `@rackbops/docket-core`'s contract. Shipped s
   Abstract, Customizable, Children's, Wargames). A category with no qualifying entry is answered
   "none yet", with the reason, never skipped. The summary names every category's pick in one
   compact run ("Strategy: X; Family: Y; ..."), with each pick's source in the findings: the DM is
-  fitted to 1,900 characters by dropping lines from the end, and the summary comes first. A
+  fitted to 1,900 characters (findings compact and counted when the full lines do not fit, since
+  docket#126), and the summary comes first. A
   second pass keeps the rest of the rule, but its summary, which says what changed, names only
   the categories whose pick changed. A web first pass also gets a hint: a BGG advanced
   search (`bggCategoryUrl(familyId, year)`) shows one category for one year, with the
@@ -224,11 +225,14 @@ The tracker's task types, built on `@rackbops/docket-core`'s contract. Shipped s
   failed, or `skipped` with why) and one for Reddit, shown as one "Social:" line before the
   reviewer's note, kept whole like the "Couldn't open:" tail (at most 500 characters). The DM is
   one Discord message (1900 characters): when the whole answer fits, the findings are full lines
-  with their links; when it does not (docket#126), the summary and every `uncertain` line come
+  with their links; when it does not (docket#126), the summary and the `uncertain` lines come
   first, since the DM is the only place they reach the owner, and the findings, which are saved
-  with the task, follow in compact form -- the claim cut to 100 characters, the post marks, no
-  link -- as many as fit, the rest counted as "(N more on the task's page)"; when not one fits,
-  one line says how many are on the task's page, never a bare "Findings:" header. The
+  with the task and shown on its page, follow in compact form -- the claim cut to 100 characters,
+  the post marks, no link -- as many as fit, the rest counted as "(N more on the task's page)";
+  when not one fits, one line says how many are on the task's page, never a bare "Findings:"
+  header. Caveats that overflow the DM on their own are still cut from the end, and then nothing
+  is said of the findings; a summary longer than the room a long "Couldn't open:" tail leaves is
+  still dropped whole. The
   reviewer (`socialChecks`) opens post pages where they open (at most one youtube-com call, no
   oriane call), turns an unopened `read` into `snippet`, moves stock, price and availability
   claims resting on posts alone to `uncertain`, rewords opinions as what posters say, counts a

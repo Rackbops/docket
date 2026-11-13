@@ -15,6 +15,7 @@ import {
   canonicalSocialUrl,
   compactFindingLine,
   coverageLine,
+  fitMessage,
   type GatheredPage,
   MAX_COMPACT_CLAIM_CHARS,
   MAX_COVERAGE,
@@ -649,7 +650,7 @@ describe("coverage (an empty platform, one platform down, Reddit)", () => {
         `nothing found; Bluesky unavailable (the fetch timed out twice); Reddit unavailable (${REDDIT_NOTE}).`,
     )
     // Reddit's entry is a few words (docket#126); the full reason stays in the prompt and the docs.
-    expect(`Reddit unavailable (${REDDIT_NOTE})`.length).toBeLessThanOrEqual(44)
+    expect(`Reddit unavailable (${REDDIT_NOTE})`).toHaveLength(43)
     expect(researchJob(WEB).prompt).toContain(REDDIT_WHY)
     const dm = renderAnswer("Pumpkin bread mix", out, { ...approved, answer: out })
     expect(dm).toContain(`\n\n${line}\n\nChecked by a reviewer run.`)
@@ -748,7 +749,7 @@ describe("the DM when the whole answer does not fit (docket#126)", () => {
     )
     const counted = renderAnswer("Pumpkin bread mix", out, { ...approved, answer: out }, tail)
     expect(counted.length).toBeLessThanOrEqual(MAX_MESSAGE_CHARS)
-    expect(counted).toContain("\n\n6 finding(s) are on the task's page.\n\nUncertain:")
+    expect(counted).toContain("\n\n6 finding(s) on the task's page.\n\nUncertain:")
     expect(counted).not.toContain("Findings:")
     for (const u of uncertain) expect(counted).toContain(`- ${u}`)
     // Caveats that overflow the DM on their own are dropped from the end, as before, and the
@@ -762,6 +763,46 @@ describe("the DM when the whole answer does not fit (docket#126)", () => {
     expect(cut).not.toContain("Findings:")
     expect(cut).toContain("Uncertain:\n- Caveat 0:")
     expect(cut).toMatch(/\(\d more lines not shown\)/)
+  })
+
+  it("no findings and an overflowing answer: no Findings header at all (review of docket#131)", () => {
+    const none = { ...build(1200), findings: [] }
+    const tail = `Couldn't open:\n- ${"boardgamegeek.com (403 Forbidden) ".repeat(16).trim()}`
+    const dm = renderAnswer("Pumpkin bread mix", none, { ...approved, answer: none }, tail)
+    expect(dm.length).toBeLessThanOrEqual(MAX_MESSAGE_CHARS)
+    expect(dm).not.toContain("Findings:")
+    expect(dm).not.toContain("on the task's page")
+  })
+
+  it("an exact fill is not cut: every summary length renders whole lines, the findings compact or counted", () => {
+    // `fit` used to count a separator after the last line, so a body of exactly the budget lost
+    // its last line to "(1 more lines not shown)" (review of docket#131). Sweep the lengths that
+    // cross every boundary: compact lines, the count line, the count alone, nothing.
+    expect(fitMessage(["x".repeat(MAX_MESSAGE_CHARS)])).toHaveLength(MAX_MESSAGE_CHARS)
+    const tail = `Couldn't open:\n- ${"boardgamegeek.com (403 Forbidden) ".repeat(16).trim()}`
+    for (let n = 700; n <= 1200; n += 1) {
+      const out = build(n)
+      // Without a tail the summary and the caveats always fit: nothing may be cut, the findings
+      // are compact, counted, or neither, and never a header on its own.
+      const dm = renderAnswer("Pumpkin bread mix", out, { ...approved, answer: out })
+      expect(dm.length).toBeLessThanOrEqual(MAX_MESSAGE_CHARS)
+      expect(dm).not.toContain("more lines not shown")
+      for (const u of uncertain) expect(dm).toContain(`- ${u}`)
+      const shown = dm.split("\n").filter((l) => l.startsWith("- Finding ")).length
+      if (shown === 6) expect(dm).not.toContain("on the task's page")
+      else if (shown > 0) expect(dm).toContain(`(${6 - shown} more on the task's page)`)
+      else expect(dm).not.toContain("Findings:")
+      expect(dm).not.toMatch(/Findings:\n(\(|\n|$)/)
+      // With a long tail the caveats can overflow and are cut from the end, as before; then no
+      // finding line or count may stand while a caveat was cut.
+      const tailed = renderAnswer("Pumpkin bread mix", out, { ...approved, answer: out }, tail)
+      expect(tailed.length).toBeLessThanOrEqual(MAX_MESSAGE_CHARS)
+      expect(tailed).not.toMatch(/Findings:\n(\(|\n|$)/)
+      if (tailed.includes("more lines not shown")) {
+        expect(tailed).not.toContain("- Finding ")
+        expect(tailed).not.toContain("on the task's page")
+      }
+    }
   })
 })
 

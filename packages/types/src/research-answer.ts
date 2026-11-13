@@ -427,20 +427,25 @@ export function parseReview(value: unknown, draft?: ResearchAnswer): Review | nu
   return { verdict, problems, answer: verdict === "reject" ? null : answer }
 }
 
-/** Fits `lines` into `max` characters, dropping whole lines from the end and saying so. */
+/**
+ * Fits `lines` into `max` characters, dropping whole lines from the end and saying so. A text of
+ * exactly `max` characters fits: `length` is the joined length so far, with no separator counted
+ * after the last line (docket#126 review).
+ */
 function fit(lines: string[], max: number): string {
   const out: string[] = []
   let length = 0
   for (const [i, line] of lines.entries()) {
     const more = `(${lines.length - i} more lines not shown)`
+    const sep = out.length > 0 ? 1 : 0
     // Room for this line, and for the marker unless it is the last.
     const reserve = i < lines.length - 1 ? more.length + 1 : 0
-    if (length + line.length + 1 + reserve > max) {
+    if (length + sep + line.length + reserve > max) {
       out.push(more)
       break
     }
     out.push(line)
-    length += line.length + 1
+    length += sep + line.length
   }
   const text = out.join("\n")
   return text.length > max ? `${text.slice(0, max - 3)}...` : text
@@ -488,9 +493,10 @@ export function compactFindingLine(f: ResearchFinding): string {
  * The DM's "Findings:" block in compact form (docket#126), to join after the lines before it: as
  * many compact lines as fit in `room` characters, the rest counted in a last line; when not one
  * fits, one line saying how many are on the task's page, never a bare header; nothing when even
- * that does not fit.
+ * that does not fit, and nothing for no findings.
  */
 function compactFindings(findings: readonly ResearchFinding[], room: number): string[] {
+  if (findings.length === 0) return []
   const lines = findings.map(compactFindingLine)
   const out = ["", "Findings:"]
   let used = out.join("\n").length
@@ -500,7 +506,7 @@ function compactFindings(findings: readonly ResearchFinding[], room: number): st
     const reserve = rest > 0 ? `(${rest} more on the task's page)`.length + 1 : 0
     if (used + line.length + 1 + reserve > room) {
       if (i > 0) return [...out, `(${lines.length - i} more on the task's page)`]
-      const alone = `${lines.length} finding(s) are on the task's page.`
+      const alone = `${lines.length} finding(s) on the task's page.`
       return alone.length + 1 <= room ? ["", alone] : []
     }
     out.push(line)
@@ -537,8 +543,9 @@ export function coverageLine(coverage: readonly Coverage[]): string {
  * When the whole answer fits, the findings come as full lines with their links. When it does
  * not (docket#126), the summary and the `uncertain` lines come first, since the DM is the only
  * place they reach the owner, and the findings, which are saved with the task, follow in compact
- * form (`compactFindings`) in the room left; `uncertain` lines past the room are dropped from the
- * end as before.
+ * form (`compactFindings`) in the room left. Caveats that overflow the DM on their own are still
+ * dropped from the end by `fit`, and then nothing is said of the findings; a summary longer than
+ * the room a long tail leaves is dropped whole, as before.
  */
 export function renderAnswer(
   title: string,
