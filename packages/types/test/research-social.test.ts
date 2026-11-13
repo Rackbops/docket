@@ -24,6 +24,7 @@ import {
   parseSocial,
   platformOf,
   postDate,
+  postTags,
   REDDIT_WHY,
   RESEARCH_MAX_BUDGET_USD,
   RESEARCH_MAX_TURNS,
@@ -727,7 +728,8 @@ describe("through the lanes", () => {
     expect(dm).toContain(`Reddit unavailable (${REDDIT_WHY}).`)
     expect(dm).toContain("Instagram nothing found; Bluesky unavailable (the fetch timed out twice)")
     const findings = await store.listFindings({ taskId: task.id })
-    // The DM's platform, date and evidence marks are on the stored finding too (docket#124).
+    // The stored finding carries the facts the DM's line is built from (docket#124): the instant's
+    // UTC day where the DM shows the instant, and `read` where the DM marks only `snippet`.
     expect(findings.map((f) => f.tags)).toEqual([
       ["research", "approve", "social", "youtube", "published:about 2026-10-19", "read"],
       ["research", "approve", "social", "tiktok", "published:2026-10-02", "snippet"],
@@ -741,7 +743,7 @@ describe("through the lanes", () => {
     const draft = {
       ...DRAFT,
       findings: [
-        // 23:30 at UTC-5 is the next UTC day, the day `since` would read it as (`postDate`).
+        // 23:30 at UTC-5 is the next UTC day, the day `socialOutgoing` reads it as against `since`.
         {
           claim: "One poster finds it dry.",
           sources: [TIKTOK],
@@ -766,6 +768,30 @@ describe("through the lanes", () => {
       ["research", "approve", "social", "bluesky", "published:undated"],
       ["research", "approve", "social", "youtube"],
     ])
+  })
+
+  it("postTags: an instant's UTC day, plain text as written, nothing for markup or a bad instant", () => {
+    const post = (publishedAt?: string, evidence?: "read" | "snippet") => ({
+      claim: "c",
+      sources: [TIKTOK],
+      platform: "tiktok" as const,
+      ...(publishedAt !== undefined ? { publishedAt } : {}),
+      ...(evidence ? { evidence } : {}),
+    })
+    const tags = (publishedAt?: string, evidence?: "read" | "snippet") =>
+      postTags(post(publishedAt, evidence)).slice(2)
+    expect(tags("2026-10-02T14:00:00Z", "snippet")).toEqual(["published:2026-10-02", "snippet"])
+    expect(tags("2026-10-02T23:30:00-05:00")).toEqual(["published:2026-10-03"])
+    expect(tags("2026-10-02T14:00:00Z (approx)")).toEqual(["published:2026-10-02"])
+    expect(tags("2026-10-02")).toEqual(["published:2026-10-02"])
+    expect(tags("about October 19, 2026")).toEqual(["published:about October 19, 2026"])
+    expect(tags("undated", "read")).toEqual(["published:undated", "read"])
+    expect(tags(undefined, "read")).toEqual(["read"])
+    // An instant-shaped date that does not parse, or a value with markup, gives no date tag.
+    expect(tags("2026-13-01T00:00:00Z")).toEqual([])
+    expect(tags("<img src=x onerror=alert(1)>")).toEqual([])
+    expect(tags("about [x](https://evil.example)")).toEqual([])
+    expect(postTags({ claim: "c", sources: [MAKER] })).toEqual([])
   })
 
   it("a sent request: its runs were never asked to search, so no Social line and no tags", async () => {

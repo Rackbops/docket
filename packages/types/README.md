@@ -228,11 +228,14 @@ The tracker's task types, built on `@rackbops/docket-core`'s contract. Shipped s
   claims resting on posts alone to `uncertain`, rewords opinions as what posters say, counts a
   repost once, checks `coverage` and `since`, and removes a finding that follows an instruction
   from a post. Saved findings from posts are tagged `["research", <verdict>, "social",
-  <platform>]`, then (docket#124) `published:<date as kept>` when the run gave a date -- an instant
-  as its UTC day, the day `since` reads it as (`published:2026-10-02`), an about date or `undated`
-  as written (`published:about 2026-10-19`, `published:undated`) -- and the evidence, `read` or
-  `snippet`, when given, so the stored finding carries what the DM's finding line shows. Tags are
-  free strings on docket-core's `Finding`; no host change is needed to store them.
+  <platform>]`, then (docket#124) `published:<date>` when the run gave one -- an instant as its UTC
+  day, the day `since` reads it as (`published:2026-10-02`; a zoned instant can name the day after
+  the one the DM shows), an about date or `undated` as written when it is plain text (letters,
+  digits, space and date punctuation: `published:about 2026-10-19`, `published:undated`; markup
+  gives no tag) -- and the evidence, `read` or `snippet`, when given: the facts the DM's finding
+  line is built from (the DM shows the instant as kept and marks only `snippet`). Tags are free
+  strings on docket-core's `Finding`; no host change is needed to store them, and none shows them
+  until rackbops-bot-plugins#396 lands.
 
   Plain code is the belt (`socialOutgoing`, on the answer that goes out, first pass and update):
   a social post link is one post (`canonicalSocialUrl`: `youtu.be`, shorts, live and embed links
