@@ -220,6 +220,32 @@ export const GIFT_STORE_CONTRACT: readonly GiftStoreContractCase[] = [
     },
   },
   {
+    name: "gift: an allocation keeps the repeats it accepted, and one without them reads as before",
+    async run(store) {
+      const fields = (repeatOf?: string[] | null) => ({
+        itemId: "item-1",
+        occasionId: "occasion-1",
+        recipientIds: ["recipient-1"],
+        quantity: 1,
+        shared: false,
+        purchaseId: null,
+        handoff: "none" as const,
+        givenOn: null,
+        ...(repeatOf === undefined ? {} : { repeatOf }),
+      })
+      const before = await store.create("allocation", meta(), fields())
+      const read = await store.get("allocation", A, before.id)
+      check(read !== null, "the older allocation reads back")
+      check((read.repeatOf ?? null) === null, "no repeatOf reads as none")
+      const repeat = await store.create("allocation", meta(), fields([before.id]))
+      same(
+        (await store.get("allocation", A, repeat.id))?.repeatOf,
+        [before.id],
+        "repeatOf reads back",
+      )
+    },
+  },
+  {
     name: "gift: an id read as another kind is missing",
     async run(store) {
       const r = await store.create("recipient", meta(), person())

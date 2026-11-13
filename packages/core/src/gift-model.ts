@@ -164,6 +164,14 @@ export interface GiftAllocationFields {
   handoff: GiftHandoff
   /** Local date `YYYY-MM-DD`. */
   givenOn: string | null
+  /**
+   * The allocations this one knowingly repeats: duplicate warnings (`findGiftDuplicates`,
+   * docket#100) the owner saw and accepted, or the idea a rollover carried it from. A warning is
+   * never a refusal; this records the owner's yes, as an audit trail: each id must be another of
+   * the owner's allocations, but nothing checks that it shares a person or product. Empty, null or
+   * left out (an allocation from before docket#100) all mean none.
+   */
+  repeatOf?: string[] | null
 }
 
 export interface GiftFieldsByKind {

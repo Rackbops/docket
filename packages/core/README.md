@@ -107,6 +107,18 @@ writing, refuses one whose writes would now differ or whose picked item was arch
 and refuses an unkeyed repeat of an occasion already made (another live one of the same kind, title,
 year and date); the old occasion is never written, archived or not.
 
+`gift-duplicates` warns before a repeat gift (docket#100). `GiftLedger.giftDuplicates` (pure:
+`findGiftDuplicates`) reports, for an allocation about to be written, the same product -- the same
+item, or the same normalized product key, else the same normalized http or https URL, with the same
+variant -- already allocated to one of the same people (a household matching each of its members) on
+another live occasion, unless that item was archived or rejected, or in their history (given to
+them, or bought for them on an archived occasion with units still kept), as warnings; and the same
+product in another variant, the same page (another query, or another product key), or the same title
+as possible duplicates only. No warning refuses a write: the owner may accept one, and the
+allocation then records the warned ids in its optional `repeatOf`, which must name the owner's other
+allocations. A rollover's carried idea names its source there. Only allocations count, so a watch or
+scout having seen a listing is never taken as ownership.
+
 ## Adopting 0.18.0
 
 **Run now** (rackbops-bot-plugins#369). `runNowKey(taskId, requestId)` keys a run its owner asked for

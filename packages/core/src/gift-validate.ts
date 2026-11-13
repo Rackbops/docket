@@ -257,6 +257,7 @@ const CHECKS: { [K in GiftKind]: (c: Checker, f: GiftFieldsByKind[K]) => void } 
     if (f.givenOn !== null && f.handoff !== "given") {
       c.problems.push("givenOn is only for a given gift")
     }
+    if (f.repeatOf !== undefined && f.repeatOf !== null) c.ids("repeatOf", 0)
   },
 }
 
@@ -321,12 +322,14 @@ export const GIFT_FIELD_NAMES: { [K in GiftKind]: readonly (keyof GiftFieldsByKi
     "purchaseId",
     "handoff",
     "givenOn",
+    "repeatOf",
   ],
 }
 
 /** Fields a record may leave out, read as null: added after records without them were stored. */
 export const GIFT_OPTIONAL_FIELDS: { [K in GiftKind]?: readonly string[] } = {
   group: ["filter"],
+  allocation: ["repeatOf"],
 }
 
 /** Every problem with one record's complete fields; empty when it may be written. */
