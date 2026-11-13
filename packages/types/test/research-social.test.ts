@@ -35,6 +35,7 @@ import {
   REVIEW_MAX_TURNS,
   type ResearchConfig,
   renderAnswer,
+  renderUpdate,
   research,
   researchJob,
   researchType,
@@ -752,17 +753,99 @@ describe("the DM when the whole answer does not fit (docket#126)", () => {
     expect(counted).toContain("\n\n6 finding(s) on the task's page.\n\nUncertain:")
     expect(counted).not.toContain("Findings:")
     for (const u of uncertain) expect(counted).toContain(`- ${u}`)
-    // Caveats that overflow the DM on their own are dropped from the end, as before, and the
-    // findings get no header.
+    // Caveats that overflow the DM on their own are counted, not cut (docket#132): the first
+    // stands under its header, the rest are a count, and the findings are a count too.
     const wordy = {
       ...out,
       uncertain: Array.from({ length: MAX_UNCERTAIN }, (_, i) => `Caveat ${i}: ${"y".repeat(290)}`),
     }
     const cut = renderAnswer("Pumpkin bread mix", wordy, { ...approved, answer: wordy })
     expect(cut.length).toBeLessThanOrEqual(MAX_MESSAGE_CHARS)
+    expect(cut).toContain(out.summary)
+    expect(cut).toContain("\n\n6 finding(s) on the task's page.\n\nUncertain:\n- Caveat 0:")
+    expect(cut).toContain(`- Caveat 0: ${"y".repeat(290)}\n(5 more not shown)\n\nSocial: `)
     expect(cut).not.toContain("Findings:")
-    expect(cut).toContain("Uncertain:\n- Caveat 0:")
-    expect(cut).toMatch(/\(\d more lines not shown\)/)
+    expect(cut).not.toContain("more lines not shown")
+  })
+
+  it("a long tail: the summary is cut, never dropped, and both counts stay (docket#132)", () => {
+    const out = build(1200)
+    // The longest tail `waitTail` makes: a 600-character "Couldn't open:" list and the queued line.
+    const list = `Couldn't open:\n- ${"boardgamegeek.com: 403 Forbidden ".repeat(20)}`.slice(0, 600)
+    const tail =
+      `${list}\n\nA fuller pass is queued: ask Claude in Chrome to gather pages for this request ` +
+      `(${"t".repeat(64)}), any time before 2026-11-27T18:00:00.000Z.`
+    const dm = renderAnswer("Pumpkin bread mix", out, { ...approved, answer: out }, tail)
+    expect(dm.length).toBeLessThanOrEqual(MAX_MESSAGE_CHARS)
+    expect(dm).toContain(`Research: Pumpkin bread mix\n\n${out.summary.slice(0, 500)}`)
+    expect(dm).toMatch(
+      /\.\.\.\n\n6 finding\(s\) on the task's page\.\n\n5 caveat\(s\) not shown\.\n\nSocial: /,
+    )
+    expect(dm).not.toContain(out.summary)
+    expect(dm).not.toContain("Findings:")
+    expect(dm).not.toContain("Uncertain:")
+    expect(dm).not.toContain("more lines not shown")
+    expect(dm.endsWith(tail)).toBe(true)
+    // A shorter list: the summary whole, the caveats that fit under their header, then a count.
+    const some = renderAnswer(
+      "Pumpkin bread mix",
+      out,
+      { ...approved, answer: out },
+      list.slice(0, 300),
+    )
+    expect(some.length).toBeLessThanOrEqual(MAX_MESSAGE_CHARS)
+    expect(some).toContain(out.summary)
+    expect(some).toMatch(
+      /Uncertain:\n- Caveat 0: x+\n(- Caveat \d: x+\n)*\(\d more not shown\)\n\nSocial: /,
+    )
+    expect(some).toContain("\n\n6 finding(s) on the task's page.\n\nUncertain:")
+    expect(some).not.toContain("more lines not shown")
+  })
+
+  it("one caveat of any length under the longest tail: the findings are still counted (review of docket#135)", () => {
+    // The caveats block used to be handed the room reserved for the findings' count and could
+    // spend it, so the findings vanished without a word.
+    const list = `Couldn't open:\n- ${"boardgamegeek.com: 403 Forbidden ".repeat(20)}`.slice(0, 600)
+    const tail =
+      `${list}\n\nA fuller pass is queued: ask Claude in Chrome to gather pages for this request ` +
+      `(${"t".repeat(64)}), any time before 2026-11-27T18:00:00.000Z.`
+    for (let n = 1; n <= 80; n += 1) {
+      for (const length of [400, 900, 1200]) {
+        const one = { ...build(length), uncertain: [`C: ${"x".repeat(n)}`] }
+        const dm = renderAnswer("Pumpkin bread mix", one, { ...approved, answer: one }, tail)
+        expect(dm.length).toBeLessThanOrEqual(MAX_MESSAGE_CHARS)
+        expect(dm).toMatch(/Findings:|6 finding\(s\) on the task's page/)
+        expect(dm).toMatch(/Uncertain:\n- C: x|1 caveat\(s\) not shown/)
+        expect(dm).not.toContain("more lines not shown")
+      }
+    }
+  })
+
+  it("the second pass DM: compact findings when the whole update does not fit (docket#132)", () => {
+    const update = build(1200)
+    const dm = renderUpdate("Pumpkin bread mix", update, { ...approved, answer: update })
+    expect(dm.length).toBeLessThanOrEqual(MAX_MESSAGE_CHARS)
+    expect(dm).toContain(
+      `Update to Pumpkin bread mix:\n\n${update.summary}\n\nNew or corrected:\n- Finding 0: posters say`,
+    )
+    expect(dm).toMatch(/\(\d more on the task's page\)\n\nChecked by a reviewer run\.$/)
+    expect(dm).not.toContain("<https://www.tiktok.com")
+    expect(dm).not.toContain("more lines not shown")
+    // A short update renders as before: full lines with their links.
+    const short = { ...update, summary: "Two new.", findings: findings.slice(0, 2) }
+    const full = renderUpdate("Pumpkin bread mix", short, { ...approved, answer: short })
+    expect(full).toContain(
+      `New or corrected:\n- ${findings[0]?.claim} (TikTok, 2026-10-02T14:00:00Z, snippet only) <https://www.tiktok.com`,
+    )
+    expect(full).not.toContain("on the task's page")
+    // No room for one compact line: the count alone, never a bare header.
+    const wordy = { ...update, summary: `${"z".repeat(1899)}.` }
+    const counted = renderUpdate("Pumpkin bread mix", wordy, { ...approved, answer: wordy })
+    expect(counted.length).toBeLessThanOrEqual(MAX_MESSAGE_CHARS)
+    expect(counted).toMatch(
+      /z+\.\.\.\n\n6 finding\(s\) on the task's page\.\n\nChecked by a reviewer run\.$/,
+    )
+    expect(counted).not.toContain("New or corrected:")
   })
 
   it("no findings and an overflowing answer: no Findings header at all (review of docket#131)", () => {
@@ -786,21 +869,31 @@ describe("the DM when the whole answer does not fit (docket#126)", () => {
       // are compact, counted, or neither, and never a header on its own.
       const dm = renderAnswer("Pumpkin bread mix", out, { ...approved, answer: out })
       expect(dm.length).toBeLessThanOrEqual(MAX_MESSAGE_CHARS)
+      expect(dm).toContain(out.summary)
       expect(dm).not.toContain("more lines not shown")
+      expect(dm).not.toContain("not shown")
       for (const u of uncertain) expect(dm).toContain(`- ${u}`)
+      expect(dm).toMatch(/Findings:|finding\(s\) on the task's page/)
       const shown = dm.split("\n").filter((l) => l.startsWith("- Finding ")).length
       if (shown === 6) expect(dm).not.toContain("on the task's page")
       else if (shown > 0) expect(dm).toContain(`(${6 - shown} more on the task's page)`)
-      else expect(dm).not.toContain("Findings:")
+      else expect(dm).toContain("\n\n6 finding(s) on the task's page.\n")
       expect(dm).not.toMatch(/Findings:\n(\(|\n|$)/)
-      // With a long tail the caveats can overflow and are cut from the end, as before; then no
-      // finding line or count may stand while a caveat was cut.
+      // With a long tail the summary is cut, never dropped, and caveats that do not fit are
+      // counted (docket#132); no finding line stands while a caveat was cut, and nothing is ever
+      // cut by `fit` itself.
       const tailed = renderAnswer("Pumpkin bread mix", out, { ...approved, answer: out }, tail)
       expect(tailed.length).toBeLessThanOrEqual(MAX_MESSAGE_CHARS)
+      expect(tailed).toContain(`\n\n${out.summary.slice(0, 200)}`)
+      expect(tailed).not.toContain("more lines not shown")
       expect(tailed).not.toMatch(/Findings:\n(\(|\n|$)/)
-      if (tailed.includes("more lines not shown")) {
+      expect(tailed).not.toMatch(/Uncertain:\n(\(|\n|$)/)
+      expect(tailed).toMatch(/Findings:\n- Finding |\n\n6 finding\(s\) on the task's page\.\n/)
+      expect(tailed).toMatch(/Uncertain:\n- Caveat 0|\n\n5 caveat\(s\) not shown\.\n/)
+      if (/more not shown|caveat\(s\) not shown/.test(tailed)) {
         expect(tailed).not.toContain("- Finding ")
-        expect(tailed).not.toContain("on the task's page")
+      } else {
+        for (const u of uncertain) expect(tailed).toContain(`- ${u}`)
       }
     }
   })

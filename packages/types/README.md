@@ -86,7 +86,9 @@ The tracker's task types, built on `@rackbops/docket-core`'s contract. Shipped s
   supported by its source, a "Correction:" claim really corrects the earlier answer and is
   supported, and nothing is repeated. The owner gets an "Update to <title>:" DM of those findings
   (a claim the first answer already made, case and spacing aside, is dropped), or one line when
-  there are none; they are saved tagged `["research", verdict, "update"]` beside the first pass's
+  there are none; when the whole update does not fit the DM, the summary comes first and the
+  findings follow in compact form under "New or corrected:", counted, as in the first pass
+  (docket#132); they are saved tagged `["research", verdict, "update"]` beside the first pass's
   (one from a post with its post tags as well, docket#124).
   With no pages by the expiry, past the deadline, on a rejected update or on a second failure, the
   task ends with one line: the first answer stands. With no store, a `sent` request, or nothing
@@ -225,14 +227,16 @@ The tracker's task types, built on `@rackbops/docket-core`'s contract. Shipped s
   failed, or `skipped` with why) and one for Reddit, shown as one "Social:" line before the
   reviewer's note, kept whole like the "Couldn't open:" tail (at most 500 characters). The DM is
   one Discord message (1900 characters): when the whole answer fits, the findings are full lines
-  with their links; when it does not (docket#126), the summary and the `uncertain` lines come
-  first, since the DM is the only place they reach the owner, and the findings, which are saved
-  with the task and shown on its page, follow in compact form -- the claim cut to 100 characters,
-  the post marks, no link -- as many as fit, the rest counted as "(N more on the task's page)";
-  when not one fits, one line says how many are on the task's page, never a bare "Findings:"
-  header. Caveats that overflow the DM on their own are still cut from the end, and then nothing
-  is said of the findings; a summary longer than the room a long "Couldn't open:" tail leaves is
-  still dropped whole. The
+  with their links; when it does not (docket#126, docket#132), the room left by the Social line,
+  the note and the "Couldn't open:" tail goes first to the summary (whole, or cut with an ellipsis,
+  leaving room for the counts below), then to the `uncertain` lines (as many as fit, the rest
+  counted as "(N more not shown)", or one line "N caveat(s) not shown." when not one fits), since
+  the DM is the only place either reaches the owner, and last to the findings, which are saved
+  with the task and shown on its page, in compact form -- the claim cut to 100 characters, the
+  post marks, no link -- as many as fit, the rest counted as "(N more on the task's page)", or one
+  line saying how many are on the task's page when not one fits. The order on screen stays
+  summary, findings, caveats; no header stands without a line under it, and neither the caveats
+  nor the findings are dropped without a count. The
   reviewer (`socialChecks`) opens post pages where they open (at most one youtube-com call, no
   oriane call), turns an unopened `read` into `snippet`, moves stock, price and availability
   claims resting on posts alone to `uncertain`, rewords opinions as what posters say, counts a

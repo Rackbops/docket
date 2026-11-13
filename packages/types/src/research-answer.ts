@@ -428,11 +428,13 @@ export function parseReview(value: unknown, draft?: ResearchAnswer): Review | nu
 }
 
 /**
- * Fits `lines` into `max` characters, dropping whole lines from the end and saying so. A text of
- * exactly `max` characters fits: `length` is the joined length so far, with no separator counted
- * after the last line (docket#126 review).
+ * Fits `lines` into `max` characters: as they are when they fit, a text of exactly `max`
+ * characters among them (docket#126 and docket#132 reviews); otherwise whole lines dropped from
+ * the end, each kept line leaving room for the marker that says so.
  */
 function fit(lines: string[], max: number): string {
+  const whole = lines.join("\n")
+  if (whole.length <= max) return whole
   const out: string[] = []
   let length = 0
   for (const [i, line] of lines.entries()) {
@@ -490,29 +492,68 @@ export function compactFindingLine(f: ResearchFinding): string {
 }
 
 /**
- * The DM's "Findings:" block in compact form (docket#126), to join after the lines before it: as
- * many compact lines as fit in `room` characters, the rest counted in a last line; when not one
- * fits, one line saying how many are on the task's page, never a bare header; nothing when even
- * that does not fit, and nothing for no findings.
+ * A headed block of a DM, to join after the lines before it, in `room` characters: the header
+ * and as many of `lines` as fit, the rest counted by `more` in a last line; when not one fits,
+ * the one line `alone` saying how many there were, never a bare header; nothing when even that
+ * does not fit, and nothing for no lines. Each line costs its length and its newline.
  */
-function compactFindings(findings: readonly ResearchFinding[], room: number): string[] {
-  if (findings.length === 0) return []
-  const lines = findings.map(compactFindingLine)
-  const out = ["", "Findings:"]
+function fitBlock(
+  header: string,
+  lines: readonly string[],
+  room: number,
+  more: (n: number) => string,
+  alone: (n: number) => string,
+): string[] {
+  if (lines.length === 0) return []
+  const out = ["", header]
   let used = out.join("\n").length
   for (const [i, line] of lines.entries()) {
     const rest = lines.length - i - 1
     // Room for this line and, unless it is the last, for the count that would follow it.
-    const reserve = rest > 0 ? `(${rest} more on the task's page)`.length + 1 : 0
+    const reserve = rest > 0 ? more(rest).length + 1 : 0
     if (used + line.length + 1 + reserve > room) {
-      if (i > 0) return [...out, `(${lines.length - i} more on the task's page)`]
-      const alone = `${lines.length} finding(s) on the task's page.`
-      return alone.length + 1 <= room ? ["", alone] : []
+      if (i > 0) return [...out, more(lines.length - i)]
+      const only = alone(lines.length)
+      return only.length + 1 <= room ? ["", only] : []
     }
     out.push(line)
     used += line.length + 1
   }
   return out
+}
+
+/** The count line a findings block ends with when the compact lines do not all fit. */
+const MORE_FINDINGS = (n: number) => `(${n} more on the task's page)`
+/** The one line a findings block is when not one compact line fits. */
+const FINDINGS_ALONE = (n: number) => `${n} finding(s) on the task's page.`
+/** The count line an "Uncertain:" block ends with when the caveats do not all fit. */
+const MORE_CAVEATS = (n: number) => `(${n} more not shown)`
+/** The one line an "Uncertain:" block is when not one caveat fits. */
+const CAVEATS_ALONE = (n: number) => `${n} caveat(s) not shown.`
+
+/**
+ * The DM's findings block in compact form (docket#126): `Findings:` (or `New or corrected:` for
+ * a second pass, docket#132) and as many compact lines as fit in `room`, the rest counted; when
+ * not one fits, one line saying how many are on the task's page, where every finding is saved.
+ */
+function compactFindings(
+  findings: readonly ResearchFinding[],
+  room: number,
+  header = "Findings:",
+): string[] {
+  return fitBlock(header, findings.map(compactFindingLine), room, MORE_FINDINGS, FINDINGS_ALONE)
+}
+
+/**
+ * The DM's "Uncertain:" block when the whole answer does not fit (docket#132): the header and as
+ * many caveats as fit in `room`, the rest counted; when not one fits, one line saying how many
+ * there were. No finding row and no outcome summary carries the caveats (the task's state keeps
+ * the answer for a second pass, not for the owner), so the count says "not shown", not where to
+ * read them.
+ */
+function fitCaveats(uncertain: readonly string[], room: number): string[] {
+  const lines = uncertain.map((u) => `- ${u}`)
+  return fitBlock("Uncertain:", lines, room, MORE_CAVEATS, CAVEATS_ALONE)
 }
 
 const STATUS_WORDS: Readonly<Record<CoverageStatus, string>> = {
@@ -541,11 +582,13 @@ export function coverageLine(coverage: readonly Coverage[]): string {
  * queued line, 0.9.0). Without coverage or a tail the DM is what it was before 0.9.0.
  *
  * When the whole answer fits, the findings come as full lines with their links. When it does
- * not (docket#126), the summary and the `uncertain` lines come first, since the DM is the only
- * place they reach the owner, and the findings, which are saved with the task, follow in compact
- * form (`compactFindings`) in the room left. Caveats that overflow the DM on their own are still
- * dropped from the end by `fit`, and then nothing is said of the findings; a summary longer than
- * the room a long tail leaves is dropped whole, as before.
+ * not (docket#126, docket#132), the room the whole parts leave goes, in this order, to the
+ * summary (whole, or cut with an ellipsis, since the DM is the only place it reaches the owner,
+ * and leaving room for the two counts below), to the `uncertain` lines (as many as fit, the rest
+ * counted, for the same reason), and to the findings, which are saved with the task, in compact
+ * form (`compactFindings`). The display order stays summary, findings, caveats, and no header
+ * stands without a line under it. The Social line, the note and the tail are bounded by their
+ * makers, so the summary always has at least about 270 characters.
  */
 export function renderAnswer(
   title: string,
@@ -553,7 +596,7 @@ export function renderAnswer(
   review: Review,
   tail = "",
 ): string {
-  const head = [`Research: ${clean(title, 200, true)}`, "", answer.summary]
+  const head = `Research: ${clean(title, 200, true)}`
   const uncertain =
     answer.uncertain.length > 0 ? ["", "Uncertain:", ...answer.uncertain.map((u) => `- ${u}`)] : []
   const note =
@@ -565,11 +608,21 @@ export function renderAnswer(
   const budget = MAX_MESSAGE_CHARS - after.length - 2
   const full =
     answer.findings.length > 0 ? ["", "Findings:", ...answer.findings.map(findingLine)] : []
-  const whole = [...head, ...full, ...uncertain]
+  const whole = [head, "", answer.summary, ...full, ...uncertain]
   if (whole.join("\n").length <= budget) return `${whole.join("\n")}\n\n${after}`
-  const kept = [...head, ...uncertain].join("\n").length
-  const compact = compactFindings(answer.findings, budget - kept - 1)
-  return `${fit([...head, ...compact, ...uncertain], budget)}\n\n${after}`
+  let room = budget - head.length - 2
+  // The summary and the caveats each leave the room the findings' count line takes, and the
+  // summary leaves the caveats' as well, so neither block vanishes without a word.
+  const findingsCount =
+    answer.findings.length > 0 ? FINDINGS_ALONE(answer.findings.length).length + 2 : 0
+  const caveatsCount =
+    answer.uncertain.length > 0 ? CAVEATS_ALONE(answer.uncertain.length).length + 2 : 0
+  const summary = clean(answer.summary, room - caveatsCount - findingsCount)
+  room -= summary.length
+  const caveats = fitCaveats(answer.uncertain, room - 1 - findingsCount)
+  room -= caveats.length > 0 ? caveats.join("\n").length + 1 : 0
+  const compact = compactFindings(answer.findings, room - 1)
+  return `${fit([head, "", summary, ...compact, ...caveats], budget)}\n\n${after}`
 }
 
 /** Lines fitted into at most `max` characters, whole lines dropped from the end. */
@@ -580,18 +633,27 @@ export function fitLines(lines: string[], max: number): string {
 /**
  * The DM a reviewed second pass goes out as (0.9.0): what the gathered pages added to an answer
  * already sent, its new and corrected findings only, or one line when it adds nothing. At most
- * `MAX_MESSAGE_CHARS`; every piece was cleaned by `parseAnswer`, the title is cleaned here.
+ * `MAX_MESSAGE_CHARS`; every piece was cleaned by `parseAnswer`, the title is cleaned here. When
+ * the whole update does not fit (docket#132), the summary comes first, cut if it must while
+ * leaving room for the count, and the findings follow in compact form under "New or corrected:",
+ * as in `renderAnswer`.
  */
 export function renderUpdate(title: string, update: ResearchAnswer, review: Review): string {
   const head = `Update to ${clean(title, 200, true)}:`
   if (update.findings.length === 0) {
     return `${head} the pages added nothing new, so the first answer stands.`
   }
-  const lines = [head, "", update.summary, "", "New or corrected:"]
-  for (const f of update.findings) lines.push(findingLine(f))
   const note =
     review.verdict === "approve"
       ? "Checked by a reviewer run."
       : `Checked and corrected by a reviewer run (${review.problems.length} problem(s) fixed).`
-  return `${fit(lines, MAX_MESSAGE_CHARS - note.length - 2)}\n\n${note}`
+  const budget = MAX_MESSAGE_CHARS - note.length - 2
+  const header = "New or corrected:"
+  const whole = [head, "", update.summary, "", header, ...update.findings.map(findingLine)]
+  if (whole.join("\n").length <= budget) return `${whole.join("\n")}\n\n${note}`
+  let room = budget - head.length - 2
+  const summary = clean(update.summary, room - FINDINGS_ALONE(update.findings.length).length - 2)
+  room -= summary.length
+  const compact = compactFindings(update.findings, room - 1, header)
+  return `${fit([head, "", summary, ...compact], budget)}\n\n${note}`
 }
