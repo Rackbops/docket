@@ -139,9 +139,11 @@ const CHECKS: { [K in GiftKind]: (c: Checker, f: GiftFieldsByKind[K]) => void } 
       if (labels.length > GIFT_LABELS_MAX) {
         c.problems.push(`filter labels holds more than ${GIFT_LABELS_MAX} entries`)
       }
-      if (labels.some((x: string) => x.trim() === "" || x.length > GIFT_LABEL_MAX)) {
+      if (labels.some((x: string) => x.trim() === "" || x.trim().length > GIFT_LABEL_MAX)) {
         c.problems.push(`filter labels must be 1 to ${GIFT_LABEL_MAX} characters`)
       }
+      const folded = labels.map((x: string) => x.trim().replace(/\s+/g, " ").toLowerCase())
+      if (new Set(folded).size !== folded.length) c.problems.push("filter labels repeats a label")
     }
     if (Array.isArray(f.memberIds) && f.memberIds.length > 0) {
       c.problems.push("a filter group has no memberIds: its members are the recipients it matches")

@@ -39,7 +39,7 @@ export interface GiftRecipientFields {
 
 /**
  * A saved rule over the owner's own labels (docket#98): a recipient matches when every label here
- * is one they carry, compared trimmed and case-folded. Only labels the owner typed count: nothing
+ * is one they carry, compared trimmed, spaced once and case-folded. Only labels the owner typed count: nothing
  * is inferred from a name, and a blank or unknown label never matches.
  */
 export interface GiftGroupFilter {

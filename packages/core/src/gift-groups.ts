@@ -73,10 +73,15 @@ export interface GiftMembershipEdit {
  * revision the preview was read at.
  */
 export function editGroupMembers(
-  group: Pick<GiftGroup, "memberIds">,
+  group: Pick<GiftGroup, "memberIds"> & Partial<Pick<GiftGroup, "filter">>,
   add: readonly string[],
   remove: readonly string[],
 ): GiftMembershipEdit {
+  if (group.filter !== undefined && group.filter !== null) {
+    throw new GiftValidationError([
+      "a filter group has no list to edit: its members are the recipients its labels match",
+    ])
+  }
   const drop = new Set(remove)
   const kept = group.memberIds.filter((id) => !drop.has(id))
   const removed = group.memberIds.filter((id) => drop.has(id))

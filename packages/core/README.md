@@ -80,7 +80,8 @@ the budget change, and every live gift on the occasion naming someone off the ro
 row goes now or went earlier, so a gift kept on someone off the roster is asked about at every sync.
 The roster is the groups plus overrides: a row added by hand without `includeIds` is offered for
 removal. A group is a static list or, with `filter: {labels}`, a saved rule (docket#98): its members
-are the owner's live recipients carrying every one of those labels (trimmed, case-folded), only
+are the owner's live recipients carrying every one of those labels (trimmed, spaced once and case-folded; a relationship or an
+age band is just a label the owner typed, such as `cousin` or `adult`), only
 labels the owner typed, so a blank or missing label never matches. `groupMembers` and
 `resolveGroups` resolve one; `previewRoster` refuses a filter group passed unresolved, and
 `previewGroupSync` takes the owner's recipients to resolve them. A group made before docket#98
@@ -91,8 +92,8 @@ filter group's matches moved (the roster is resolved again and compared), then
 writes the gift changes first and the roster rows after; it is not atomic (a refused write leaves
 the earlier ones, and the owner previews again). Retry a plan with the same plan and key: write n
 uses `<key>/n`, so a retry replays what was written; a new preview needs a new key. An archived
-occasion is never synced. Group
-membership is a list of ids; no label decides it.
+occasion is never synced. A static
+group's membership is a list of ids and no label decides it; a filter group's is its labels.
 
 ## Adopting 0.18.0
 

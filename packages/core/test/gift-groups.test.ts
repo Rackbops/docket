@@ -100,7 +100,7 @@ describe("group membership", () => {
     })
   })
 
-  it("never depends on a label value", async () => {
+  it("a static group never depends on a label value", async () => {
     const s = setup()
     const [blank, custom] = await s.people("Blank", "Custom")
     const b = blank as { id: string; revision: number }
@@ -659,11 +659,9 @@ describe("filter groups (docket#98)", () => {
 
   it("previews exactly the roster the occasion then snapshots, and the snapshot stays put", async () => {
     const s = setup()
-    const [ann, bob, cy] = (await s.people("Ann", "Bob", "Cy")) as { id: string }[] as [
-      { id: string },
-      { id: string },
-      { id: string },
-    ]
+    const [ann, bob, cy, dee] = (await s.people("Ann", "Bob", "Cy", "Dee")) as {
+      id: string
+    }[] as [{ id: string }, { id: string }, { id: string }, { id: string }]
     await relabel(s, ann.id, ["cousin"])
     await relabel(s, bob.id, ["cousin"])
     const g = await s.ledger.create("group", meta, {
@@ -677,9 +675,11 @@ describe("filter groups (docket#98)", () => {
     expect((await s.previewNow(xmas)).roster).toEqual(shown)
     expect(await s.sync(xmas)).toEqual(shown)
     expect(shown).toEqual([ann.id, cy.id])
-    // A label added later changes nothing on the occasion until it is synced again.
-    await relabel(s, cy.id, ["cousin"])
+    // A label added or taken away later changes nothing on the occasion until it is synced again.
+    await relabel(s, dee.id, ["cousin"])
+    await relabel(s, ann.id, [])
     expect(await s.liveRoster(xmas.id)).toEqual([ann.id, cy.id])
+    expect((await s.previewNow(xmas)).roster).toEqual([dee.id, cy.id])
   })
 
   it("refuses to apply a sync when a label moved the filter's matches after the preview", async () => {
@@ -700,5 +700,52 @@ describe("filter groups (docket#98)", () => {
     await expect(s.ledger.applyGiftSync(meta, plan)).rejects.toBeInstanceOf(GiftRevisionError)
     expect(await s.liveRoster(xmas.id)).toEqual([])
     expect(await s.sync(xmas)).toEqual([ann.id, bob.id])
+  })
+})
+
+describe("filter groups beside static ones", () => {
+  it("applies a sync whose occasion picks the groups in another order than they were made", async () => {
+    const s = setup()
+    const [ann, bob] = (await s.people("Ann", "Bob")) as { id: string }[] as [
+      { id: string },
+      { id: string },
+    ]
+    const r = (await s.ledger.get("recipient", A, ann.id)) as { revision: number }
+    await s.ledger.update("recipient", ann.id, meta, r.revision, { labels: ["cousin"] })
+    const cousins = await s.ledger.create("group", meta, {
+      name: "Cousins",
+      memberIds: [],
+      filter: { labels: ["cousin"] },
+    })
+    const friends = await s.ledger.create("group", meta, { name: "Friends", memberIds: [bob.id] })
+    const xmas = await s.ledger.create("occasion", meta, christmas(2026, [friends.id, cousins.id]))
+    const preview = await s.previewNow(xmas)
+    expect(preview.roster).toEqual([bob.id, ann.id])
+    await s.ledger.applyGiftSync(meta, planGroupSync(preview, {}))
+    expect(await s.liveRoster(xmas.id)).toEqual([bob.id, ann.id])
+  })
+
+  it("matches nothing when a filter carries a blank label, and has no list to edit", () => {
+    const ann = { id: "r1", ownerId: A, archived: false, labels: ["a"] } as never
+    expect(
+      groupMembers({ ownerId: A, memberIds: [], filter: { labels: ["a", " "] } }, [ann]),
+    ).toEqual([])
+    expect(groupMembers({ ownerId: A, memberIds: [], filter: { labels: ["A "] } }, [ann])).toEqual([
+      "r1",
+    ])
+    expect(() =>
+      editGroupMembers({ memberIds: [], filter: { labels: ["a"] } }, ["r1"], []),
+    ).toThrow("a filter group has no list to edit")
+  })
+
+  it("refuses a filter that repeats a label", async () => {
+    const s = setup()
+    await expect(
+      s.ledger.create("group", meta, {
+        name: "x",
+        memberIds: [],
+        filter: { labels: ["Cousin", "cousin "] },
+      }),
+    ).rejects.toThrow("filter labels repeats a label")
   })
 })
