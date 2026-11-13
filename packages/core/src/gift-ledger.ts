@@ -162,13 +162,13 @@ export class GiftLedger {
    * with what target and budget) or a picked idea (its people, quantity or sharing) came out
    * different. Order and key order do not count for the check; a gift bought or added that was
    * not picked does not either. A picked gift's item that is gone, archived or rejected is refused
-   * the same way (unpick it).
-   * The old occasion is never written. Not atomic: a refused write leaves the earlier ones
-   * (preview again). With an idempotency key, write n uses `<key>/<n>`, so retrying replays what
-   * was made; the check runs first, so a retry after something moved is refused, not replayed.
-   * Without a key, a live occasion other than the old one with the same kind, title, year and
-   * date refuses it
-   * (`GiftValidationError`), so a lost answer retried does not make a second one.
+   * the same way (unpick it). The old occasion is never written. Not atomic: a refused write
+   * leaves the earlier ones (preview again). With an idempotency key, write n uses `<key>/<n>`, so
+   * retrying replays what was made; the check runs first, so a retry after something moved is
+   * refused, not replayed. Without a key, a live occasion other than the old one with the same
+   * kind, title, year and date refuses it (`GiftValidationError`), so a lost answer retried does
+   * not make a second one. So an occasion with no date and no year, rolled over again while an
+   * earlier copy is still live, needs a key (or that copy archived).
    */
   async applyGiftRollover(
     meta: GiftWriteMeta,
@@ -229,7 +229,7 @@ export class GiftLedger {
         x.date === o.date
       if (live.some(same)) {
         throw new GiftValidationError([
-          `a live ${o.kind} occasion "${o.title}" already exists: this rollover may have been made`,
+          `a live ${o.kind} occasion "${o.title}" already exists: this rollover may have been made (archive it, or pass an idempotency key)`,
         ])
       }
     }
