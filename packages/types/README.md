@@ -235,8 +235,8 @@ The tracker's task types, built on `@rackbops/docket-core`'s contract. Shipped s
   with the task and shown on its page, in compact form -- the claim cut to 100 characters, the
   post marks, no link -- as many as fit, the rest counted as "(N more on the task's page)", or one
   line saying how many are on the task's page when not one fits. The order on screen stays
-  summary, findings, caveats; no header stands without a line under it, and nothing is dropped
-  without a count. The
+  summary, findings, caveats; no header stands without a line under it, and neither the caveats
+  nor the findings are dropped without a count. The
   reviewer (`socialChecks`) opens post pages where they open (at most one youtube-com call, no
   oriane call), turns an unopened `read` into `snippet`, moves stock, price and availability
   claims resting on posts alone to `uncertain`, rewords opinions as what posters say, counts a

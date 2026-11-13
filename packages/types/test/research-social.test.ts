@@ -801,6 +801,25 @@ describe("the DM when the whole answer does not fit (docket#126)", () => {
     expect(some).not.toContain("more lines not shown")
   })
 
+  it("one caveat of any length under the longest tail: the findings are still counted (review of docket#135)", () => {
+    // The caveats block used to be handed the room reserved for the findings' count and could
+    // spend it, so the findings vanished without a word.
+    const list = `Couldn't open:\n- ${"boardgamegeek.com: 403 Forbidden ".repeat(20)}`.slice(0, 600)
+    const tail =
+      `${list}\n\nA fuller pass is queued: ask Claude in Chrome to gather pages for this request ` +
+      `(${"t".repeat(64)}), any time before 2026-11-27T18:00:00.000Z.`
+    for (let n = 1; n <= 80; n += 1) {
+      for (const length of [400, 900, 1200]) {
+        const one = { ...build(length), uncertain: [`C: ${"x".repeat(n)}`] }
+        const dm = renderAnswer("Pumpkin bread mix", one, { ...approved, answer: one }, tail)
+        expect(dm.length).toBeLessThanOrEqual(MAX_MESSAGE_CHARS)
+        expect(dm).toMatch(/Findings:|6 finding\(s\) on the task's page/)
+        expect(dm).toMatch(/Uncertain:\n- C: x|1 caveat\(s\) not shown/)
+        expect(dm).not.toContain("more lines not shown")
+      }
+    }
+  })
+
   it("the second pass DM: compact findings when the whole update does not fit (docket#132)", () => {
     const update = build(1200)
     const dm = renderUpdate("Pumpkin bread mix", update, { ...approved, answer: update })
@@ -819,7 +838,7 @@ describe("the DM when the whole answer does not fit (docket#126)", () => {
     )
     expect(full).not.toContain("on the task's page")
     // No room for one compact line: the count alone, never a bare header.
-    const wordy = { ...update, summary: `${"z".repeat(1900)}.` }
+    const wordy = { ...update, summary: `${"z".repeat(1899)}.` }
     const counted = renderUpdate("Pumpkin bread mix", wordy, { ...approved, answer: wordy })
     expect(counted.length).toBeLessThanOrEqual(MAX_MESSAGE_CHARS)
     expect(counted).toMatch(
@@ -849,9 +868,11 @@ describe("the DM when the whole answer does not fit (docket#126)", () => {
       // are compact, counted, or neither, and never a header on its own.
       const dm = renderAnswer("Pumpkin bread mix", out, { ...approved, answer: out })
       expect(dm.length).toBeLessThanOrEqual(MAX_MESSAGE_CHARS)
+      expect(dm).toContain(out.summary)
       expect(dm).not.toContain("more lines not shown")
       expect(dm).not.toContain("not shown")
       for (const u of uncertain) expect(dm).toContain(`- ${u}`)
+      expect(dm).toMatch(/Findings:|finding\(s\) on the task's page/)
       const shown = dm.split("\n").filter((l) => l.startsWith("- Finding ")).length
       if (shown === 6) expect(dm).not.toContain("on the task's page")
       else if (shown > 0) expect(dm).toContain(`(${6 - shown} more on the task's page)`)
@@ -866,6 +887,8 @@ describe("the DM when the whole answer does not fit (docket#126)", () => {
       expect(tailed).not.toContain("more lines not shown")
       expect(tailed).not.toMatch(/Findings:\n(\(|\n|$)/)
       expect(tailed).not.toMatch(/Uncertain:\n(\(|\n|$)/)
+      expect(tailed).toMatch(/Findings:|finding\(s\) on the task's page/)
+      expect(tailed).toMatch(/Uncertain:|caveat\(s\) not shown/)
       if (/more not shown|caveat\(s\) not shown/.test(tailed)) {
         expect(tailed).not.toContain("- Finding ")
       } else {

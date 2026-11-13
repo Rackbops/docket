@@ -547,7 +547,8 @@ function compactFindings(
 /**
  * The DM's "Uncertain:" block when the whole answer does not fit (docket#132): the header and as
  * many caveats as fit in `room`, the rest counted; when not one fits, one line saying how many
- * there were. The caveats are kept nowhere else, so the count says "not shown", not where to
+ * there were. No finding row and no outcome summary carries the caveats (the task's state keeps
+ * the answer for a second pass, not for the owner), so the count says "not shown", not where to
  * read them.
  */
 function fitCaveats(uncertain: readonly string[], room: number): string[] {
@@ -587,7 +588,7 @@ export function coverageLine(coverage: readonly Coverage[]): string {
  * counted, for the same reason), and to the findings, which are saved with the task, in compact
  * form (`compactFindings`). The display order stays summary, findings, caveats, and no header
  * stands without a line under it. The Social line, the note and the tail are bounded by their
- * makers, so the summary always has about 290 characters or more.
+ * makers, so the summary always has at least about 270 characters.
  */
 export function renderAnswer(
   title: string,
@@ -610,13 +611,15 @@ export function renderAnswer(
   const whole = [head, "", answer.summary, ...full, ...uncertain]
   if (whole.join("\n").length <= budget) return `${whole.join("\n")}\n\n${after}`
   let room = budget - head.length - 2
-  // A cut summary leaves room for the counts, so neither block vanishes without a word.
-  const counts =
-    (answer.uncertain.length > 0 ? CAVEATS_ALONE(answer.uncertain.length).length + 2 : 0) +
-    (answer.findings.length > 0 ? FINDINGS_ALONE(answer.findings.length).length + 2 : 0)
-  const summary = clean(answer.summary, room - counts)
+  // The summary and the caveats each leave the room the findings' count line takes, and the
+  // summary leaves the caveats' as well, so neither block vanishes without a word.
+  const findingsCount =
+    answer.findings.length > 0 ? FINDINGS_ALONE(answer.findings.length).length + 2 : 0
+  const caveatsCount =
+    answer.uncertain.length > 0 ? CAVEATS_ALONE(answer.uncertain.length).length + 2 : 0
+  const summary = clean(answer.summary, room - caveatsCount - findingsCount)
   room -= summary.length
-  const caveats = fitCaveats(answer.uncertain, room - 1)
+  const caveats = fitCaveats(answer.uncertain, room - 1 - findingsCount)
   room -= caveats.length > 0 ? caveats.join("\n").length + 1 : 0
   const compact = compactFindings(answer.findings, room - 1)
   return `${fit([head, "", summary, ...compact, ...caveats], budget)}\n\n${after}`
