@@ -132,6 +132,26 @@ ledger reads or writes a task, so linking, buying or archiving a gift never chan
 `giftScoutBrief` gives a scout run for a gift only the interests and avoidances the owner picks; no
 such run exists yet.
 
+`gift-import` brings in a list of gifts after review (docket#102). `parseGiftImport` stages CSV (a
+header row; quoted fields, doubled quotes and line breaks inside quotes; a column it does not know
+is listed in `unknownColumns`; a quote that never closes refuses the input) or a pasted list (one
+gift a line, `|` or tab between title, recipients, occasion, quantity, price, link), at most 500
+rows, each with its source, line and a key made from its content. A row missing a title, or with a
+bad quantity, price (a comma only groups thousands), currency or link, is staged with its problems.
+`reviewGiftImport` matches each row's people and occasion to the owner's live records by name,
+case-folded, and marks it `ready`, `new`, `ambiguous` or `invalid`; both are pure, so nothing is
+written before the owner has seen the review, which shows the staged `unknownColumns` and problems
+too. `GiftLedger.applyGiftImport` writes the approved rows and answers each with its own outcome
+(not atomic): it reviews again first and skips an ambiguous or invalid row, or one whose match
+moved; it creates a named-only person or a `custom` occasion for a new name, an item (an idea, or
+`selected` when allocated; the price an estimate, never spend; source `import`), and, for a row
+naming people and an occasion, one unbought gift (one allocation, `shared` false) giving each of
+them the row's quantity, adding them to the roster unless they were taken off it (a row with people
+but no occasion makes only its item, and says so). Every write is keyed by the row's content, so
+importing the same rows again creates nothing twice; a person or occasion an earlier import made
+that has since been archived or renamed, or an imported item (gift idea) the owner archived, stops
+the row instead.
+
 ## Adopting 0.18.0
 
 **Run now** (rackbops-bot-plugins#369). `runNowKey(taskId, requestId)` keys a run its owner asked for
