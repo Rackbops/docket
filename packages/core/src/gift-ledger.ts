@@ -1,4 +1,4 @@
-import type { GiftSyncPlan } from "./gift-groups.js"
+import { type GiftSyncPlan, previewRoster, resolveGroups, rosterIds } from "./gift-groups.js"
 import type { GiftBase, GiftEvent, GiftFieldsByKind, GiftKind, GiftRecord } from "./gift-model.js"
 import {
   type GiftEventFilter,
@@ -155,7 +155,10 @@ export class GiftLedger {
   /**
    * Writes a decided group sync (`planGroupSync`) through this ledger, so each write is checked
    * like any other. First it re-reads the occasion and its groups: an archived occasion, or one
-   * of them moved since the preview, refuses the whole plan before anything is written. Then the
+   * of them moved since the preview, refuses the whole plan before anything is written; so does,
+   * when a group is a filter group, a roster resolved again that differs from `plan.roster` (a
+   * filter's matches move with labels, not with the group's revision). That check runs before any
+   * replay, so retrying a finished sync after a label changed is refused, not replayed. Then the
    * allocation changes (so a refused one leaves the roster as it was), new roster rows (planning,
    * no target or budget), restored rows and archived rows, each at the revision the preview
    * read. Gifts added after the preview are not checked here: the next preview asks about any
@@ -172,9 +175,31 @@ export class GiftLedger {
     }
     const moved: string[] = []
     if (occasion.revision !== plan.occasionRevision) moved.push(`occasion ${occasion.id}`)
+    const chosen: GiftRecord<"group">[] = []
     for (const [id, revision] of Object.entries(plan.groupRevisions)) {
       const g = await this.store.get("group", meta.ownerId, id)
       if (g?.revision !== revision) moved.push(`group ${id}`)
+      if (g !== null) chosen.push(g)
+    }
+    if (moved.length === 0) {
+      // A filter group's matches move with recipients' labels, not with the group's revision: the
+      // roster is resolved again, and a different one is refused like a moved record.
+      if (chosen.some((g) => g.filter !== undefined && g.filter !== null)) {
+        const recipients = await this.store.list("recipient", meta.ownerId, {
+          includeArchived: true,
+        })
+        const ordered = occasion.groupIds.flatMap((id) => chosen.filter((g) => g.id === id))
+        const now = rosterIds(
+          previewRoster(
+            resolveGroups(ordered, recipients),
+            occasion.includeIds,
+            occasion.excludeIds,
+          ),
+        )
+        if (JSON.stringify(now) !== JSON.stringify(plan.roster)) {
+          moved.push("the recipients a filter group matches")
+        }
+      }
     }
     if (moved.length > 0) {
       throw new GiftRevisionError(

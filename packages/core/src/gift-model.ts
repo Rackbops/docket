@@ -37,10 +37,26 @@ export interface GiftRecipientFields {
   notes: string | null
 }
 
-/** A named, reusable set of recipients. Static membership; saved filters come with docket#98. */
+/**
+ * A saved rule over the owner's own labels (docket#98): a recipient matches when every label here
+ * is one they carry, compared trimmed, spaced once and case-folded. Only labels the owner typed count: nothing
+ * is inferred from a name, and a blank or unknown label never matches.
+ */
+export interface GiftGroupFilter {
+  labels: string[]
+}
+
+/**
+ * A named, reusable set of recipients: a static list (`memberIds`), or, with `filter`, the owner's
+ * live recipients the filter matches now (`memberIds` then stays empty). Resolve a filter group
+ * with `groupMembers`/`resolveGroups` and show the result before using it; an occasion snapshots
+ * the result like a static group's list. `filter` may be left out (a group from before docket#98),
+ * which is the same as null.
+ */
 export interface GiftGroupFields {
   name: string
   memberIds: string[]
+  filter?: GiftGroupFilter | null
 }
 
 export type GiftOccasionKind = "christmas" | "birthday" | "anniversary" | "custom"
