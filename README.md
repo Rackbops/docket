@@ -290,10 +290,14 @@ what terms, is recorded in [`docs/social-sources.md`](docs/social-sources.md) (d
   are searched when the question asks what people say; `none`; or a list) and `since`; the run
   reaches them through the Firecrawl tools it already has (typed `youtube-com` and `oriane` bodies)
   and Bluesky's public search, under prompt rules and about 120 credits, with 20 turns in place of
-  15 when social search is on. A finding from a post carries its platform, date and whether it was
-  opened; the answer carries `coverage`, shown as a "Social:" line, with Reddit always unavailable
-  (never a route). Plain code counts a copied link once, moves a stock, price or availability
-  claim resting on posts alone, and a post older than `since`, to `uncertain`, and completes the
+  15 when social search is on. Since [#125](https://github.com/Rackbops/docket/issues/125)
+  (2026-11-13) Bluesky is suspended: its public search refused every fetcher the runs have, so
+  `auto` leaves it out, `bluesky` in a list parses but searches nothing, and `coverage` lists it
+  unavailable, until the own read-only service. A finding from a post carries its platform, date
+  and whether it was opened; the answer carries `coverage`, shown as a "Social:" line, with Bluesky
+  and Reddit always unavailable (never a route). Plain code counts a copied link once, moves a
+  stock, price or availability claim resting on posts alone, and a post older than `since`, to
+  `uncertain`, and completes the
   coverage. Behaviour changes: a request without `social` now gets 20 turns and the social rules
   (`social: none` restores 15 and the old prompt); the answer schema, and the reviewer's that embeds
   it, gain optional fields for every request; a web request drafted under 0.22.0 and reviewed under

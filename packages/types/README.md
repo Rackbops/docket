@@ -198,24 +198,31 @@ The tracker's task types, built on `@rackbops/docket-core`'s contract. Shipped s
   an empty one.
 
   **Social platforms** (0.23.0, docket#107; `docs/social-sources.md` has the matrix and roshne's
-  decisions): a `web` first pass may search YouTube, TikTok, Instagram and Bluesky for what
-  people say, through the tools it already has -- `firecrawl_scrape` with a typed `alexandria`
-  body (Firecrawl's `youtube-com` provider: `videos/search_videos`, `video_transcript`,
+  decisions): a `web` first pass may search YouTube, TikTok and Instagram for what people say,
+  through the tool it already has -- `firecrawl_scrape` with a typed `alexandria` body
+  (Firecrawl's `youtube-com` provider: `videos/search_videos`, `video_transcript`,
   `video_comments`; its `oriane` provider, an index of public posts: `tiktok/posts-search`,
-  `instagram/posts-search`) and WebFetch on Bluesky's public `searchPosts` -- so no new tool, key
-  or runner change, and the prompt is the only control over which provider a run calls and how
-  often (`socialLines`), as it is for `proxy: "basic"`. The request's `social` says when: `auto`
-  (the default, and what an absent value means) searches when the question asks what people
-  recommend, think or experienced; `none` never; a list of `youtube`, `tiktok`, `instagram`,
-  `bluesky` (or `yt`, `insta`, `ig`, `bsky`) always searches those. `parseSocial` reads it and
-  answers null for anything else (`reddit`, `x`, a typo), so a host refuses it at intake; at run
-  time an unreadable value is `auto`. `since` (an instant) bounds the posts: older ones are left
-  out, undated ones may be used, marked. The run spends about 120 Firecrawl credits at most
+  `instagram/posts-search`) -- so no new tool, key or runner change, and the prompt is the only
+  control over which provider a run calls and how often (`socialLines`), as it is for
+  `proxy: "basic"`. Bluesky was in the first set, through WebFetch on its public `searchPosts`;
+  live that endpoint answered 403 to the runner (2026-11-11), to WebFetch and to Firecrawl
+  (2026-11-12), so since docket#125 (roshne's decision, 2026-11-13) no run searches it until the
+  own read-only service: `SOCIAL_AUTO_PLATFORMS` leaves it out, `socialPlatforms` drops it from a
+  list, the prompt tells the run never to try it, and every answer's `coverage` lists it
+  `unavailable` (`BLUESKY_NOTE`), like Reddit. The request's `social` says when: `auto` (the
+  default, and what an absent value means) searches when the question asks what people
+  recommend, think or experienced; `none` never; a list of `youtube`, `tiktok`, `instagram` (or
+  `yt`, `insta`, `ig`) always searches those; `bluesky` (or `bsky`) still parses, so an existing
+  request keeps working, and searches nothing (a list of Bluesky alone is a run with no social
+  search and a "Social:" line of the two fixed rows). `parseSocial` reads it and answers null for
+  anything else (`reddit`, `x`, a typo), so a host refuses it at intake; at run time an
+  unreadable value is `auto`. `since` (an instant) bounds the posts: older ones are left out,
+  undated ones may be used, marked. The run spends about 120 Firecrawl credits at most
   (`SOCIAL_MAX_CREDITS`: 4 youtube-com calls, searches and reads together; 2 oriane calls at the
-  default detail; 2 Bluesky fetches), follows a `continuation` once, spreads its reads across
-  channels, and gets 20 turns (`SOCIAL_MAX_TURNS`) in place of 15; the 1 USD cap, the reviewer's
-  caps and the tool lists are unchanged. A run on gathered pages (a `sent` request, a second
-  pass) searches no platform: it cannot open pages.
+  default detail; `SOCIAL_BLUESKY_CALLS` is 0 since docket#125), follows a `continuation` once,
+  spreads its reads across channels, and gets 20 turns (`SOCIAL_MAX_TURNS`) in place of 15; the
+  1 USD cap, the reviewer's caps and the tool lists are unchanged. A run on gathered pages (a
+  `sent` request, a second pass) searches no platform: it cannot open pages.
 
   A finding from a post cites the post's own page and carries `platform`, `publishedAt` (the
   instant; "about <date>" worked out from a relative time; "undated") and `evidence` (`read`:

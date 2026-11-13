@@ -11,7 +11,9 @@ import { describe, expect, it } from "vitest"
 import {
   ANSWER_SCHEMA,
   assertsFactFromPost,
+  BLUESKY_NOTE,
   BLUESKY_SEARCH_URL,
+  BLUESKY_WHY,
   canonicalSocialUrl,
   compactFindingLine,
   coverageLine,
@@ -41,6 +43,7 @@ import {
   researchType,
   reviewJob,
   SAID_IN_POST,
+  SOCIAL_AUTO_PLATFORMS,
   SOCIAL_MAX_CREDITS,
   SOCIAL_MAX_TURNS,
   SOCIAL_PLATFORMS,
@@ -161,9 +164,15 @@ describe("the social field (decision 5)", () => {
     }
     // At run time an unreadable stored value reads as the default.
     expect(socialChoice("reddit")).toEqual({ mode: "auto" })
-    expect(socialPlatforms({ mode: "auto" })).toEqual([...SOCIAL_PLATFORMS])
-    expect(socialPlatforms({ mode: "none" })).toEqual([])
+    // Bluesky parses (an existing request keeps working) but is searched by no choice (docket#125).
     expect(SOCIAL_PLATFORMS).toEqual(["youtube", "tiktok", "instagram", "bluesky"])
+    expect(SOCIAL_AUTO_PLATFORMS).toEqual(["youtube", "tiktok", "instagram"])
+    expect(socialPlatforms({ mode: "auto" })).toEqual([...SOCIAL_AUTO_PLATFORMS])
+    expect(socialPlatforms({ mode: "none" })).toEqual([])
+    expect(socialPlatforms({ mode: "only", platforms: ["youtube", "bluesky"] })).toEqual([
+      "youtube",
+    ])
+    expect(socialPlatforms({ mode: "only", platforms: ["bluesky"] })).toEqual([])
   })
 
   it("is on the intake, with since", () => {
@@ -184,7 +193,7 @@ describe("a web first pass with social on (decisions 1 to 4, 6)", () => {
     // When (auto): opinions, not facts alone.
     expect(p).toContain("when the question asks what people recommend, think of or experienced")
     expect(p).toContain("when it asks for facts alone")
-    // The exact typed bodies and the Bluesky fetch.
+    // The exact typed bodies; no Bluesky fetch since docket#125.
     expect(p).toContain(
       '`alexandria: {"provider": "youtube-com", "capability": "videos/search_videos", ' +
         '"options": {"query": "<terms>", "upload_date": "<window>"}}`',
@@ -197,16 +206,16 @@ describe("a web first pass with social on (decisions 1 to 4, 6)", () => {
         '"sort": "publishedAt:desc"}}`',
     )
     expect(p).toContain('never `"projection": "full"`')
-    expect(p).toContain(`${BLUESKY_SEARCH_URL}?q=<terms>&sort=top&limit=25\``)
-    expect(p).toContain("https://bsky.app/profile/<the author's handle>/post/")
+    expect(p).not.toContain(BLUESKY_SEARCH_URL)
+    expect(p).not.toContain("bsky.app")
+    expect(p).toContain(`never Bluesky (${BLUESKY_WHY}): list both in \`coverage\` as unavailable.`)
     // The caps (decision 4: about 120 credits).
     expect(p).toContain("At most 4 youtube-com calls in all, searches and reads together")
     expect(p).toContain("At most 2 oriane calls in all, across both platforms")
-    expect(p).toContain("at most 2 times")
-    expect(SOCIAL_MAX_CREDITS).toBe(122)
+    expect(SOCIAL_MAX_CREDITS).toBe(120)
     // Citing and marking a post finding.
     expect(p).toContain("Cite each post's own page")
-    expect(p).toContain("set `platform` (youtube, tiktok, instagram or bluesky), `publishedAt`")
+    expect(p).toContain("set `platform` (youtube, tiktok or instagram), `publishedAt`")
     expect(p).toContain("`evidence` (`read` when you opened")
     expect(p).toContain("A post is the one exception to the rule that a cited source was opened")
     // Never Reddit, through any route.
@@ -226,14 +235,23 @@ describe("a web first pass with social on (decisions 1 to 4, 6)", () => {
     }
   })
 
-  it("a list forces its platforms and names only them", () => {
+  it("a list forces its platforms and names only them; Bluesky in a list is not searched", () => {
     const p = researchJob(ONLY).prompt
-    expect(p).toContain("the person asked for posts from YouTube and Bluesky")
+    expect(p).toContain("the person asked for posts from YouTube. Search each")
     expect(p).toContain("whatever the question's shape")
     expect(p).toContain("youtube-com")
-    expect(p).toContain(BLUESKY_SEARCH_URL)
+    expect(p).not.toContain(BLUESKY_SEARCH_URL)
     expect(p).not.toContain("oriane")
-    expect(p).toContain("one entry per platform (YouTube and Bluesky) and one for Reddit")
+    expect(p).toContain("one entry per platform (YouTube) and one each for Bluesky and Reddit")
+    // Bluesky alone: nothing to search, so no social rules and 15 turns (docket#125); the answer
+    // still gets the two fixed coverage rows, so the owner is told.
+    const alone = researchJob({ ...WEB, social: "bsky" })
+    expect(alone.maxTurns).toBe(RESEARCH_MAX_TURNS)
+    expect(alone.prompt).not.toContain("Social platforms")
+    expect(withCoverage([], { mode: "only", platforms: ["bluesky"] })).toEqual([
+      { platform: "bluesky", status: "unavailable", note: BLUESKY_NOTE },
+      { platform: "reddit", status: "unavailable", note: REDDIT_NOTE },
+    ])
     const one = researchJob({ ...WEB, social: "instagram" }).prompt
     expect(one).toContain('"capability": "instagram/posts-search", "options"')
     expect(one).toContain("At most 2 oriane calls in all (50 credits")
@@ -252,9 +270,8 @@ describe("a web first pass with social on (decisions 1 to 4, 6)", () => {
     )
     expect(p).toContain("with no `url` and no `proxy`, only the body `alexandria:")
     expect(p).toContain("a result whose `postUrl` is null is not citable")
-    expect(p).toContain(
-      "asking it for each post's text, author handle, `uri` and `record.createdAt`",
-    )
+    // No Bluesky route is described since docket#125.
+    expect(p).not.toContain("`record.createdAt`")
     expect(p).toContain("spread what you read across channels")
     expect(p).toContain('an empty result is "nothing found", never "nobody says so"')
   })
@@ -270,10 +287,10 @@ describe("a web first pass with social on (decisions 1 to 4, 6)", () => {
 })
 
 describe("since (a past-season post)", () => {
-  it("bounds the prompt: the YouTube window, the Bluesky since, the date rule", () => {
+  it("bounds the prompt: the YouTube window, the date rule", () => {
     const p = researchJob(SINCED).prompt
     expect(p).toContain("the smallest that reaches back to 2026-09-01")
-    expect(p).toContain(`&since=${SINCE}`)
+    expect(p).not.toContain(`&since=${SINCE}`)
     expect(p).toContain("Only posts published on or after 2026-09-01 count")
     expect(p).toContain("a post you cannot date may be used, marked undated")
     expect(researchJob(WEB).prompt).toContain("Prefer posts from the last year")
@@ -283,7 +300,6 @@ describe("since (a past-season post)", () => {
     // `since` counts whole UTC days: a time of day is floored, so prompt, filter and belt agree.
     const evening: ResearchConfig = { ...WEB, since: "2026-09-01T18:00:00Z" }
     expect(sinceOf(evening)?.toISOString()).toBe(SINCE)
-    expect(researchJob(evening).prompt).toContain(`&since=${SINCE}`)
     expect(researchJob(evening).prompt).toContain("on or after 2026-09-01 count")
     expect(sinceOf({ ...WEB, since: "not a date" })).toBeNull()
   })
@@ -611,8 +627,8 @@ describe("coverage (an empty platform, one platform down, Reddit)", () => {
   it("is parsed and completed: every chosen platform, Reddit unavailable, the run's other rows after", () => {
     const answer = parseAnswer(DRAFT)
     expect(answer?.coverage).toEqual(DRAFT.coverage)
-    // Bluesky asked for, not reported: skipped; Reddit added; a row the run claimed for Reddit is
-    // overruled; X kept after; a bad status dropped.
+    // Bluesky asked for: never searched, its fixed row (docket#125); Reddit added; a row the run
+    // claimed for Reddit is overruled; X kept after; a bad status dropped.
     const given = withCoverage(
       [
         { platform: "youtube", status: "searched", note: "14 videos" },
@@ -625,9 +641,17 @@ describe("coverage (an empty platform, one platform down, Reddit)", () => {
     expect(given).toEqual([
       { platform: "youtube", status: "searched", note: "14 videos" },
       { platform: "tiktok", status: "empty" },
-      { platform: "bluesky", status: "skipped", note: NOT_REPORTED },
+      { platform: "bluesky", status: "unavailable", note: BLUESKY_NOTE },
       { platform: "reddit", status: "unavailable", note: REDDIT_NOTE },
       { platform: "x", status: "skipped", note: "not offered" },
+    ])
+    // A platform in the auto set not reported: skipped.
+    expect(withCoverage([], { mode: "auto" })).toEqual([
+      { platform: "youtube", status: "skipped", note: NOT_REPORTED },
+      { platform: "tiktok", status: "skipped", note: NOT_REPORTED },
+      { platform: "instagram", status: "skipped", note: NOT_REPORTED },
+      { platform: "bluesky", status: "unavailable", note: BLUESKY_NOTE },
+      { platform: "reddit", status: "unavailable", note: REDDIT_NOTE },
     ])
     expect(withCoverage(DRAFT.coverage as never, { mode: "none" })).toEqual([])
     expect(
@@ -648,8 +672,11 @@ describe("coverage (an empty platform, one platform down, Reddit)", () => {
     const line = coverageLine(out.coverage ?? [])
     expect(line).toBe(
       "Social: YouTube searched (14 videos, 2 read); TikTok searched (6 posts); Instagram " +
-        `nothing found; Bluesky unavailable (the fetch timed out twice); Reddit unavailable (${REDDIT_NOTE}).`,
+        `nothing found; Bluesky unavailable (${BLUESKY_NOTE}); Reddit unavailable (${REDDIT_NOTE}).`,
     )
+    // The run's own Bluesky row ("the fetch timed out twice" in DRAFT) is overruled (docket#125):
+    // it was told not to search, and the owner reads one fixed reason.
+    expect(line).not.toContain("timed out")
     // Reddit's entry is a few words (docket#126); the full reason stays in the prompt and the docs.
     expect(`Reddit unavailable (${REDDIT_NOTE})`).toHaveLength(43)
     expect(researchJob(WEB).prompt).toContain(REDDIT_WHY)
@@ -924,10 +951,11 @@ describe("the reviewer's social checks", () => {
       "A finding marked `read` with no sign the post was opened becomes `snippet`",
     )
     expect(review.prompt).toContain(
-      "`coverage` names every platform in scope (YouTube, TikTok, Instagram and Bluesky) and " +
+      "`coverage` names every platform in scope (YouTube, TikTok and Instagram) and Bluesky and " +
         "Reddit as unavailable; `revise` an answer missing either",
     )
-    expect(reviewJob(ONLY, DRAFT).prompt).toContain("in scope (YouTube and Bluesky)")
+    expect(reviewJob(ONLY, DRAFT).prompt).toContain("in scope (YouTube) and Bluesky and Reddit")
+    expect(reviewJob(ONLY, DRAFT).prompt).not.toContain("bsky.app")
     for (const spec of [
       reviewJob(NONE, DRAFT),
       reviewJob(SENT, DRAFT, PAGES),
@@ -957,7 +985,7 @@ describe("through the lanes", () => {
     expect(dm).toContain(`(YouTube, about 2026-10-19) <${WATCH}>`)
     expect(dm).toContain(`(TikTok, 2026-10-02T14:00:00Z, snippet only) <${TIKTOK}>`)
     expect(dm).toContain(`Reddit unavailable (${REDDIT_NOTE}).`)
-    expect(dm).toContain("Instagram nothing found; Bluesky unavailable (the fetch timed out twice)")
+    expect(dm).toContain(`Instagram nothing found; Bluesky unavailable (${BLUESKY_NOTE})`)
     const findings = await store.listFindings({ taskId: task.id })
     // The stored finding carries the facts the DM's line is built from (docket#124): the instant's
     // UTC day where the DM shows the instant, and `read` where the DM marks only `snippet`.
