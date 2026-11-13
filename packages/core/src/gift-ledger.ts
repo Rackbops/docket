@@ -190,19 +190,20 @@ export class GiftLedger {
   /**
    * Makes a reviewed "set up next year" (`previewGiftRollover`, docket#99): the new occasion, its
    * roster rows (planning, with each staying person's target and budget) and the picked ideas as
-   * new, unbought gifts, each with `repeatOf` naming the gift it came from. It first previews
-   * again from the store with the same picks, title and date, and refuses (`GiftRevisionError`) before anything is written when what it would write
-   * differs: the old occasion's or a group's revision moved, or the new occasion, the roster (who,
-   * with what target and budget) or a picked idea (its people, quantity or sharing) came out
-   * different. Order and key order do not count for the check; a gift bought or added that was
-   * not picked does not either. A picked gift's item that is gone, archived or rejected is refused
-   * the same way (unpick it). The old occasion is never written. Not atomic: a refused write
-   * leaves the earlier ones (preview again). With an idempotency key, write n uses `<key>/<n>`, so
-   * retrying replays what was made; the check runs first, so a retry after something moved is
-   * refused, not replayed. Without a key, a live occasion other than the old one with the same
-   * kind, title, year and date refuses it (`GiftValidationError`), so a lost answer retried does
-   * not make a second one. So an occasion with no date and no year, rolled over again while an
-   * earlier copy is still live, needs a key (or that copy archived).
+   * new, unbought gifts, each with `repeatOf` naming the gift it came from. It first previews again
+   * from the store with the same picks, title and date, and refuses (`GiftRevisionError`) before
+   * anything is written when what it would write differs: the old occasion's or a group's revision
+   * moved, or the new occasion, the roster (who, with what target and budget) or a picked idea (its
+   * people, quantity or sharing) came out different. Order and key order do not count for the
+   * check; a gift bought or added that was not picked does not either. A picked gift's item that is
+   * gone, archived or rejected is refused the same way (unpick it). The old occasion is never
+   * written. Not atomic: a refused write leaves the earlier ones (preview again). With an
+   * idempotency key, write n uses `<key>/<n>`, so retrying replays what was made; the check runs
+   * first, so a retry after something moved is refused, not replayed. Without a key, a live
+   * occasion other than the old one with the same kind, title, year and date refuses it
+   * (`GiftValidationError`), so a lost answer retried does not make a second one. So an occasion
+   * with no date and no year, rolled over again while an earlier copy is still live, needs a key
+   * (or that copy archived).
    */
   async applyGiftRollover(
     meta: GiftWriteMeta,

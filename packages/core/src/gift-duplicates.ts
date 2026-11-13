@@ -119,8 +119,8 @@ export interface GiftDuplicate {
   where: "open" | "history"
   match: GiftDuplicateMatch | GiftPossibleMatch
   /**
-   * The owner already accepted it: the new allocation's `repeatOf` names it, or, for an edit of an
-   * existing allocation, its `repeatOf` names that one.
+   * The owner already accepted it: the new allocation's `repeatOf` names it, or, when `id` is
+   * given (an edit), the earlier allocation's own `repeatOf` names this one.
    */
   accepted: boolean
 }
