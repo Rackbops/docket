@@ -34,8 +34,8 @@ import {
  *
  * Reddit is never searched (roshne, 2026-11-07: "if we want to do anything with Reddit, it has to
  * be done through a local PC session with me logged in"; its API is closing to outside apps and its
- * terms bar scraping): every answer's `coverage` names it unavailable with `REDDIT_WHY`, whatever
- * the run wrote.
+ * terms bar scraping): the prompt gives the run that reason (`REDDIT_WHY`), and every answer's
+ * `coverage` names Reddit unavailable in a few words (`REDDIT_NOTE`), whatever the run wrote.
  */
 
 /** What a request asks of social platforms, as `parseSocial` reads its `social` field. */
@@ -110,10 +110,16 @@ export const SOCIAL_MAX_CREDITS =
  */
 export const BLUESKY_SEARCH_URL = "https://public.api.bsky.app/xrpc/app.bsky.feed.searchPosts"
 
-/** Why Reddit is never searched, as the DM's coverage line says it. */
+/** Why Reddit is never searched, as the prompt tells the run (docs/social-sources.md has it all). */
 export const REDDIT_WHY =
   "its API is closing to outside apps and its terms bar scraping; only a local browser " +
   "session, logged in, could read it"
+
+/**
+ * Reddit's note in every answer's `coverage`, so in the DM's "Social:" line (docket#126): a few
+ * words, since the line is kept whole in every research DM and the full reason is in the docs.
+ */
+export const REDDIT_NOTE = "needs your own browser"
 
 /** "YouTube, TikTok and Bluesky" */
 function names(platforms: readonly SocialPlatform[]): string {
@@ -354,7 +360,7 @@ export const NOT_REPORTED = "not reported by the run"
 /**
  * The coverage list as sent: one entry for each platform the choice searches, the run's own
  * when it gave one, else `skipped` (`NOT_REPORTED`); then Reddit, always `unavailable` with
- * `REDDIT_WHY`, whatever the run wrote; then any other platform the run reported on, up to
+ * `REDDIT_NOTE`, whatever the run wrote; then any other platform the run reported on, up to
  * `MAX_COVERAGE`. Empty with `none`: a run not asked to search reports nothing.
  */
 export function withCoverage(coverage: readonly Coverage[], choice: SocialChoice): Coverage[] {
@@ -368,7 +374,7 @@ export function withCoverage(coverage: readonly Coverage[], choice: SocialChoice
         note: NOT_REPORTED,
       },
   )
-  out.push({ platform: "reddit", status: "unavailable", note: REDDIT_WHY })
+  out.push({ platform: "reddit", status: "unavailable", note: REDDIT_NOTE })
   for (const c of coverage) {
     if (out.length >= MAX_COVERAGE) break
     if (!out.some((o) => o.platform === c.platform)) out.push(c)

@@ -73,7 +73,9 @@ links the primary r/redditdev and r/modnews posts, which could not be opened fro
 roshne, 2026-11-07: "if we want to do anything with Reddit, it has to be done through a local PC
 session with me logged in." It is conditional ("I am not saying that we do, I'm just saying if"):
 Reddit stays out of scope, and it is never a runner or host route, even if Reddit reopens a
-non-commercial one. Every answer names Reddit among the platforms not searched.
+non-commercial one. Every answer names Reddit among the platforms not searched: the DM's "Social:"
+line says "Reddit unavailable (needs your own browser)" (docket#126; the full reason above is what
+the prompt gives the run, `REDDIT_WHY`).
 
 ## Decisions (roshne, 2026-11-07 and 2026-11-09)
 
