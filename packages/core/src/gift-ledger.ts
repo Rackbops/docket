@@ -1,3 +1,8 @@
+import {
+  findGiftDuplicates,
+  type GiftDuplicateInput,
+  type GiftDuplicateReport,
+} from "./gift-duplicates.js"
 import { type GiftSyncPlan, previewRoster, resolveGroups, rosterIds } from "./gift-groups.js"
 import type { GiftBase, GiftEvent, GiftFieldsByKind, GiftKind, GiftRecord } from "./gift-model.js"
 import {
@@ -44,6 +49,7 @@ function refsOf<K extends GiftKind>(kind: K, fields: GiftFieldsByKind[K]): Refs 
         ...one("occasion", "occasionId"),
         ...many("recipient", "recipientIds"),
         ...one("purchase", "purchaseId"),
+        ...many("allocation", "repeatOf"),
       ]
     default:
       return []
@@ -140,6 +146,10 @@ export class GiftLedger {
     const merged = { ...was, ...fieldChanges } as unknown as GiftFieldsByKind[K]
     const problems = giftProblems(kind, merged)
     if (problems.length > 0) throw new GiftValidationError(problems)
+    const repeats = (merged as { repeatOf?: unknown }).repeatOf
+    if (kind === "allocation" && Array.isArray(repeats) && repeats.includes(id)) {
+      throw new GiftValidationError([`allocation ${id} cannot repeat itself`])
+    }
     await this.checkRefs(kind, meta.ownerId, merged, id)
     await this.checkReferrers(kind, meta.ownerId, id, current, merged)
     await this.checkFit(
@@ -151,6 +161,25 @@ export class GiftLedger {
       current,
     )
     return this.store.update(kind, id, meta, expectedRevision, clean)
+  }
+
+  /**
+   * The duplicate warnings and possible duplicates for an allocation about to be written
+   * (`findGiftDuplicates`, docket#100), read from the store. It writes nothing and refuses
+   * nothing: the host shows the report, and an allocation the owner writes anyway carries the
+   * warned ids in `repeatOf`.
+   */
+  async giftDuplicates(
+    ownerId: string,
+    allocation: GiftDuplicateInput["allocation"],
+  ): Promise<GiftDuplicateReport> {
+    const all = { includeArchived: true }
+    return findGiftDuplicates({
+      allocation,
+      items: await this.store.list("item", ownerId, all),
+      allocations: await this.store.list("allocation", ownerId, all),
+      occasions: await this.store.list("occasion", ownerId, all),
+    })
   }
 
   /**
