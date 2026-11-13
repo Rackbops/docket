@@ -1,6 +1,6 @@
 import type { GiftLedger } from "./gift-ledger.js"
 import type { GiftOccasion, GiftRecipient } from "./gift-model.js"
-import type { GiftWriteMeta } from "./gift-ports.js"
+import { GiftIdempotencyError, GiftValidationError, type GiftWriteMeta } from "./gift-ports.js"
 import { GIFT_NOTES_MAX, GIFT_TEXT_MAX } from "./gift-validate.js"
 
 /**
@@ -14,7 +14,8 @@ import { GIFT_NOTES_MAX, GIFT_TEXT_MAX } from "./gift-validate.js"
  *    creates), `ambiguous` (a name matches more than one) or `invalid`. The owner looks at this
  *    before anything is written.
  * 3. `GiftLedger.applyGiftImport` writes the rows the owner approved and answers each with its
- *    own outcome; it is not atomic. Every write is keyed by the row's content, so importing the
+ *    own outcome; it is not atomic. A host shows the staged `unknownColumns` and `problems` with
+ *    the review. Every write is keyed by the row's content, so importing the
  *    same rows again -- a retry, or the same file next week -- creates nothing twice.
  *
  * CSV has a header row; a column it does not know is reported (`unknownColumns`), never silently
@@ -94,15 +95,30 @@ export interface GiftImportOptions {
   currency?: string
 }
 
-/** CSV records with the line each starts on: quotes, doubled quotes and newlines inside quotes. */
-function csvRecords(text: string): { line: number; cells: string[] }[] {
-  const out: { line: number; cells: string[] }[] = []
+/**
+ * CSV records with the line each starts on: quotes, doubled quotes and line breaks (LF, CRLF or
+ * CR) inside quotes. A record of empty, unquoted cells (`,,`) is skipped. `open` is the line a
+ * quoted field that never closes starts on, or null.
+ */
+function csvRecords(text: string): {
+  records: { line: number; cells: string[] }[]
+  open: number | null
+} {
+  const records: { line: number; cells: string[] }[] = []
   let cells: string[] = []
   let cell = ""
   let quoted = false
+  let quotedAt = 0
   let line = 1
   let start = 1
   let any = false
+  const end = () => {
+    cells.push(cell)
+    if (any || cells.some((c) => c.trim() !== "")) records.push({ line: start, cells })
+    cells = []
+    cell = ""
+    any = false
+  }
   for (let i = 0; i < text.length; i++) {
     const ch = text[i] ?? ""
     if (quoted) {
@@ -111,47 +127,47 @@ function csvRecords(text: string): { line: number; cells: string[] }[] {
         i++
       } else if (ch === '"') quoted = false
       else {
-        if (ch === "\n") line++
+        if (ch === "\n" || (ch === "\r" && text[i + 1] !== "\n")) line++
         cell += ch
       }
       continue
     }
     if (ch === '"' && cell === "") {
       quoted = true
+      quotedAt = line
       any = true
     } else if (ch === ",") {
       cells.push(cell)
       cell = ""
-      any = true
     } else if (ch === "\n" || ch === "\r") {
       if (ch === "\r" && text[i + 1] === "\n") i++
-      cells.push(cell)
-      if (any || cells.some((c) => c.trim() !== "")) out.push({ line: start, cells })
-      cells = []
-      cell = ""
-      any = false
+      end()
       line++
       start = line
     } else {
       cell += ch
-      if (ch.trim() !== "") any = true
     }
   }
-  cells.push(cell)
-  if (any || cells.some((c) => c.trim() !== "")) out.push({ line: start, cells })
-  return out
+  end()
+  return { records, open: quoted ? quotedAt : null }
 }
 
-/** A price as minor units: `24.99`, `$24.99`, `24` -- at most two decimals, never negative. */
-function priceMinor(raw: string): number | null | "bad" {
-  const t = raw
-    .trim()
-    .replace(/^[$£€]/, "")
-    .replace(/,/g, "")
-  if (t === "") return null
-  if (!/^\d{1,9}(\.\d{1,2})?$/.test(t)) return "bad"
-  const [whole, frac = ""] = t.split(".")
-  return Number(whole) * 100 + Number(frac.padEnd(2, "0"))
+/** The currency a leading symbol names, when it names one; `$` is several, so none. */
+const SYMBOLS: Record<string, string | null> = { $: null, "\u00a3": "GBP", "\u20ac": "EUR" }
+
+/**
+ * A price as minor units: `24.99`, `$24.99`, `1,250.00`, `24` -- at most two decimals, never
+ * negative; a comma only groups thousands, so `24,99` is refused, not read as 2499.
+ */
+function priceMinor(raw: string): { minor: number | null; symbol: string | null } | "bad" {
+  let t = raw.trim()
+  const first = t.charAt(0)
+  const symbol = first in SYMBOLS ? (SYMBOLS[first] ?? null) : null
+  if (first in SYMBOLS) t = t.slice(1).trim()
+  if (t === "") return raw.trim() === "" ? { minor: null, symbol: null } : "bad"
+  if (!/^(\d{1,9}|\d{1,3}(,\d{3}){1,2})(\.\d{1,2})?$/.test(t)) return "bad"
+  const [whole = "", frac = ""] = t.replace(/,/g, "").split(".")
+  return { minor: Number(whole) * 100 + Number(frac.padEnd(2, "0")), symbol }
 }
 
 /** FNV-1a over the text, as 13 base-36 digits: a stable key, not a secret. */
@@ -186,19 +202,25 @@ function stage(
     problems.push("quantity must be a whole number of at least 1")
   }
   const price = priceMinor(get("price"))
-  if (price === "bad") problems.push("price must be an amount such as 24.99")
+  const minor = price === "bad" ? null : price.minor
+  if (price === "bad") problems.push("price must be an amount such as 24.99 or 1,250.00")
   const cRaw = get("currency").trim().toUpperCase()
-  const currency = cRaw !== "" ? cRaw : price !== null ? (options.currency ?? null) : null
+  const symbol = price === "bad" ? null : price.symbol
+  const currency = cRaw !== "" ? cRaw : minor !== null ? (symbol ?? options.currency ?? null) : null
   if (currency !== null && !/^[A-Z]{3}$/.test(currency)) {
     problems.push("currency must be an ISO 4217 code")
   }
-  if (typeof price === "number" && currency === null) problems.push("price needs a currency")
+  if (symbol !== null && currency !== null && symbol !== currency) {
+    problems.push(`the price is in ${symbol} but the currency is ${currency}`)
+  }
+  if (minor !== null && currency === null) problems.push("price needs a currency")
   const link = get("link").trim()
   let url: string | null = null
-  if (link !== "") {
+  if (link.length > 2000) problems.push("link is longer than 2000")
+  else if (link !== "") {
     try {
       const u = new URL(link)
-      if ((u.protocol === "http:" || u.protocol === "https:") && link.length <= 2000) url = link
+      if (u.protocol === "http:" || u.protocol === "https:") url = link
     } catch {
       // Not an address; refused below.
     }
@@ -216,7 +238,7 @@ function stage(
     recipientNames: unique,
     occasionName: occasion === "" ? null : occasion,
     quantity: Number.isSafeInteger(quantity) ? quantity : 1,
-    priceMinor: typeof price === "number" ? price : null,
+    priceMinor: minor,
     currency,
     url,
     notes: notes === "" ? null : notes,
@@ -232,8 +254,17 @@ function stage(
 export function parseGiftImport(text: string, options: GiftImportOptions): GiftImportStaged {
   const staged: GiftImportStaged = { rows: [], unknownColumns: [], problems: [] }
   const raw: Omit<GiftImportRow, "key">[] = []
+  if (options.currency !== undefined && !/^[A-Z]{3}$/.test(options.currency)) {
+    staged.problems.push("the default currency must be an ISO 4217 code, such as USD")
+    return staged
+  }
   if (options.format === "csv") {
-    const [header, ...records] = csvRecords(text)
+    const parsed = csvRecords(text.replace(/^\uFEFF/, ""))
+    if (parsed.open !== null) {
+      staged.problems.push(`a quoted field starting on line ${parsed.open} never closes`)
+      return staged
+    }
+    const [header, ...records] = parsed.records
     if (header === undefined) {
       staged.problems.push("no header row")
       return staged
@@ -243,8 +274,9 @@ export function parseGiftImport(text: string, options: GiftImportOptions): GiftI
       const col = (Object.keys(ALIASES) as GiftImportColumn[]).find((c) =>
         ALIASES[c].includes(fold(name)),
       )
-      if (col === undefined) staged.unknownColumns.push(name.trim())
-      else if (at.has(col)) staged.problems.push(`column ${col} appears twice`)
+      if (col === undefined) {
+        if (name.trim() !== "") staged.unknownColumns.push(name.trim())
+      } else if (at.has(col)) staged.problems.push(`column ${col} appears twice`)
       else at.set(col, i)
     })
     if (!at.has("title")) staged.problems.push("no title column")
@@ -280,7 +312,7 @@ export function parseGiftImport(text: string, options: GiftImportOptions): GiftI
   for (const r of raw) {
     const content = JSON.stringify([
       r.title,
-      r.recipientNames.map(fold),
+      r.recipientNames.map(fold).sort(),
       r.occasionName === null ? null : fold(r.occasionName),
       r.quantity,
       r.priceMinor,
@@ -350,7 +382,7 @@ export function reviewGiftImport(
 }
 
 export interface GiftImportApplyOptions {
-  /** The currency of an occasion the import creates when its first row names none. */
+  /** The currency of an occasion the import creates when its row names none (ISO 4217). */
   currency: string
 }
 
@@ -359,7 +391,12 @@ export interface GiftImportOutcome {
   key: string
   source: string
   line: number
-  /** `applied`: its item (and gift, when it names people and an occasion) is written. */
+  /**
+   * `applied`: its item (and gift, when it names people and an occasion) is written. `skipped`:
+   * the row was left alone, or stopped because something changed since the review. `failed`: a
+   * write was refused. A skipped or failed row may still have written its earlier records (a new
+   * person or occasion, its item: `itemId` is then set); importing it again replays them.
+   */
   status: "applied" | "skipped" | "failed"
   itemId: string | null
   allocationId: string | null
@@ -367,21 +404,31 @@ export interface GiftImportOutcome {
   problems: string[]
 }
 
+/** The row changed since the review: it is skipped, with the reason. */
+class Changed extends Error {}
+
 /**
  * The writes behind `GiftLedger.applyGiftImport`, through the ledger's own checked `create`. The
  * rows are reviewed again against the store first: a row that is `invalid` or `ambiguous` now, or
- * a name the owner saw matched to one record that now matches another, is skipped; a name seen as
- * `new` that matches one record now uses it (an earlier run of this import made it).
+ * a name the owner saw matched to one record that now matches another or none, is skipped; a
+ * name seen as `new` that matches one record now uses it (for example, an earlier run of this
+ * import made it).
  *
- * Every write carries an idempotency key made from content, never from the caller's key:
- * `import:recipient:<name>` and `import:occasion:<name>` (folded) for a record the import
- * creates, and `import:<row key>/item`, `/allocation` and `/roster/<recipient>` for a row's own,
- * so a second import of the same content replays instead of writing. A new recipient is a person
- * with nothing but its name; a new occasion is `custom`, with no date. The item is an idea (or
- * `selected` when the row allocates it), its price a planning estimate (never spend), its source
- * `import` with the row key as ref. A row naming people and an occasion becomes one unbought gift,
- * one unit each (`shared` false), and each of its people not on that occasion's roster gets a
- * planning row; a person with an archived row there is left off it, with a note.
+ * Every write carries an idempotency key made from the row's content key, never from the
+ * caller's key: `import:<row key>/recipient/<name>` and `/occasion` (the name folded) for a record
+ * the row creates, `/item`, `/allocation` and `/roster/<recipient>` for its own, so a second
+ * import of the same content replays instead of writing. A replayed new person or occasion that
+ * is archived now, or renamed away from the row's name, stops the row as changed, so a row the
+ * owner saw as making someone new is never quietly given to someone else; so does a key the row
+ * used before for other records (it was imported before with other people or another occasion).
+ *
+ * A new recipient is a person with nothing but its name; a new occasion is `custom`, with no
+ * date, in the row's currency or `options.currency`. The item is an idea (or `selected` when the
+ * row allocates it), its price a planning estimate (never spend), its source `import` with the
+ * row key as ref. A row naming people and an occasion becomes one unbought gift (one allocation,
+ * `shared` false) giving each of them the row's quantity, and each of its people not on that
+ * occasion's roster gets a planning row; a person with an archived row there is left off it, with
+ * a note.
  */
 export async function applyGiftImportRows(
   ledger: GiftLedger,
@@ -389,6 +436,9 @@ export async function applyGiftImportRows(
   rows: readonly GiftImportReviewed[],
   options: GiftImportApplyOptions,
 ): Promise<GiftImportOutcome[]> {
+  if (!/^[A-Z]{3}$/.test(options.currency)) {
+    throw new GiftValidationError(["the default currency must be an ISO 4217 code, such as USD"])
+  }
   const { idempotencyKey: _ignored, ...base } = meta
   const keyed = (key: string): GiftWriteMeta => ({ ...base, idempotencyKey: key })
   const all = { includeArchived: true }
@@ -425,20 +475,32 @@ export async function applyGiftImportRows(
     ]
     for (const [was, is] of pairs) {
       if (is === undefined || is.status === "ambiguous" || was.status === "ambiguous") {
-        out.problems.push(`"${was.name}" matches more than one; choose one and import again`)
+        out.problems.push(`"${was.name}" matches more than one; it is not imported`)
       } else if (was.status === "matched" && (is.ids[0] !== was.ids[0] || is.ids.length !== 1)) {
         out.problems.push(`"${was.name}" changed since the review; review again`)
       }
     }
     if (out.problems.length > 0) continue
+    // A record this row creates: replayed from an earlier import, it must still be what the
+    // owner saw as new -- live and still called this.
+    // A replay answers with the record as first written, so it is read again as it is now.
+    const fits = async (kind: "recipient" | "occasion", id: string, name: string) => {
+      const r = await ledger.get(kind, meta.ownerId, id)
+      const label = r === null ? null : "title" in r ? r.title : r.displayName
+      if (r === null || r.archived || label === null || fold(label) !== fold(name)) {
+        throw new Changed(`"${name}" was made by an earlier import and has changed; review again`)
+      }
+    }
     try {
       const recipientIds: string[] = []
       for (const m of now.recipients) {
         const k = `recipient:${fold(m.name)}`
         let id = m.ids[0] ?? made.get(k)
         if (id === undefined) {
-          id = (
-            await ledger.create("recipient", keyed(`import:${k}`), {
+          const r = await ledger.create(
+            "recipient",
+            keyed(`import:${seen.key}/recipient/${fold(m.name)}`),
+            {
               displayName: m.name,
               kind: "person",
               memberIds: [],
@@ -446,8 +508,10 @@ export async function applyGiftImportRows(
               interests: [],
               avoid: [],
               notes: null,
-            })
-          ).id
+            },
+          )
+          await fits("recipient", r.id, m.name)
+          id = r.id
           made.set(k, id)
         }
         recipientIds.push(id)
@@ -457,20 +521,20 @@ export async function applyGiftImportRows(
         const k = `occasion:${fold(now.occasion.name)}`
         occasionId = now.occasion.ids[0] ?? made.get(k) ?? null
         if (occasionId === null) {
-          occasionId = (
-            await ledger.create("occasion", keyed(`import:${k}`), {
-              kind: "custom",
-              title: now.occasion.name,
-              date: null,
-              timeZone: null,
-              year: null,
-              currency: now.currency ?? options.currency,
-              budgetMinor: null,
-              groupIds: [],
-              includeIds: [],
-              excludeIds: [],
-            })
-          ).id
+          const o = await ledger.create("occasion", keyed(`import:${seen.key}/occasion`), {
+            kind: "custom",
+            title: now.occasion.name,
+            date: null,
+            timeZone: null,
+            year: null,
+            currency: now.currency ?? options.currency,
+            budgetMinor: null,
+            groupIds: [],
+            includeIds: [],
+            excludeIds: [],
+          })
+          await fits("occasion", o.id, now.occasion.name)
+          occasionId = o.id
           made.set(k, occasionId)
         }
       }
@@ -529,8 +593,16 @@ export async function applyGiftImportRows(
       }
       out.status = "applied"
     } catch (err) {
-      out.status = "failed"
-      out.problems.push(err instanceof Error ? err.message : String(err))
+      if (err instanceof Changed) {
+        out.problems.push(err.message)
+      } else if (err instanceof GiftIdempotencyError) {
+        out.problems.push(
+          "this row was imported before with other people, another occasion or other details; review again",
+        )
+      } else {
+        out.status = "failed"
+        out.problems.push(err instanceof Error ? err.message : String(err))
+      }
     }
   }
   return outcomes

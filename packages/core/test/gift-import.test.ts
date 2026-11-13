@@ -149,6 +149,65 @@ describe("parseGiftImport", () => {
   })
 })
 
+describe("parseGiftImport, awkward input", () => {
+  const csv = (text: string, currency = "USD") =>
+    parseGiftImport(text, { format: "csv", source: "s", currency })
+
+  it("refuses a quoted field that never closes, naming its line", () => {
+    const staged = csv('title,notes\nBook,"open quote\nNext,x\nThird,y')
+    expect(staged.problems).toEqual(["a quoted field starting on line 2 never closes"])
+    expect(staged.rows).toEqual([])
+  })
+
+  it("reads a comma only as a thousands separator", () => {
+    const staged = csv('title,price\nA,"1,250.00"\nB,"24,99"\nC,"1,2,3"')
+    expect(staged.rows.map((r) => r.priceMinor)).toEqual([125000, null, null])
+    expect(staged.rows.map((r) => r.problems.length)).toEqual([0, 1, 1])
+  })
+
+  it("takes the currency a symbol names, and refuses a symbol the currency contradicts", () => {
+    const staged = csv("title,price,currency\nA,\u00a35,\nB,\u20ac5,USD\nC,$5,")
+    expect(staged.rows.map((r) => r.currency)).toEqual(["GBP", "USD", "USD"])
+    expect(staged.rows[1]?.problems).toEqual(["the price is in EUR but the currency is USD"])
+  })
+
+  it("reads a quoted header after a byte order mark, and skips rows of empty cells", () => {
+    const staged = csv('\uFEFF"title","notes",\nBook,x,\n,,\n,\nPen,y,')
+    expect(staged.problems).toEqual([])
+    expect(staged.unknownColumns).toEqual([])
+    expect(staged.rows.map((r) => [r.line, r.title])).toEqual([
+      [2, "Book"],
+      [5, "Pen"],
+    ])
+  })
+
+  it("counts a CR line break inside quotes", () => {
+    const staged = csv('title,notes\r"a\rb",x\rNext,y')
+    expect(staged.rows.map((r) => r.line)).toEqual([2, 4])
+  })
+
+  it("names a link that is too long", () => {
+    const staged = csv(`title,link\nA,https://x.example/${"a".repeat(2000)}`)
+    expect(staged.rows[0]?.problems).toEqual(["link is longer than 2000"])
+  })
+
+  it("refuses a default currency that is not a code", () => {
+    expect(csv("title\nA", "usd").problems).toEqual([
+      "the default currency must be an ISO 4217 code, such as USD",
+    ])
+  })
+
+  it("keys recipients in any order alike, and refuses a pasted list over the limit", () => {
+    const a = parseGiftImport("Book | Ann; Bo", { format: "list", source: "s" })
+    const b = parseGiftImport("Book | bo; Ann", { format: "list", source: "s" })
+    expect(b.rows[0]?.key).toBe(a.rows[0]?.key)
+    const many = Array.from({ length: GIFT_IMPORT_ROWS_MAX + 1 }, (_, i) => `g${i}`).join("\n")
+    expect(parseGiftImport(many, { format: "list", source: "s" }).problems).toEqual([
+      `more than ${GIFT_IMPORT_ROWS_MAX} rows`,
+    ])
+  })
+})
+
 describe("reviewGiftImport", () => {
   it("matches names, flags a new one and an ambiguous one", async () => {
     const ledger = new GiftLedger(new MemoryGiftStore())
@@ -292,7 +351,7 @@ describe("GiftLedger.applyGiftImport", () => {
     expect(await w.ledger.list("occasionRecipient", "u1", { occasionId: w.xmas.id })).toEqual([])
   })
 
-  it("answers a failed row with its error and carries on", async () => {
+  it("stops a row whose key was used before for other records, and carries on", async () => {
     const w = await setup()
     const reviewed = await w.review("Puzzle\nKite")
     const key = reviewed[0]?.key ?? ""
@@ -313,7 +372,64 @@ describe("GiftLedger.applyGiftImport", () => {
       },
     )
     const out = await w.ledger.applyGiftImport(meta, reviewed, { currency: "USD" })
-    expect(out.map((o) => o.status)).toEqual(["failed", "applied"])
-    expect(out[0]?.problems[0]).toMatch(/idempotency/)
+    expect(out.map((o) => o.status)).toEqual(["skipped", "applied"])
+    expect(out[0]?.problems[0]).toMatch(/imported before/)
+  })
+
+  it("never gives a row reviewed as new to a record it made before that has since changed", async () => {
+    const w = await setup()
+    const text = "Kite | Cy | Birthday"
+    const [first] = await w.ledger.applyGiftImport(meta, await w.review(text), { currency: "USD" })
+    const [occasion] = (await w.ledger.list("occasion", "u1")).filter((o) => o.title === "Birthday")
+    await w.ledger.update("occasion", occasion?.id ?? "", meta, 1, { archived: true })
+    const cy = (await w.ledger.list("recipient", "u1")).find((r) => r.displayName === "Cy")
+    await w.ledger.update("recipient", cy?.id ?? "", meta, 1, { displayName: "Cyril" })
+    const reviewed = await w.review(text)
+    expect(reviewed[0]?.status).toBe("new")
+    const [again] = await w.ledger.applyGiftImport(meta, reviewed, { currency: "USD" })
+    expect(again).toMatchObject({ status: "skipped", allocationId: null })
+    expect(again?.problems[0]).toMatch(/earlier import and has changed/)
+    expect(first?.status).toBe("applied")
+    // Another row naming them is new content: it makes a new Cy and a new Birthday.
+    const [other] = await w.ledger.applyGiftImport(meta, await w.review("Yoyo | cy | birthday"), {
+      currency: "USD",
+    })
+    expect(other?.status).toBe("applied")
+    const live = await w.ledger.list("occasion", "u1")
+    expect(live.map((o) => o.title)).toEqual(["Christmas 2026", "birthday"])
+  })
+
+  it("matches only live records, and makes one person for a name written twice", async () => {
+    const w = await setup()
+    await w.ledger.update("recipient", w.bo.id, meta, 1, { archived: true })
+    const out = await w.ledger.applyGiftImport(
+      meta,
+      await w.review("Socks | Bo | Christmas 2026\nKite | bo | Christmas 2026"),
+      { currency: "USD" },
+    )
+    expect(out.map((o) => o.status)).toEqual(["applied", "applied"])
+    const bos = (await w.ledger.list("recipient", "u1")).filter((r) => r.displayName === "Bo")
+    expect(bos).toHaveLength(1)
+    expect(bos[0]?.id).not.toBe(w.bo.id)
+  })
+
+  it("ignores the caller's idempotency key: a new key still replays the rows", async () => {
+    const w = await setup()
+    const text = "Puzzle | Ann | Christmas 2026"
+    await w.ledger.applyGiftImport({ ...meta, idempotencyKey: "a" }, await w.review(text), {
+      currency: "USD",
+    })
+    await w.ledger.applyGiftImport({ ...meta, idempotencyKey: "b" }, await w.review(text), {
+      currency: "USD",
+    })
+    expect(await w.ledger.list("item", "u1")).toHaveLength(1)
+  })
+
+  it("refuses a default currency that is not a code before writing anything", async () => {
+    const w = await setup()
+    await expect(
+      w.ledger.applyGiftImport(meta, await w.review("Kite | Cy | Birthday"), { currency: "usd" }),
+    ).rejects.toThrow(/ISO 4217/)
+    expect(await w.ledger.list("recipient", "u1")).toHaveLength(2)
   })
 })

@@ -445,6 +445,7 @@ export class GiftLedger {
    * answers each with its outcome (`applyGiftImportRows` has the rules). Not atomic: a row that
    * fails leaves the rows before it written and the rows after it tried. Keys come from content,
    * so `meta.idempotencyKey` is ignored and importing the same rows again creates nothing twice.
+   * A default currency that is not an ISO 4217 code is refused before anything is written.
    */
   applyGiftImport(
     meta: GiftWriteMeta,
