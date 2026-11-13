@@ -351,7 +351,8 @@ export interface GiftImportReviewed extends GiftImportRow {
  * Matches each staged row to the owner's live recipients and occasions by name (trimmed, spaced
  * once, case-folded: a recipient's `displayName`, an occasion's `title`). A row is `invalid` when
  * it has problems, `ambiguous` when any name matches more than one record, `new` when any names
- * nothing yet, and `ready` otherwise. Pure.
+ * nothing yet, and `ready` otherwise; a row with no occasion gives nobody a gift, so its people
+ * are listed but do not count toward its status. Pure.
  */
 export function reviewGiftImport(
   rows: readonly GiftImportRow[],
@@ -372,7 +373,8 @@ export function reviewGiftImport(
   return rows.map((row) => {
     const recipients = row.recipientNames.map((n) => match(n, people))
     const occasion = row.occasionName === null ? null : match(row.occasionName, occasions)
-    const all = occasion === null ? recipients : [...recipients, occasion]
+    // Without an occasion the people are never matched or made (see `applyGiftImportRows`).
+    const all = occasion === null ? [] : [...recipients, occasion]
     const status: GiftImportStatus =
       row.problems.length > 0
         ? "invalid"
@@ -397,9 +399,10 @@ export interface GiftImportOutcome {
   line: number
   /**
    * `applied`: its item (and gift, when it names people and an occasion) is written. `skipped`:
-   * the row was left alone, or stopped because something changed since the review. `failed`: a
-   * write was refused. A skipped or failed row may still have written its earlier records (roster rows, a new
-   * person or occasion, its item: `itemId` is then set); importing it again replays them.
+   * the row was left alone, or stopped because something changed since the review or since an
+   * earlier import of it. `failed`: a write was refused. A skipped or failed row may still have
+   * written its earlier records (roster rows, a new person or occasion, its item: `itemId` is
+   * then set); importing it again replays them.
    */
   status: "applied" | "skipped" | "failed"
   itemId: string | null
@@ -408,36 +411,44 @@ export interface GiftImportOutcome {
   problems: string[]
 }
 
-/** The row changed since the review: it is skipped, with the reason. */
+/** The row changed since the review or an earlier import of it: skipped, with the reason. */
 class Changed extends Error {}
 
-const changedText = (names: string[]): string =>
-  `this row was imported before, and ${names.map((n) => `"${n}"`).join(", ")} has since been archived or renamed; restore or rename it, or change the row to import it as a new gift`
+const changedText = (names: string[]): string => {
+  const list = names.map((n) => `"${n}"`).join(", ")
+  const [have, them] = names.length === 1 ? ["has", "it"] : ["have", "them"]
+  return (
+    `this row was imported before, and ${list} ${have} since been archived or renamed; ` +
+    `restore or rename ${them}, or change the row to import it as a new gift`
+  )
+}
 
 /**
  * The writes behind `GiftLedger.applyGiftImport`, through the ledger's own checked `create`. The
- * rows are reviewed again against the store first: a row that is `invalid` or `ambiguous` now, or
- * a name the owner saw matched to one record that now matches another or none, is skipped; a
- * name seen as `new` that matches one record now uses it (for example, an earlier run of this
- * import made it).
+ * rows are reviewed again against the store first: a row that is `invalid` or `ambiguous` now, or a
+ * name the owner saw matched to one record that now matches another or none, is skipped; a name
+ * seen as `new` that matches one record now uses it (for example, an earlier run of this import
+ * made it).
  *
- * Every write carries an idempotency key made from the row's content key, never from the
- * caller's key: `import:<row key>/recipient/<folded name>` and `import:<row key>/occasion` for a
- * record the row creates, `/item`, `/allocation` and `/roster/<recipient>` for its own, so a second
- * import of the same content replays instead of writing. A row whose item an earlier import made
- * (its key is an import item's ref) creates no person or occasion: one it would need again was
- * archived or renamed since, and the row stops as changed before writing anything. A replayed new person or occasion that
- * is archived now, or renamed away from the row's name, stops the row as changed, so a row the
- * owner saw as making someone new is never quietly given to someone else; so does a key the row
- * used before for other records (it was imported before with other people or another occasion).
+ * Every write carries an idempotency key made from the row's content key, never from the caller's
+ * key: `import:<row key>/recipient/<folded name>` and `import:<row key>/occasion` for a record the
+ * row creates, `/item`, `/allocation` and `/roster/<recipient>` for its own, so a second import of
+ * the same content replays instead of writing. A row whose item an earlier import made (its key is
+ * an import item's ref) creates no person or occasion: one it would need again was archived or
+ * renamed since, and the row stops as changed before writing anything; so does one whose item the
+ * owner has archived since. A replayed new person or occasion that is archived now, or renamed away
+ * from the row's name, stops the row as changed, so a row the owner saw as making someone new is
+ * never quietly given to someone else; so does a key the row used before for other records (it was
+ * imported before with other people or another occasion).
  *
- * A new recipient is a person with nothing but its name; a new occasion is `custom`, with no
- * date, in the row's currency or `options.currency`. The item is an idea (or `selected` when the
- * row allocates it), its price a planning estimate (never spend), its source `import` with the
- * row key as ref. A row naming people and an occasion becomes one unbought gift (one allocation,
- * `shared` false, its people in id order) giving each of them the row's quantity, and each of its people not on that
- * occasion's roster gets a planning row; a person with an archived row there is left off it, with
- * a note.
+ * A new recipient is a person with nothing but its name; a new occasion is `custom`, with no date,
+ * in the row's currency or `options.currency`. The item is an idea (or `selected` when the row
+ * allocates it), its price a planning estimate (never spend), its source `import` with the row key
+ * as ref. A row naming people and an occasion becomes one unbought gift (one allocation, `shared`
+ * false, its people in id order) giving each of them the row's quantity, and each of its people not
+ * on that occasion's roster gets a planning row; a person with an archived row there is left off
+ * it, with a note. A row naming people but no occasion makes only its item: nobody is matched or
+ * created for it, and its outcome says so.
  */
 export async function applyGiftImportRows(
   ledger: GiftLedger,
@@ -455,10 +466,10 @@ export async function applyGiftImportRows(
     recipients: await ledger.list("recipient", meta.ownerId, all),
     occasions: await ledger.list("occasion", meta.ownerId, all),
   })
-  const imported = new Set(
+  const imported = new Map(
     (await ledger.list("item", meta.ownerId, all))
       .filter((it) => it.source.kind === "import" && it.source.ref !== null)
-      .map((it) => it.source.ref),
+      .map((it) => [it.source.ref, it.archived]),
   )
   const made = new Map<string, string>()
   const outcomes: GiftImportOutcome[] = []
@@ -479,10 +490,9 @@ export async function applyGiftImportRows(
       continue
     }
     const pairs: [GiftImportMatch, GiftImportMatch | undefined][] = [
-      ...seen.recipients.map((m, j): [GiftImportMatch, GiftImportMatch | undefined] => [
-        m,
-        now.recipients[j],
-      ]),
+      ...(seen.occasion === null ? [] : seen.recipients).map(
+        (m, j): [GiftImportMatch, GiftImportMatch | undefined] => [m, now.recipients[j]],
+      ),
       ...(seen.occasion === null
         ? []
         : [[seen.occasion, now.occasion ?? undefined] as [GiftImportMatch, GiftImportMatch]]),
@@ -495,13 +505,22 @@ export async function applyGiftImportRows(
       }
     }
     if (out.problems.length > 0) continue
+    // Without an occasion there is no gift to give: nobody is matched or made for it.
+    const people = now.occasion === null ? [] : now.recipients
+    if (now.occasion === null && now.recipients.length > 0) {
+      out.problems.push(
+        `no occasion, so "${now.title}" is not given to anyone; add an occasion to allocate it`,
+      )
+    }
     // Imported before, its people and occasion were made then: one that needs making again was
     // archived or renamed since. Nothing is made for it.
+    if (imported.get(seen.key) === true) {
+      out.problems.push("this row was imported before and its gift has since been archived")
+      continue
+    }
     if (imported.has(seen.key)) {
-      const gone = [...now.recipients, ...(now.occasion === null ? [] : [now.occasion])].filter(
-        (m) =>
-          m.status === "new" &&
-          !made.has(`${m === now.occasion ? "occasion" : "recipient"}:${fold(m.name)}`),
+      const gone = [...people, ...(now.occasion === null ? [] : [now.occasion])].filter(
+        (m) => m.status === "new",
       )
       if (gone.length > 0) {
         out.problems.push(changedText(gone.map((m) => m.name)))
@@ -520,7 +539,7 @@ export async function applyGiftImportRows(
     }
     try {
       const recipientIds: string[] = []
-      for (const m of now.recipients) {
+      for (const m of people) {
         const k = `recipient:${fold(m.name)}`
         let id = m.ids[0] ?? made.get(k)
         if (id === undefined) {

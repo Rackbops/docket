@@ -225,7 +225,7 @@ describe("reviewGiftImport", () => {
     await person(ledger, "bo ")
     const xmas = await christmas(ledger)
     const staged = parseGiftImport(
-      "Puzzle | ann | christmas 2026\nSocks | Bo | Christmas 2026\nKite | Cy\nBad | Ann | | 0",
+      "Puzzle | ann | christmas 2026\nSocks | Bo | Christmas 2026\nKite | Cy | Christmas 2026\nBad | Ann | | 0",
       { format: "list", source: "s" },
     )
     const reviewed = reviewGiftImport(staged.rows, {
@@ -498,6 +498,70 @@ describe("GiftLedger.applyGiftImport", () => {
     ])
     expect((await w.ledger.list("occasion", "u1")).map((o) => o.title)).toEqual(["Christmas 2026"])
     expect(await w.ledger.list("item", "u1", { includeArchived: true })).toHaveLength(2)
+  })
+
+  it("makes only the item for a row with people but no occasion, and says so", async () => {
+    const w = await setup()
+    const reviewed = await w.review("Book | Cy")
+    expect(reviewed[0]?.status).toBe("ready")
+    const [out] = await w.ledger.applyGiftImport(meta, reviewed, { currency: "USD" })
+    expect(out).toMatchObject({ status: "applied", allocationId: null })
+    expect(out?.problems).toEqual([
+      'no occasion, so "Book" is not given to anyone; add an occasion to allocate it',
+    ])
+    expect(await w.ledger.list("recipient", "u1")).toHaveLength(2)
+  })
+
+  it("stops a row imported before whose gift the owner archived", async () => {
+    const w = await setup()
+    const [first] = await w.ledger.applyGiftImport(meta, await w.review("Book"), {
+      currency: "USD",
+    })
+    await w.ledger.update("item", first?.itemId ?? "", meta, 1, { archived: true })
+    const [again] = await w.ledger.applyGiftImport(meta, await w.review("Book"), {
+      currency: "USD",
+    })
+    expect(again).toMatchObject({ status: "skipped", itemId: null })
+    expect(again?.problems).toEqual([
+      "this row was imported before and its gift has since been archived",
+    ])
+  })
+
+  it("stops an imported row the same way whatever order the file is in", async () => {
+    const w = await setup()
+    await w.ledger.applyGiftImport(meta, await w.review("Book | Cy | Christmas 2026"), {
+      currency: "USD",
+    })
+    const cy = (await w.ledger.list("recipient", "u1")).find((r) => r.displayName === "Cy")
+    await w.ledger.update("recipient", cy?.id ?? "", meta, 1, { archived: true })
+    const out = await w.ledger.applyGiftImport(
+      meta,
+      await w.review("Kite | Cy | Christmas 2026\nBook | Cy | Christmas 2026"),
+      { currency: "USD" },
+    )
+    expect(out.map((o) => o.status)).toEqual(["applied", "skipped"])
+    expect(out[1]?.problems[0]).toMatch(
+      /"Cy" has since been archived or renamed; restore or rename it,/,
+    )
+    expect(out[1]?.itemId).toBeNull()
+  })
+
+  it("names several changed records in one sentence", async () => {
+    const w = await setup()
+    await w.ledger.applyGiftImport(meta, await w.review("Book | Cy | Xmas"), { currency: "USD" })
+    for (const r of await w.ledger.list("recipient", "u1")) {
+      if (r.displayName === "Cy")
+        await w.ledger.update("recipient", r.id, meta, 1, { archived: true })
+    }
+    for (const o of await w.ledger.list("occasion", "u1")) {
+      if (o.title === "Xmas") await w.ledger.update("occasion", o.id, meta, 1, { archived: true })
+    }
+    const [out] = await w.ledger.applyGiftImport(meta, await w.review("Book | Cy | Xmas"), {
+      currency: "USD",
+    })
+    expect(out?.problems[0]).toMatch(
+      /"Cy", "Xmas" have since been archived or renamed; restore or rename them,/,
+    )
   })
 
   it("applies a row again with its people in another order", async () => {
