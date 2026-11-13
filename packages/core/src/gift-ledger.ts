@@ -167,25 +167,30 @@ export class GiftLedger {
    * The duplicate warnings and possible duplicates for an allocation about to be written
    * (`findGiftDuplicates`, docket#100), read from the store. It writes nothing and refuses
    * nothing: the host shows the report, and an allocation the owner writes anyway carries the
-   * warned ids in `repeatOf`.
+   * warned ids in `repeatOf`. An item that is not the owner's is refused as not found.
    */
   async giftDuplicates(
     ownerId: string,
     allocation: GiftDuplicateInput["allocation"],
   ): Promise<GiftDuplicateReport> {
+    if ((await this.store.get("item", ownerId, allocation.itemId)) === null) {
+      throw new GiftNotFoundError(`no item ${allocation.itemId}`)
+    }
     const all = { includeArchived: true }
     return findGiftDuplicates({
       allocation,
       items: await this.store.list("item", ownerId, all),
       allocations: await this.store.list("allocation", ownerId, all),
       occasions: await this.store.list("occasion", ownerId, all),
+      purchases: await this.store.list("purchase", ownerId, all),
+      recipients: await this.store.list("recipient", ownerId, all),
     })
   }
 
   /**
    * Makes a reviewed "set up next year" (`previewGiftRollover`, docket#99): the new occasion, its
    * roster rows (planning, with each staying person's target and budget) and the picked ideas as
-   * new, unbought gifts. It first previews again from the store with the same picks, title and
+   * new, unbought gifts, each with `repeatOf` naming the gift it came from. It first previews again from the store with the same picks, title and
    * date, and refuses (`GiftRevisionError`) before anything is written when what it would write
    * differs: the old occasion's or a group's revision moved, or the new occasion, the roster (who,
    * with what target and budget) or a picked idea (its people, quantity or sharing) came out
@@ -291,6 +296,8 @@ export class GiftLedger {
         purchaseId: null,
         handoff: "none",
         givenOn: null,
+        // The same idea again on purpose: its source is accepted, so it never warns against it.
+        repeatOf: [idea.fromAllocationId],
       })
     }
     return made

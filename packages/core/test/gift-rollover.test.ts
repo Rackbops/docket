@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest"
 
 import {
+  findGiftDuplicates,
   type GiftFieldsByKind,
   GiftLedger,
   type GiftOccasion,
@@ -193,8 +194,21 @@ describe("setting up next year", () => {
       purchaseId: null,
       handoff: "none",
       givenOn: null,
+      repeatOf: [s.idea.id],
     })
     expect(purchases).toEqual(purchasesBefore)
+    // Had last year stayed live, the carried idea would match its source: accepted, never new.
+    const all = { includeArchived: true }
+    const live = (await s.ledger.list("occasion", A, all)).map((o) => ({ ...o, archived: false }))
+    const dup = findGiftDuplicates({
+      allocation: carried[0] as (typeof carried)[0],
+      items: await s.ledger.list("item", A, all),
+      allocations,
+      occasions: live,
+      purchases,
+      recipients: await s.ledger.list("recipient", A, all),
+    })
+    expect(dup.warnings.map((w) => [w.allocationId, w.accepted])).toEqual([[s.idea.id, true]])
   })
 
   it("leaves the archived occasion and everything on it reading back unchanged", async () => {

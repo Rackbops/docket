@@ -230,7 +230,7 @@ describe("duplicate gift warnings", () => {
     const s = await setup()
     const castle = await s.ledger.create("item", meta, item("Lego castle", { url: URL1 }))
     // A scout finding a watch saw: an item, never allocated, so nobody owns it.
-    await s.ledger.create(
+    const seen = await s.ledger.create(
       "item",
       meta,
       item("Lego castle", { url: URL1, source: { kind: "scout", ref: "t1/f1" } }),
@@ -245,6 +245,102 @@ describe("duplicate gift warnings", () => {
       recipientIds: [s.ann.id],
     })
     expect(report).toEqual({ warnings: [], possible: [] })
+    // Bob has nothing allocated: the seen listing, and Ann's castle, are not his.
+    const bobs = await s.ledger.giftDuplicates(A, {
+      itemId: seen.id,
+      occasionId: s.bday.id,
+      recipientIds: [s.bob.id],
+    })
+    expect(bobs).toEqual({ warnings: [], possible: [] })
+  })
+
+  it("leaves out a dropped idea on a live occasion, and a bought gift returned since", async () => {
+    const s = await setup()
+    const url = "https://example.com/kite"
+    const kite = await s.ledger.create("item", meta, item("Kite", { url, planning: "rejected" }))
+    const again = await s.ledger.create("item", meta, item("Kite", { url }))
+    await s.ledger.create("allocation", meta, allocation(kite.id, s.xmas.id, [s.ann.id]))
+    const p = await s.ledger.create("purchase", meta, {
+      itemId: again.id,
+      merchant: null,
+      currency: "USD",
+      unitPriceMinor: 1000,
+      ordered: 1,
+      received: 1,
+      cancelled: 0,
+      returned: 0,
+      taxMinor: null,
+      shippingMinor: null,
+      discountMinor: null,
+      totalComplete: false,
+      refundedMinor: 0,
+      purchasedOn: null,
+      reference: null,
+    })
+    const old = await s.ledger.create("occasion", meta, occasion("custom", "Old"))
+    const bought = await s.ledger.create(
+      "allocation",
+      meta,
+      allocation(again.id, old.id, [s.ann.id], { purchaseId: p.id }),
+    )
+    await s.ledger.update("occasion", old.id, meta, old.revision, { archived: true })
+    const ask = { itemId: again.id, occasionId: s.bday.id, recipientIds: [s.ann.id] }
+    expect((await s.ledger.giftDuplicates(A, ask)).warnings.map((w) => w.allocationId)).toEqual([
+      bought.id,
+    ])
+    await s.ledger.update("purchase", p.id, meta, p.revision, { returned: 1 })
+    expect(await s.ledger.giftDuplicates(A, ask)).toEqual({ warnings: [], possible: [] })
+  })
+
+  it("matches a household and its member both ways", async () => {
+    const s = await setup()
+    const home = await s.ledger.create("recipient", meta, {
+      ...person("The Smiths"),
+      kind: "household",
+      memberIds: [s.ann.id],
+    })
+    const game = await s.ledger.create("item", meta, item("Board game", { productKey: "bg-1" }))
+    const toHome = await s.ledger.create(
+      "allocation",
+      meta,
+      allocation(game.id, s.xmas.id, [home.id]),
+    )
+    const forAnn = await s.ledger.giftDuplicates(A, {
+      itemId: game.id,
+      occasionId: s.bday.id,
+      recipientIds: [s.ann.id],
+    })
+    expect(forAnn.warnings.map((w) => [w.allocationId, w.recipientIds])).toEqual([
+      [toHome.id, [s.ann.id]],
+    ])
+    const toAnn = await s.ledger.create(
+      "allocation",
+      meta,
+      allocation(game.id, s.bday.id, [s.ann.id]),
+    )
+    const other = await s.ledger.create("occasion", meta, occasion("custom", "Party"))
+    const forHome = await s.ledger.giftDuplicates(A, {
+      itemId: game.id,
+      occasionId: other.id,
+      recipientIds: [home.id, s.bob.id],
+    })
+    expect(forHome.warnings.map((w) => [w.allocationId, w.recipientIds])).toEqual([
+      [toHome.id, [home.id]],
+      [toAnn.id, [home.id]],
+    ])
+  })
+
+  it("refuses an item that is not the owner's, and accepts an empty repeatOf", async () => {
+    const s = await setup()
+    await expect(
+      s.ledger.giftDuplicates(A, { itemId: "nope", occasionId: s.xmas.id, recipientIds: [] }),
+    ).rejects.toBeInstanceOf(GiftNotFoundError)
+    const castle = await s.ledger.create("item", meta, item("Lego castle"))
+    const made = await s.ledger.create("allocation", meta, {
+      ...allocation(castle.id, s.xmas.id, [s.ann.id]),
+      repeatOf: [],
+    })
+    expect(made.repeatOf).toEqual([])
   })
 
   it("refuses a repeatOf naming itself or an allocation that is not the owner's", async () => {
@@ -264,12 +360,6 @@ describe("duplicate gift warnings", () => {
         repeatOf: ["no-such-allocation"],
       }),
     ).rejects.toBeInstanceOf(GiftNotFoundError)
-    await expect(
-      s.ledger.create("allocation", meta, {
-        ...allocation(castle.id, s.bday.id, [s.ann.id]),
-        repeatOf: [],
-      }),
-    ).rejects.toBeInstanceOf(GiftValidationError)
   })
 })
 
@@ -277,8 +367,10 @@ describe("comparing gifts", () => {
   it("normalizes a URL: scheme, www, trailing slash, fragment and tracking parameters", () => {
     expect(giftUrlKey(URL1)).toBe("example.com/p/lego-castle")
     expect(giftUrlKey("https://shop.example/x?b=2&a=1&gclid=z")).toBe("shop.example/x?a=1&b=2")
-    expect(giftUrlKey("not a url")).toBe("not a url")
-    expect(giftUrlKey(null)).toBeNull()
+    expect(giftUrlKey("https://M.Example.com/P")).toBe("example.com/P")
+    for (const notWeb of ["not a url", "n/a", "/relative/Path", "mailto:a@example.com", null]) {
+      expect(giftUrlKey(notWeb)).toBeNull()
+    }
   })
 
   it("keeps a product key ahead of the URL, and offers a page or a title as possible", () => {
@@ -299,5 +391,12 @@ describe("comparing gifts", () => {
       compareGiftItems({ ...base, title: "Wool scarf!" }, { ...base, title: "wool  SCARF" }),
     ).toEqual({ possible: "title" })
     expect(compareGiftItems({ ...base, title: "Scarf" }, { ...base, title: "Hat" })).toBeNull()
+    // A placeholder in the URL field never makes two different gifts one product.
+    expect(
+      compareGiftItems(
+        { ...base, title: "Lego", url: "n/a" },
+        { ...base, title: "Socks", url: "N/A" },
+      ),
+    ).toBeNull()
   })
 })

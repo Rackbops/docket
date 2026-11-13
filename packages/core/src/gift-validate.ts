@@ -257,7 +257,7 @@ const CHECKS: { [K in GiftKind]: (c: Checker, f: GiftFieldsByKind[K]) => void } 
     if (f.givenOn !== null && f.handoff !== "given") {
       c.problems.push("givenOn is only for a given gift")
     }
-    if (f.repeatOf !== undefined && f.repeatOf !== null) c.ids("repeatOf", 1)
+    if (f.repeatOf !== undefined && f.repeatOf !== null) c.ids("repeatOf", 0)
   },
 }
 
