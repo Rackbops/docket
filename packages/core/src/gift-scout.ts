@@ -37,30 +37,30 @@ export const GIFT_WATCH_TYPES: readonly string[] = ["price", "wantlist"]
  */
 export const GIFT_EBAY_HOST = /(^|\.)ebay\.[a-z]{2,3}(\.[a-z]{2})?$/i
 
-const isEbayUrl = (text: string): boolean => {
-  try {
-    return GIFT_EBAY_HOST.test(new URL(text).hostname.replace(/\.$/, ""))
-  } catch {
-    return false
-  }
-}
+/** Each `%XX` run decoded where it can be, the rest left as it is. */
+const decodeRuns = (text: string): string =>
+  text.replace(/(%[0-9a-f]{2})+/gi, (run) => {
+    try {
+      return decodeURIComponent(run)
+    } catch {
+      return run
+    }
+  })
 
 /**
- * A finding that carries eBay data: tagged by the eBay source, or naming an eBay address anywhere
- * -- its source, a link wrapped inside its source, or its text (a scout or research run quoting a
- * listing).
+ * A finding that carries eBay data: tagged by the eBay source, or naming an eBay host anywhere
+ * -- in its source, in a link wrapped (even percent-encoded twice) inside its source, or in its
+ * text, with or without `https://` (a scout or research run quoting a listing). One linear pass
+ * over the words.
  */
 export function isEbayFinding(finding: Pick<StoredFinding, "tags" | "source" | "text">): boolean {
   if (finding.tags.includes("ebay")) return true
-  let all = `${finding.source ?? ""} ${finding.text}`
-  try {
-    all += ` ${decodeURIComponent(all)}`
-  } catch {
-    // A malformed escape: the text as it is is still searched.
-  }
-  // Every address that starts anywhere, a link wrapped inside another's query included.
-  const starts = [...all.matchAll(/https?:\/\//gi)].map((m) => m.index)
-  return starts.some((i) => isEbayUrl(all.slice(i).split(/[\s<>"'()[\]&?#]/)[0] ?? ""))
+  const raw = `${finding.source ?? ""} ${finding.text}`
+  const all = `${raw} ${decodeRuns(decodeRuns(raw))}`
+  // Hosts are runs of letters, digits, dots and hyphens; anything else ends one.
+  return all
+    .split(/[^a-z0-9.-]+/i)
+    .some((word) => GIFT_EBAY_HOST.test(word.replace(/^\.+|\.+$/g, "")))
 }
 
 /** An http or https address with no login in it, as given; null otherwise. */

@@ -165,6 +165,25 @@ describe("saving a scout finding as a gift idea", () => {
       ),
     ).toBe(true)
     expect(isEbayFinding(f("Puzzle", "https://M.EBAY.COM.AU./itm/1"))).toBe(true)
+    for (const text of [
+      "see https://www.ebay.com, great",
+      "see https://www.ebay.com; great",
+      "at www.ebay.com/itm/1",
+      "ebay.co.uk/itm/2 too",
+      "mail user@ebay.com",
+    ]) {
+      expect(isEbayFinding(f(text, null))).toBe(true)
+    }
+    expect(
+      isEbayFinding(f("50% off", "https://www.google.com/url?q=https%253A%252F%252Febay.com%252F")),
+    ).toBe(true)
+    for (const text of ["notebay.com", "ebay.example.com/x", "shop.example/ebay", "eBay is big"]) {
+      expect(isEbayFinding(f(text, null))).toBe(false)
+    }
+    const long = `${"https://".repeat(50_000)}x`
+    const started = Date.now()
+    expect(isEbayFinding(f(long, long))).toBe(false)
+    expect(Date.now() - started).toBeLessThan(1000)
     const quoted = await w.finding("Puzzle, also at https://www.ebay.com/itm/99 seller bob")
     expect(giftIdeaFromFinding(quoted, { title: "Puzzle" })).toMatchObject({
       url: null,
@@ -232,6 +251,13 @@ describe("saving a scout finding as a gift idea", () => {
     const first = await w.ledger.saveFindingAsIdea(keyed, g)
     expect((await w.ledger.saveFindingAsIdea(keyed, g)).id).toBe(first.id)
     expect(await w.ledger.list("item", w.owner.id)).toHaveLength(2)
+    // Archived, the first save no longer blocks saving that finding again.
+    const saved = (await w.ledger.list("item", w.owner.id)).find(
+      (i) => i.title === "Lighthouse puzzle",
+    )
+    if (saved === undefined) throw new Error("fixture")
+    await w.ledger.update("item", saved.id, w.meta, saved.revision, { archived: true })
+    expect((await w.ledger.saveFindingAsIdea(w.meta, f)).title).toBe("Lighthouse puzzle")
   })
 
   it("refuses another owner's finding as not found", async () => {

@@ -170,8 +170,9 @@ export class GiftLedger {
    * task `Store`, made a new item in the `idea` state (`giftIdeaFromFinding`), linked back to it.
    * It allocates nothing, so it covers nobody, and it never touches the finding or its task.
    * Another owner's finding is refused as not found. Without an idempotency key, a finding a live
-   * item is already linked to is refused (`GiftValidationError`), so a double save makes one idea;
-   * with a key, a retry replays.
+   * (unarchived, rejected or not) item is already linked to is refused (`GiftValidationError`), so
+   * a double save makes one idea; with a key, a retry replays, and a new key is a new save. The
+   * check reads, then the store writes: two saves racing can both pass.
    */
   async saveFindingAsIdea(
     meta: GiftWriteMeta,
