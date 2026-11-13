@@ -224,15 +224,18 @@ describe("all eight categories survive the DM's cut (0.11.0)", () => {
     )
   })
 
-  it("renderAnswer cuts the findings but keeps every category's name and pick", () => {
+  it("renderAnswer compacts the findings and keeps every category's name, pick and caveat", () => {
     const answer = parseAnswer(EIGHT)
     expect(answer).not.toBeNull()
     if (!answer) return
     const dm = renderAnswer("Best of 2026", answer, { verdict: "approve", problems: [], answer })
     expect(dm.length).toBeLessThanOrEqual(MAX_MESSAGE_CHARS)
-    // The answer is long enough that whole lines were dropped from the end.
-    expect(dm).toMatch(/\(\d+ more lines not shown\)/)
-    expect(dm).not.toContain("Wargames ranking")
+    // The full lines do not fit, so the findings come compact (docket#126): every category's
+    // line without its link, the caveat kept.
+    expect(dm).not.toMatch(/<https?:/)
+    for (const c of BGG_CATEGORIES) expect(dm).toContain(`- Example ${c.name} Game is the`)
+    expect(dm).toContain("- Ratings for 2026 releases are still moving")
+    expect(dm).not.toContain("more on the task's page")
     for (const pick of picks) expect(dm).toContain(pick)
     for (const c of BGG_CATEGORIES) expect(dm).toContain(`${c.name}:`)
   })

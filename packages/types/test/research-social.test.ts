@@ -13,8 +13,11 @@ import {
   assertsFactFromPost,
   BLUESKY_SEARCH_URL,
   canonicalSocialUrl,
+  compactFindingLine,
   coverageLine,
+  fitMessage,
   type GatheredPage,
+  MAX_COMPACT_CLAIM_CHARS,
   MAX_COVERAGE,
   MAX_MESSAGE_CHARS,
   MAX_UNCERTAIN,
@@ -25,6 +28,7 @@ import {
   platformOf,
   postDate,
   postTags,
+  REDDIT_NOTE,
   REDDIT_WHY,
   RESEARCH_MAX_BUDGET_USD,
   RESEARCH_MAX_TURNS,
@@ -621,7 +625,7 @@ describe("coverage (an empty platform, one platform down, Reddit)", () => {
       { platform: "youtube", status: "searched", note: "14 videos" },
       { platform: "tiktok", status: "empty" },
       { platform: "bluesky", status: "skipped", note: NOT_REPORTED },
-      { platform: "reddit", status: "unavailable", note: REDDIT_WHY },
+      { platform: "reddit", status: "unavailable", note: REDDIT_NOTE },
       { platform: "x", status: "skipped", note: "not offered" },
     ])
     expect(withCoverage(DRAFT.coverage as never, { mode: "none" })).toEqual([])
@@ -643,8 +647,11 @@ describe("coverage (an empty platform, one platform down, Reddit)", () => {
     const line = coverageLine(out.coverage ?? [])
     expect(line).toBe(
       "Social: YouTube searched (14 videos, 2 read); TikTok searched (6 posts); Instagram " +
-        `nothing found; Bluesky unavailable (the fetch timed out twice); Reddit unavailable (${REDDIT_WHY}).`,
+        `nothing found; Bluesky unavailable (the fetch timed out twice); Reddit unavailable (${REDDIT_NOTE}).`,
     )
+    // Reddit's entry is a few words (docket#126); the full reason stays in the prompt and the docs.
+    expect(`Reddit unavailable (${REDDIT_NOTE})`).toHaveLength(43)
+    expect(researchJob(WEB).prompt).toContain(REDDIT_WHY)
     const dm = renderAnswer("Pumpkin bread mix", out, { ...approved, answer: out })
     expect(dm).toContain(`\n\n${line}\n\nChecked by a reviewer run.`)
     const quiet = socialOutgoing(answer, { mode: "none" }, null)
@@ -652,7 +659,8 @@ describe("coverage (an empty platform, one platform down, Reddit)", () => {
     expect(renderAnswer("Pumpkin bread mix", quiet, { ...approved, answer: quiet })).not.toContain(
       "Social:",
     )
-    // A long answer keeps the line whole and stays within the DM limit.
+    // A long answer keeps the line whole and stays within the DM limit: its findings go compact
+    // (docket#126), every one of them here since the compact lines fit.
     const long = {
       ...out,
       findings: Array.from({ length: 12 }, (_, i) => ({
@@ -664,7 +672,137 @@ describe("coverage (an empty platform, one platform down, Reddit)", () => {
     const cut = renderAnswer("Pumpkin bread mix", long, { ...approved, answer: long })
     expect(cut.length).toBeLessThanOrEqual(MAX_MESSAGE_CHARS)
     expect(cut).toContain(line)
-    expect(cut).toMatch(/\(\d+ more lines not shown\)/)
+    for (let i = 0; i < 12; i++) expect(cut).toContain(`- Finding ${i}: a long claim`)
+    expect(cut).not.toContain(`<${WATCH}>`)
+    expect(cut).not.toContain("more on the task's page")
+  })
+})
+
+describe("the DM when the whole answer does not fit (docket#126)", () => {
+  const summary = (n: number) =>
+    `${"The mix is well liked. "
+      .repeat(60)
+      .slice(0, n - 1)
+      .trimEnd()}.`
+  const findings = Array.from({ length: 6 }, (_, i) => ({
+    claim: `Finding ${i}: ${"posters say the loaf is moist and sweet ".repeat(12)}`.slice(0, 400),
+    sources: [
+      `https://www.tiktok.com/@baker${i}/video/${"7301234567890123456".slice(0, 19)}${"0".repeat(60)}`,
+    ],
+    platform: "tiktok" as const,
+    publishedAt: "2026-10-02T14:00:00Z",
+    evidence: "snippet" as const,
+  }))
+  const uncertain = Array.from({ length: 5 }, (_, i) => `Caveat ${i}: ${"x".repeat(29)}`)
+  const build = (n: number) => {
+    const answer = parseAnswer({ ...DRAFT, summary: summary(n), findings, uncertain })
+    if (!answer) throw new Error("no answer")
+    return socialOutgoing(answer, { mode: "auto" }, null)
+  }
+
+  it("a compact line cuts the claim, keeps the post marks and drops the link", () => {
+    const f = findings[0]
+    if (!f) throw new Error("no finding")
+    const line = compactFindingLine(f)
+    expect(line.startsWith("- Finding 0: posters say")).toBe(true)
+    expect(line).toContain("... (TikTok, 2026-10-02T14:00:00Z, snippet only)")
+    expect(line).not.toContain("<http")
+    expect(line.length).toBeLessThanOrEqual(2 + MAX_COMPACT_CLAIM_CHARS + 45)
+    const short = { claim: "Short.", sources: [MAKER] }
+    expect(compactFindingLine(short)).toBe("- Short.")
+  })
+
+  it("a 1200-character summary: every uncertain line, the Social line and at least one compact finding", () => {
+    const out = build(1200)
+    expect(out.summary.length).toBeGreaterThanOrEqual(1195)
+    const dm = renderAnswer("Pumpkin bread mix", out, { ...approved, answer: out })
+    expect(dm.length).toBeLessThanOrEqual(MAX_MESSAGE_CHARS)
+    expect(dm).toContain(out.summary)
+    for (const u of uncertain) expect(dm).toContain(`- ${u}`)
+    expect(dm).toContain("\n\nSocial: ")
+    expect(dm).toContain(`Reddit unavailable (${REDDIT_NOTE}).`)
+    expect(dm).toContain("Findings:\n- Finding 0: posters say")
+    expect(dm).toMatch(/\(\d more on the task's page\)/)
+    expect(dm).not.toContain("<https://www.tiktok.com")
+    expect(dm).not.toContain("more lines not shown")
+    // The findings come before the caveats, as in the full form.
+    expect(dm.indexOf("Findings:")).toBeLessThan(dm.indexOf("Uncertain:"))
+  })
+
+  it("a 150-word summary (about 900 characters) leaves room for several compact findings", () => {
+    const out = build(900)
+    const dm = renderAnswer("Pumpkin bread mix", out, { ...approved, answer: out })
+    expect(dm.length).toBeLessThanOrEqual(MAX_MESSAGE_CHARS)
+    const shown = dm.split("\n").filter((l) => l.startsWith("- Finding ")).length
+    expect(shown).toBeGreaterThanOrEqual(3)
+    expect(dm).toContain(`(${6 - shown} more on the task's page)`)
+  })
+
+  it("no room for one compact line: one line counts the findings; none at all: no header", () => {
+    const out = build(1200)
+    // A "Couldn't open:" tail, kept whole, sized so that about 100 characters are left after the
+    // summary, the caveats and the Social line: room for the count, not for a compact line.
+    const social = coverageLine(out.coverage ?? [])
+    const tail = "Couldn't open:\n- boardgamegeek.com (403 Forbidden)".padEnd(
+      310 - social.length,
+      ".",
+    )
+    const counted = renderAnswer("Pumpkin bread mix", out, { ...approved, answer: out }, tail)
+    expect(counted.length).toBeLessThanOrEqual(MAX_MESSAGE_CHARS)
+    expect(counted).toContain("\n\n6 finding(s) on the task's page.\n\nUncertain:")
+    expect(counted).not.toContain("Findings:")
+    for (const u of uncertain) expect(counted).toContain(`- ${u}`)
+    // Caveats that overflow the DM on their own are dropped from the end, as before, and the
+    // findings get no header.
+    const wordy = {
+      ...out,
+      uncertain: Array.from({ length: MAX_UNCERTAIN }, (_, i) => `Caveat ${i}: ${"y".repeat(290)}`),
+    }
+    const cut = renderAnswer("Pumpkin bread mix", wordy, { ...approved, answer: wordy })
+    expect(cut.length).toBeLessThanOrEqual(MAX_MESSAGE_CHARS)
+    expect(cut).not.toContain("Findings:")
+    expect(cut).toContain("Uncertain:\n- Caveat 0:")
+    expect(cut).toMatch(/\(\d more lines not shown\)/)
+  })
+
+  it("no findings and an overflowing answer: no Findings header at all (review of docket#131)", () => {
+    const none = { ...build(1200), findings: [] }
+    const tail = `Couldn't open:\n- ${"boardgamegeek.com (403 Forbidden) ".repeat(16).trim()}`
+    const dm = renderAnswer("Pumpkin bread mix", none, { ...approved, answer: none }, tail)
+    expect(dm.length).toBeLessThanOrEqual(MAX_MESSAGE_CHARS)
+    expect(dm).not.toContain("Findings:")
+    expect(dm).not.toContain("on the task's page")
+  })
+
+  it("an exact fill is not cut: every summary length renders whole lines, the findings compact or counted", () => {
+    // `fit` used to count a separator after the last line, so a body of exactly the budget lost
+    // its last line to "(1 more lines not shown)" (review of docket#131). Sweep the lengths that
+    // cross every boundary: compact lines, the count line, the count alone, nothing.
+    expect(fitMessage(["x".repeat(MAX_MESSAGE_CHARS)])).toHaveLength(MAX_MESSAGE_CHARS)
+    const tail = `Couldn't open:\n- ${"boardgamegeek.com (403 Forbidden) ".repeat(16).trim()}`
+    for (let n = 700; n <= 1200; n += 1) {
+      const out = build(n)
+      // Without a tail the summary and the caveats always fit: nothing may be cut, the findings
+      // are compact, counted, or neither, and never a header on its own.
+      const dm = renderAnswer("Pumpkin bread mix", out, { ...approved, answer: out })
+      expect(dm.length).toBeLessThanOrEqual(MAX_MESSAGE_CHARS)
+      expect(dm).not.toContain("more lines not shown")
+      for (const u of uncertain) expect(dm).toContain(`- ${u}`)
+      const shown = dm.split("\n").filter((l) => l.startsWith("- Finding ")).length
+      if (shown === 6) expect(dm).not.toContain("on the task's page")
+      else if (shown > 0) expect(dm).toContain(`(${6 - shown} more on the task's page)`)
+      else expect(dm).not.toContain("Findings:")
+      expect(dm).not.toMatch(/Findings:\n(\(|\n|$)/)
+      // With a long tail the caveats can overflow and are cut from the end, as before; then no
+      // finding line or count may stand while a caveat was cut.
+      const tailed = renderAnswer("Pumpkin bread mix", out, { ...approved, answer: out }, tail)
+      expect(tailed.length).toBeLessThanOrEqual(MAX_MESSAGE_CHARS)
+      expect(tailed).not.toMatch(/Findings:\n(\(|\n|$)/)
+      if (tailed.includes("more lines not shown")) {
+        expect(tailed).not.toContain("- Finding ")
+        expect(tailed).not.toContain("on the task's page")
+      }
+    }
   })
 })
 
@@ -725,7 +863,7 @@ describe("through the lanes", () => {
     const dm = notifier.sent[0]?.message.text ?? ""
     expect(dm).toContain(`(YouTube, about 2026-10-19) <${WATCH}>`)
     expect(dm).toContain(`(TikTok, 2026-10-02T14:00:00Z, snippet only) <${TIKTOK}>`)
-    expect(dm).toContain(`Reddit unavailable (${REDDIT_WHY}).`)
+    expect(dm).toContain(`Reddit unavailable (${REDDIT_NOTE}).`)
     expect(dm).toContain("Instagram nothing found; Bluesky unavailable (the fetch timed out twice)")
     const findings = await store.listFindings({ taskId: task.id })
     // The stored finding carries the facts the DM's line is built from (docket#124): the instant's

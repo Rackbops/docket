@@ -91,8 +91,9 @@ function categoryNames(): string {
  * with no qualifying entry is answered "none yet", with why, never skipped. Every research run.
  * A first pass's summary names every category's pick in one compact run (`COMPACT_RUN`;
  * a second pass, `second`, names only the categories whose pick changed): `renderAnswer` fits the DM into
- * `MAX_MESSAGE_CHARS` by dropping whole lines from the end, so a category answered only in a late
- * finding can fall out of the DM; the summary comes first and is kept.
+ * `MAX_MESSAGE_CHARS`, and since docket#126 shows the findings compact and counts the rest when the
+ * full lines do not fit, so a category answered only in a late finding may reach the DM as a count;
+ * the summary comes first and is kept.
  */
 export function categoryLines(second = false): string[] {
   return [

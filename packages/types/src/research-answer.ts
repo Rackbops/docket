@@ -95,6 +95,11 @@ export const MAX_COVERAGE_NOTE_CHARS = 120
 export const MAX_COVERAGE_LINE_CHARS = 500
 /** Discord's DM limit is 2000 characters; the rest is headroom for the host's own framing. */
 export const MAX_MESSAGE_CHARS = 1900
+/**
+ * A finding's claim in the DM's compact form (docket#126): enough to tell what the finding is,
+ * the rest on the task's page.
+ */
+export const MAX_COMPACT_CLAIM_CHARS = 100
 
 /** The JSON schema the research run answers in: the spike's (docket-runner spike/cases.json). */
 export const ANSWER_SCHEMA = {
@@ -422,20 +427,25 @@ export function parseReview(value: unknown, draft?: ResearchAnswer): Review | nu
   return { verdict, problems, answer: verdict === "reject" ? null : answer }
 }
 
-/** Fits `lines` into `max` characters, dropping whole lines from the end and saying so. */
+/**
+ * Fits `lines` into `max` characters, dropping whole lines from the end and saying so. A text of
+ * exactly `max` characters fits: `length` is the joined length so far, with no separator counted
+ * after the last line (docket#126 review).
+ */
 function fit(lines: string[], max: number): string {
   const out: string[] = []
   let length = 0
   for (const [i, line] of lines.entries()) {
     const more = `(${lines.length - i} more lines not shown)`
+    const sep = out.length > 0 ? 1 : 0
     // Room for this line, and for the marker unless it is the last.
     const reserve = i < lines.length - 1 ? more.length + 1 : 0
-    if (length + line.length + 1 + reserve > max) {
+    if (length + sep + line.length + reserve > max) {
       out.push(more)
       break
     }
     out.push(line)
-    length += line.length + 1
+    length += sep + line.length
   }
   const text = out.join("\n")
   return text.length > max ? `${text.slice(0, max - 3)}...` : text
@@ -446,12 +456,8 @@ export function fitMessage(lines: string[]): string {
   return fit(lines, MAX_MESSAGE_CHARS)
 }
 
-/**
- * A finding's line in a DM: the claim, for a post its platform, date and "snippet only" when it
- * was not opened (0.23.0), then its first source in <...> so Discord shows the link without an
- * embed.
- */
-export function findingLine(f: ResearchFinding): string {
+/** For a post: " (platform, date, snippet only)" as the DM marks it (0.23.0); "" for a web page. */
+function postMarks(f: ResearchFinding): string {
   const parts = f.platform
     ? [
         platformName(f.platform),
@@ -459,8 +465,54 @@ export function findingLine(f: ResearchFinding): string {
         ...(f.evidence === "snippet" ? ["snippet only"] : []),
       ]
     : []
-  const post = parts.length > 0 ? ` (${parts.join(", ")})` : ""
-  return `- ${f.claim}${post} <${f.sources[0]}>`
+  return parts.length > 0 ? ` (${parts.join(", ")})` : ""
+}
+
+/**
+ * A finding's line in a DM: the claim, for a post its platform, date and "snippet only" when it
+ * was not opened (0.23.0), then its first source in <...> so Discord shows the link without an
+ * embed.
+ */
+export function findingLine(f: ResearchFinding): string {
+  return `- ${f.claim}${postMarks(f)} <${f.sources[0]}>`
+}
+
+/**
+ * A finding's compact line (docket#126): the claim cut to `MAX_COMPACT_CLAIM_CHARS`, the post
+ * marks, and no link, since the finding is on the task's page with it.
+ */
+export function compactFindingLine(f: ResearchFinding): string {
+  const claim =
+    f.claim.length > MAX_COMPACT_CLAIM_CHARS
+      ? `${f.claim.slice(0, MAX_COMPACT_CLAIM_CHARS - 3).trimEnd()}...`
+      : f.claim
+  return `- ${claim}${postMarks(f)}`
+}
+
+/**
+ * The DM's "Findings:" block in compact form (docket#126), to join after the lines before it: as
+ * many compact lines as fit in `room` characters, the rest counted in a last line; when not one
+ * fits, one line saying how many are on the task's page, never a bare header; nothing when even
+ * that does not fit, and nothing for no findings.
+ */
+function compactFindings(findings: readonly ResearchFinding[], room: number): string[] {
+  if (findings.length === 0) return []
+  const lines = findings.map(compactFindingLine)
+  const out = ["", "Findings:"]
+  let used = out.join("\n").length
+  for (const [i, line] of lines.entries()) {
+    const rest = lines.length - i - 1
+    // Room for this line and, unless it is the last, for the count that would follow it.
+    const reserve = rest > 0 ? `(${rest} more on the task's page)`.length + 1 : 0
+    if (used + line.length + 1 + reserve > room) {
+      if (i > 0) return [...out, `(${lines.length - i} more on the task's page)`]
+      const alone = `${lines.length} finding(s) on the task's page.`
+      return alone.length + 1 <= room ? ["", alone] : []
+    }
+    out.push(line)
+    used += line.length + 1
+  }
+  return out
 }
 
 const STATUS_WORDS: Readonly<Record<CoverageStatus, string>> = {
@@ -487,6 +539,13 @@ export function coverageLine(coverage: readonly Coverage[]): string {
  * (0.23.0, when the answer has `coverage`), the reviewer's note and `tail` are kept whole, in
  * that order: `tail`, when given, is bounded by the caller (the "couldn't open" list and the
  * queued line, 0.9.0). Without coverage or a tail the DM is what it was before 0.9.0.
+ *
+ * When the whole answer fits, the findings come as full lines with their links. When it does
+ * not (docket#126), the summary and the `uncertain` lines come first, since the DM is the only
+ * place they reach the owner, and the findings, which are saved with the task, follow in compact
+ * form (`compactFindings`) in the room left. Caveats that overflow the DM on their own are still
+ * dropped from the end by `fit`, and then nothing is said of the findings; a summary longer than
+ * the room a long tail leaves is dropped whole, as before.
  */
 export function renderAnswer(
   title: string,
@@ -494,22 +553,23 @@ export function renderAnswer(
   review: Review,
   tail = "",
 ): string {
-  const lines = [`Research: ${clean(title, 200, true)}`, "", answer.summary]
-  if (answer.findings.length > 0) {
-    lines.push("", "Findings:")
-    for (const f of answer.findings) lines.push(findingLine(f))
-  }
-  if (answer.uncertain.length > 0) {
-    lines.push("", "Uncertain:")
-    for (const u of answer.uncertain) lines.push(`- ${u}`)
-  }
+  const head = [`Research: ${clean(title, 200, true)}`, "", answer.summary]
+  const uncertain =
+    answer.uncertain.length > 0 ? ["", "Uncertain:", ...answer.uncertain.map((u) => `- ${u}`)] : []
   const note =
     review.verdict === "approve"
       ? "Checked by a reviewer run."
       : `Checked and corrected by a reviewer run (${review.problems.length} problem(s) fixed).`
   const social = answer.coverage && answer.coverage.length > 0 ? coverageLine(answer.coverage) : ""
   const after = [social, note, tail].filter((s) => s.length > 0).join("\n\n")
-  return `${fit(lines, MAX_MESSAGE_CHARS - after.length - 2)}\n\n${after}`
+  const budget = MAX_MESSAGE_CHARS - after.length - 2
+  const full =
+    answer.findings.length > 0 ? ["", "Findings:", ...answer.findings.map(findingLine)] : []
+  const whole = [...head, ...full, ...uncertain]
+  if (whole.join("\n").length <= budget) return `${whole.join("\n")}\n\n${after}`
+  const kept = [...head, ...uncertain].join("\n").length
+  const compact = compactFindings(answer.findings, budget - kept - 1)
+  return `${fit([...head, ...compact, ...uncertain], budget)}\n\n${after}`
 }
 
 /** Lines fitted into at most `max` characters, whole lines dropped from the end. */
