@@ -4,6 +4,12 @@ import {
   type GiftDuplicateReport,
 } from "./gift-duplicates.js"
 import { type GiftSyncPlan, previewRoster, resolveGroups, rosterIds } from "./gift-groups.js"
+import {
+  applyGiftImportRows,
+  type GiftImportApplyOptions,
+  type GiftImportOutcome,
+  type GiftImportReviewed,
+} from "./gift-import.js"
 import type { GiftBase, GiftEvent, GiftFieldsByKind, GiftKind, GiftRecord } from "./gift-model.js"
 import {
   type GiftEventFilter,
@@ -432,6 +438,20 @@ export class GiftLedger {
     for (const r of plan.archiveRows) {
       await this.update("occasionRecipient", r.id, step(), r.revision, { archived: true })
     }
+  }
+
+  /**
+   * Writes the import rows the owner approved after review (`reviewGiftImport`, docket#102) and
+   * answers each with its outcome (`applyGiftImportRows` has the rules). Not atomic: a row that
+   * fails leaves the rows before it written and the rows after it tried. Keys come from content,
+   * so `meta.idempotencyKey` is ignored and importing the same rows again creates nothing twice.
+   */
+  applyGiftImport(
+    meta: GiftWriteMeta,
+    rows: readonly GiftImportReviewed[],
+    options: GiftImportApplyOptions,
+  ): Promise<GiftImportOutcome[]> {
+    return applyGiftImportRows(this, meta, rows, options)
   }
 
   get<K extends GiftKind>(kind: K, ownerId: string, id: string): Promise<GiftRecord<K> | null> {
