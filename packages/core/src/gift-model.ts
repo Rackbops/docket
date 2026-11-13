@@ -82,7 +82,8 @@ export interface GiftOccasionFields {
   excludeIds: string[]
   /**
    * The shop-by day (docket#103): local `YYYY-MM-DD`, on or before `date` when both are set. A
-   * digest near it is sent even when nothing changed (`decideGiftDigest`). Null or left out (an
+   * digest near it is sent even when nothing changed, when there is anything to say
+   * (`decideGiftDigest`). Null or left out (an
    * occasion from before docket#103): none.
    */
   deadline?: string | null

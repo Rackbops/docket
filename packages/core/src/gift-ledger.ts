@@ -281,6 +281,7 @@ export class GiftLedger {
         pick: preview.ideas.map((i) => i.fromAllocationId),
         title: preview.occasion.title,
         date: preview.occasion.date,
+        ...(preview.occasion.deadline === undefined ? {} : { deadline: preview.occasion.deadline }),
       })
     } catch (err) {
       // What the preview picked cannot be picked now (a person archived, a gift bought): moved.

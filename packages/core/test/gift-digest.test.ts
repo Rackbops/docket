@@ -205,7 +205,7 @@ describe("decideGiftDigest", () => {
     const rows = await w.ledger.list("occasionRecipient", "u1")
     const bo = rows.find((r) => r.recipientId === w.bo.id)
     await w.ledger.update("occasionRecipient", bo?.id ?? "", meta, 1, { decision: "skipped" })
-    expect(decideGiftDigest(await w.input(at("2026-12-17"), null))).toEqual({
+    expect(decideGiftDigest(await w.input(at("2026-12-17"), null))).toMatchObject({
       due: false,
       reason: "nothing",
     })
@@ -246,6 +246,46 @@ describe("decideGiftDigest", () => {
     const d = decideGiftDigest(await w.input(at("2026-12-01"), null))
     if (!d.due) throw new Error("not due")
     expect(d.text).toMatch(/ and 3 more\.\n/)
+  })
+
+  it("sends again when what the last digest said comes back after a quiet day", async () => {
+    const w = await world()
+    const rows = await w.ledger.list("occasionRecipient", "u1")
+    const bo = rows.find((r) => r.recipientId === w.bo.id)
+    await w.ledger.update("occasionRecipient", bo?.id ?? "", meta, 1, { decision: "skipped" })
+    const first = decideGiftDigest(await w.input(at("2026-12-01"), null))
+    if (!first.due) throw new Error("not due")
+    expect(first.text).toMatch(/1 gift awaiting arrival/)
+    await w.ledger.update("purchase", w.purchase.id, meta, 1, { received: 1 })
+    const quiet = decideGiftDigest(await w.input(at("2026-12-02"), first.state))
+    expect(quiet).toMatchObject({ due: false, reason: "nothing" })
+    if (quiet.due || quiet.state === undefined) throw new Error("no state")
+    expect(quiet.state.sentOn).toBe("2026-12-01")
+    await w.ledger.update("purchase", w.purchase.id, meta, 2, { received: 0 })
+    const back = decideGiftDigest(await w.input(at("2026-12-03"), quiet.state))
+    expect(back).toMatchObject({ due: true })
+    // Without the quiet day's state it would read as unchanged.
+    expect(decideGiftDigest(await w.input(at("2026-12-03"), first.state))).toEqual({
+      due: false,
+      reason: "unchanged",
+    })
+  })
+
+  it("never sends for an archived occasion", async () => {
+    const w = await world()
+    await w.ledger.update("occasion", w.xmas.id, meta, 1, { archived: true })
+    expect(decideGiftDigest(await w.input(at("2026-12-01"), null))).toEqual({
+      due: false,
+      reason: "off",
+    })
+  })
+
+  it("counts the days in the owner's zone, whatever the occasion's", async () => {
+    const w = await world({ deadline: null })
+    await w.ledger.update("occasion", w.xmas.id, meta, 1, { timeZone: "Asia/Tokyo" })
+    // 10:00 on the 24th in New York is already the 25th in Tokyo.
+    const d = decideGiftDigest(await w.input(at("2026-12-24"), null))
+    expect(d).toMatchObject({ due: true, daysLeft: 1 })
   })
 
   it("keys a day's send per occasion", () => {
@@ -300,5 +340,51 @@ describe("occasion deadline and digest fields", () => {
       date: "2027-12-24",
     })
     expect(moved.occasion.deadline).toBe("2027-12-17")
+    const replaced = previewGiftRollover({
+      occasion: w.xmas,
+      groups: [],
+      recipients: [],
+      roster: [],
+      allocations: [],
+      deadline: null,
+    })
+    expect(replaced.occasion.deadline).toBeNull()
+  })
+
+  it("drops a date-less occasion's shop-by day that would fall after the new date", async () => {
+    const w = await world()
+    const dateless = { ...w.xmas, date: null, year: null, deadline: "2026-12-18" }
+    const later = previewGiftRollover({
+      occasion: dateless,
+      groups: [],
+      recipients: [],
+      roster: [],
+      allocations: [],
+      date: "2027-12-24",
+    })
+    expect(later.occasion.deadline).toBe("2027-12-18")
+    const earlier = previewGiftRollover({
+      occasion: dateless,
+      groups: [],
+      recipients: [],
+      roster: [],
+      allocations: [],
+      date: "2027-06-01",
+    })
+    expect(earlier.occasion.deadline).toBeNull()
+  })
+
+  it("applies a rollover whose shop-by day the owner replaced", async () => {
+    const w = await world()
+    const preview = previewGiftRollover({
+      occasion: w.xmas,
+      groups: [],
+      recipients: await w.ledger.list("recipient", "u1"),
+      roster: await w.ledger.list("occasionRecipient", "u1"),
+      allocations: await w.ledger.list("allocation", "u1"),
+      deadline: "2027-12-10",
+    })
+    const made = await w.ledger.applyGiftRollover(meta, preview)
+    expect(made.deadline).toBe("2027-12-10")
   })
 })

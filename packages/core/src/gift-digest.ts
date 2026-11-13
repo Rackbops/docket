@@ -11,7 +11,8 @@ import { wallClock } from "./zoned.js"
  * something new or its shop-by day is near; an unchanged day stays quiet.
  *
  * `decideGiftDigest` is pure: the host reads the records, asks it, sends the text it returns, and
- * stores the returned `state` for next time (keyed by occasion). `giftDigestKey` names the day's
+ * stores any `state` it returns (a sent digest's, or a quiet `nothing`'s) for next time, keyed by
+ * occasion. `giftDigestKey` names the day's
  * send for the host's exactly-once claim (`Store.claimNotice`), so a retried tick never sends
  * twice.
  *
@@ -63,13 +64,24 @@ export type GiftDigestQuiet =
   | "unchanged"
 
 export type GiftDigestDecision =
-  | { due: false; reason: GiftDigestQuiet }
+  | {
+      due: false
+      reason: GiftDigestQuiet
+      /**
+       * With `nothing`: store this in place of the last state, so that what the last digest said
+       * coming back later (a returned gift) reads as a change and is sent.
+       */
+      state?: GiftDigestState
+    }
   | {
       due: true
       text: string
       /** Store this; pass it back as `last`. */
       state: GiftDigestState
-      /** Whole days to the shop-by day (or the date); null when the occasion has neither. */
+      /**
+       * Whole days to the shop-by day, or to the date when there is none; null when the occasion
+       * has neither.
+       */
       daysLeft: number | null
     }
 
@@ -92,21 +104,22 @@ function hash(text: string): string {
 
 /**
  * Whether a digest is due for `input.occasion` now, and its text. Who still needs a gift: roster
- * people not done (`giftCoverage`) with no gift bought yet for them (`needs-planning` or
- * `planned`). Awaiting arrival: this occasion's gifts bought and not yet arrived. A digest is due
- * at or after the owner's preferred hour, once a local day, when either is non-empty and either
- * changed since the last digest or the shop-by day is 0 to `GIFT_DIGEST_NEAR_DAYS` days away. The
- * days are counted in the occasion's zone, or the owner's when it has none; the hour in the
- * owner's.
+ * people not done and short of their target in gifts bought (`giftCoverage` status
+ * `needs-planning` or `planned`; with no target, one gift). Awaiting arrival: this occasion's
+ * gifts bought and not yet arrived, whoever they are for. A digest is due at or after the owner's
+ * preferred hour, once a local day, when either is non-empty and either changed since the last
+ * state stored or the shop-by day (the date, when there is none) is 0 to `GIFT_DIGEST_NEAR_DAYS`
+ * days away. Everything is counted in the owner's zone -- the hour, the day, the days left and
+ * whether the date has passed -- so "today" in the text is the owner's today.
  */
 export function decideGiftDigest(input: GiftDigestInput): GiftDigestDecision {
   const { occasion, owner, now, last } = input
   if (occasion.digest !== true || occasion.archived) return { due: false, reason: "off" }
-  const zone = occasion.timeZone ?? owner.timeZone
+  const zone = owner.timeZone
   if (occasion.date !== null && (daysUntil(occasion.date, now, zone) ?? 0) < 0) {
     return { due: false, reason: "past" }
   }
-  const local = wallClock(now, owner.timeZone)
+  const local = wallClock(now, zone)
   const today = `${local.year}-${pad(local.month)}-${pad(local.day)}`
   if (local.hour < owner.preferredHour) return { due: false, reason: "not-yet" }
   if (last?.sentOn === today) return { due: false, reason: "sent-today" }
@@ -120,12 +133,14 @@ export function decideGiftDigest(input: GiftDigestInput): GiftDigestDecision {
   const awaiting = input.buckets.filter(
     (b) => b.occasionId === occasion.id && b.stage === "purchased",
   ).length
-  if (needing.length === 0 && awaiting === 0) return { due: false, reason: "nothing" }
+  const fingerprint = hash(JSON.stringify([needing, awaiting]))
+  if (needing.length === 0 && awaiting === 0) {
+    return { due: false, reason: "nothing", state: { sentOn: last?.sentOn ?? null, fingerprint } }
+  }
 
   const shopBy = occasion.deadline ?? occasion.date
   const daysLeft = shopBy === null ? null : daysUntil(shopBy, now, zone)
   const near = daysLeft !== null && daysLeft >= 0 && daysLeft <= GIFT_DIGEST_NEAR_DAYS
-  const fingerprint = hash(JSON.stringify([needing, awaiting]))
   if (fingerprint === last?.fingerprint && !near) return { due: false, reason: "unchanged" }
 
   const names = needing.map(
