@@ -13,31 +13,54 @@ import { clean } from "./text.js"
  *   linked back by `source: { kind: "scout", ref: "<taskId>/<findingId>" }`. It is never
  *   selected, bought or allocated, so it covers nobody. The finding's text is kept only as the
  *   item's notes, as text: whatever it says, it is never read as an instruction.
- * - An eBay finding copies nothing of the listing. The eBay adapter keeps no listing data
- *   (`keepsFindings` is false for an eBay watch: eBay's API License limits how long listing data
- *   may be kept), so an eBay finding's text and address are not copied: the owner names the gift,
- *   and only the link back is kept.
+ * - An eBay finding copies nothing of the listing. The eBay adapter keeps no listing as a
+ *   finding, only a digest of each item id in its state (`keepsFindings` is false for an eBay
+ *   watch: eBay's API License limits how long listing data may be kept), so an eBay finding's
+ *   text and address are not copied: the owner names the gift, and only the link back is kept.
+ *   Stricter than the adapter: any finding that names an eBay address, even one a scout or
+ *   research run found, is treated the same way.
  * - `giftWatchProblems`: a gift's `watchTaskIds` may name only the owner's own price or want-list
- *   watches.
+ *   watches. The gift store cannot see tasks, so a host checks with it (or writes the link with
+ *   `GiftLedger.linkGiftWatches`, which does) before any write that sets the field.
  * - `giftScoutBrief`: what a scout run for a gift may be told about the person -- only the
  *   interests and avoidances the owner picks, never their name, the roster or purchase history.
+ *   A building block: no scout run for a gift exists yet, and a host that starts one passes it
+ *   this brief as its only input about the person.
  */
 
 /** The task types a gift may link to as watches. */
 export const GIFT_WATCH_TYPES: readonly string[] = ["price", "wantlist"]
 
-/** eBay's hosts: `ebay.com`, `ebay.co.uk`, `www.ebay.de` and the like (as the eBay source's). */
-const EBAY_HOST = /(^|\.)ebay\.[a-z]{2,3}(\.[a-z]{2})?$/i
+/**
+ * eBay's hosts: `ebay.com`, `ebay.co.uk`, `www.ebay.de` and the like. The same pattern as the
+ * eBay source's `EBAY_HOST` in the types package, which a test there holds it to.
+ */
+export const GIFT_EBAY_HOST = /(^|\.)ebay\.[a-z]{2,3}(\.[a-z]{2})?$/i
 
-/** A finding from eBay: tagged by the eBay source, or naming an eBay address. */
-export function isEbayFinding(finding: Pick<StoredFinding, "tags" | "source">): boolean {
-  if (finding.tags.includes("ebay")) return true
-  if (finding.source === null) return false
+const isEbayUrl = (text: string): boolean => {
   try {
-    return EBAY_HOST.test(new URL(finding.source).hostname.replace(/\.$/, ""))
+    return GIFT_EBAY_HOST.test(new URL(text).hostname.replace(/\.$/, ""))
   } catch {
     return false
   }
+}
+
+/**
+ * A finding that carries eBay data: tagged by the eBay source, or naming an eBay address anywhere
+ * -- its source, a link wrapped inside its source, or its text (a scout or research run quoting a
+ * listing).
+ */
+export function isEbayFinding(finding: Pick<StoredFinding, "tags" | "source" | "text">): boolean {
+  if (finding.tags.includes("ebay")) return true
+  let all = `${finding.source ?? ""} ${finding.text}`
+  try {
+    all += ` ${decodeURIComponent(all)}`
+  } catch {
+    // A malformed escape: the text as it is is still searched.
+  }
+  // Every address that starts anywhere, a link wrapped inside another's query included.
+  const starts = [...all.matchAll(/https?:\/\//gi)].map((m) => m.index)
+  return starts.some((i) => isEbayUrl(all.slice(i).split(/[\s<>"'()[\]&?#]/)[0] ?? ""))
 }
 
 /** An http or https address with no login in it, as given; null otherwise. */
@@ -66,8 +89,10 @@ export interface GiftIdeaChoice {
  * The item "save as gift idea" makes from one finding: planning `idea`, linked to the finding,
  * with the finding's first line as its title (or the owner's), its address as the URL and its
  * text as notes, cleaned and capped. An eBay finding gives no title, URL or notes: the owner's
- * title is needed (a missing one is left blank, which the ledger refuses). Write it with
- * `GiftLedger.create("item", ...)`.
+ * title is needed (a missing or blank one is left blank, which the ledger refuses); for any other,
+ * a blank title falls back to the first line. A finding of any task type may be saved (a scout's,
+ * a want-list's, a research request's); `source.kind` is `scout` for each, naming the tracker's
+ * findings. Write it with `GiftLedger.saveFindingAsIdea`.
  */
 export function giftIdeaFromFinding(
   finding: Pick<StoredFinding, "id" | "taskId" | "text" | "tags" | "source">,
@@ -75,7 +100,7 @@ export function giftIdeaFromFinding(
 ): GiftItemFields {
   const ebay = isEbayFinding(finding)
   const firstLine = finding.text.split("\n").find((l) => l.trim() !== "") ?? ""
-  const title = choice.title ?? (ebay ? "" : firstLine)
+  const title = choice.title?.trim() ? choice.title : ebay ? "" : firstLine
   return {
     title: clean(title, GIFT_TEXT_MAX, true),
     url: ebay ? null : webUrl(finding.source),

@@ -115,9 +115,14 @@ describe("saving a scout finding as a gift idea", () => {
     const f = await w.finding("Puzzle")
     const item = await w.ledger.saveFindingAsIdea(w.meta, f)
     const tasks = await w.tasks.listTasks({ ownerId: w.owner.id })
-    expect(giftWatchProblems(w.owner.id, [w.watch.id], tasks)).toEqual([])
-    const linked = await w.ledger.update("item", item.id, w.meta, item.revision, {
-      watchTaskIds: [w.watch.id],
+    const watched = await w.ledger.linkGiftWatches(
+      w.meta,
+      item.id,
+      item.revision,
+      [w.watch.id],
+      tasks,
+    )
+    const linked = await w.ledger.update("item", item.id, w.meta, watched.revision, {
       planning: "selected",
     })
     expect(linked.watchTaskIds).toEqual([w.watch.id])
@@ -150,8 +155,21 @@ describe("saving a scout finding as a gift idea", () => {
     })
     const byHost = await w.finding("Puzzle -- $20", { source: "https://ebay.co.uk/itm/42" })
     expect(isEbayFinding(tagged)).toBe(true)
-    expect(isEbayFinding({ tags: ["wantlist", "ebay"], source: null })).toBe(true)
-    expect(isEbayFinding({ tags: ["scout"], source: "https://ebay.example.com/x" })).toBe(false)
+    const f = (text: string, source: string | null) => ({ tags: ["scout"], source, text })
+    expect(isEbayFinding({ ...f("Puzzle", null), tags: ["wantlist", "ebay"] })).toBe(true)
+    expect(isEbayFinding(f("Puzzle", "https://ebay.example.com/x"))).toBe(false)
+    expect(isEbayFinding(f("seen at https://www.ebay.com/itm/99 seller bob", null))).toBe(true)
+    expect(
+      isEbayFinding(
+        f("Puzzle", "https://www.google.com/url?q=https%3A%2F%2Fwww.ebay.com%2Fitm%2F1"),
+      ),
+    ).toBe(true)
+    expect(isEbayFinding(f("Puzzle", "https://M.EBAY.COM.AU./itm/1"))).toBe(true)
+    const quoted = await w.finding("Puzzle, also at https://www.ebay.com/itm/99 seller bob")
+    expect(giftIdeaFromFinding(quoted, { title: "Puzzle" })).toMatchObject({
+      url: null,
+      notes: null,
+    })
     expect(isEbayFinding(byHost)).toBe(true)
     for (const f of [tagged, byHost]) {
       const fields = giftIdeaFromFinding(f, { title: "Lighthouse puzzle" })
@@ -203,6 +221,19 @@ describe("saving a scout finding as a gift idea", () => {
     }
   })
 
+  it("falls back to the first line for a blank title, and saves a finding once", async () => {
+    const w = await world()
+    const f = await w.finding("\n  Lighthouse puzzle\nmore")
+    expect(giftIdeaFromFinding(f, { title: "  " }).title).toBe("Lighthouse puzzle")
+    await w.ledger.saveFindingAsIdea(w.meta, f)
+    await expect(w.ledger.saveFindingAsIdea(w.meta, f)).rejects.toBeInstanceOf(GiftValidationError)
+    const keyed = { ...w.meta, idempotencyKey: "save-1" }
+    const g = await w.finding("Kite")
+    const first = await w.ledger.saveFindingAsIdea(keyed, g)
+    expect((await w.ledger.saveFindingAsIdea(keyed, g)).id).toBe(first.id)
+    expect(await w.ledger.list("item", w.owner.id)).toHaveLength(2)
+  })
+
   it("refuses another owner's finding as not found", async () => {
     const w = await world()
     const f = await w.finding("Puzzle")
@@ -223,6 +254,12 @@ describe("gift watch links and scout briefs", () => {
       `no watch ${w.watch.id}`,
     ])
     expect(giftWatchProblems(w.owner.id, ["nope"], tasks)).toEqual(["no watch nope"])
+    const f = await w.finding("Puzzle")
+    const item = await w.ledger.saveFindingAsIdea(w.meta, f)
+    await expect(
+      w.ledger.linkGiftWatches(w.meta, item.id, item.revision, [w.scout.id], tasks),
+    ).rejects.toBeInstanceOf(GiftValidationError)
+    expect((await w.ledger.get("item", w.owner.id, item.id))?.watchTaskIds).toBeUndefined()
   })
 
   it("tells a scout only the interests and avoidances the owner picks", () => {
