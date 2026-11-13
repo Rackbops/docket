@@ -86,7 +86,8 @@ The tracker's task types, built on `@rackbops/docket-core`'s contract. Shipped s
   supported by its source, a "Correction:" claim really corrects the earlier answer and is
   supported, and nothing is repeated. The owner gets an "Update to <title>:" DM of those findings
   (a claim the first answer already made, case and spacing aside, is dropped), or one line when
-  there are none; they are saved tagged `["research", verdict, "update"]` beside the first pass's.
+  there are none; they are saved tagged `["research", verdict, "update"]` beside the first pass's
+  (one from a post with its post tags as well, docket#124).
   With no pages by the expiry, past the deadline, on a rejected update or on a second failure, the
   task ends with one line: the first answer stands. With no store, a `sent` request, or nothing
   blocked, a request runs exactly as in 0.8.0; the answer schema gains the optional field (and with
@@ -227,7 +228,11 @@ The tracker's task types, built on `@rackbops/docket-core`'s contract. Shipped s
   claims resting on posts alone to `uncertain`, rewords opinions as what posters say, counts a
   repost once, checks `coverage` and `since`, and removes a finding that follows an instruction
   from a post. Saved findings from posts are tagged `["research", <verdict>, "social",
-  <platform>]`.
+  <platform>]`, then (docket#124) `published:<date as kept>` when the run gave a date -- an instant
+  as its UTC day, the day `since` reads it as (`published:2026-10-02`), an about date or `undated`
+  as written (`published:about 2026-10-19`, `published:undated`) -- and the evidence, `read` or
+  `snippet`, when given, so the stored finding carries what the DM's finding line shows. Tags are
+  free strings on docket-core's `Finding`; no host change is needed to store them.
 
   Plain code is the belt (`socialOutgoing`, on the answer that goes out, first pass and update):
   a social post link is one post (`canonicalSocialUrl`: `youtu.be`, shorts, live and embed links

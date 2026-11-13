@@ -318,6 +318,35 @@ describe("a first pass that could not open a page", () => {
 })
 
 describe("the second pass", () => {
+  it("saves an update finding from a post with its post tags too (docket#124)", async () => {
+    const posted = {
+      ...UPDATE,
+      findings: [
+        ...UPDATE.findings,
+        {
+          claim: "A YouTube reviewer calls Example Game the year's best.",
+          sources: ["https://www.youtube.com/watch?v=dQw4w9WgXcQ"],
+          platform: "youtube",
+          publishedAt: "2026-10-05T10:00:00Z",
+          evidence: "read",
+        },
+      ],
+    }
+    const { executor } = scripted(ok(BLOCKED_DRAFT), approve(DRAFT), ok(posted), approve(posted))
+    const s = await setup(executor, async () => PAGES)
+    await s.lanes.tickExecute()
+    await s.lanes.tickExecute()
+    expect(await ready(s)).toBe("ready")
+    await s.lanes.tickExecute()
+    await s.lanes.tickExecute()
+    const findings = await s.store.listFindings({ taskId: s.task.id })
+    expect(findings.map((f) => f.tags)).toEqual([
+      ["research", "approve"],
+      ["research", "approve", "update"],
+      ["research", "approve", "update", "social", "youtube", "published:2026-10-05", "read"],
+    ])
+  })
+
   it("researches the gathered pages on the earlier answer, then reviews them", async () => {
     const { executor, specs } = scripted(
       ok(BLOCKED_DRAFT),

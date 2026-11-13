@@ -27,6 +27,7 @@ import {
   sameClaim,
 } from "./research-answer.js"
 import {
+  postDate,
   SOCIAL_MAX_TURNS,
   socialChecks,
   socialChoice,
@@ -846,9 +847,23 @@ function waitTail(
   )
 }
 
-/** The tags a finding from a post carries besides the type's (0.23.0): `social` and its platform. */
+/**
+ * The tags a finding from a post carries besides the type's (0.23.0): `social` and its platform;
+ * since docket#124 also its date as kept, `published:<day>` for an instant (its UTC day, as
+ * `since` reads it) and `published:<text>` for an "about <date>" or "undated", and its evidence,
+ * `read` or `snippet`, when the run gave them -- so the stored finding carries what the DM's
+ * finding line shows. A finding on web pages gets none.
+ */
 function postTags(f: ResearchAnswer["findings"][number]): string[] {
-  return f.platform ? ["social", f.platform] : []
+  if (!f.platform) return []
+  const posted = /^\d{4}-\d{2}-\d{2}T/.test(f.publishedAt ?? "") ? postDate(f.publishedAt) : null
+  const published = posted ? posted.toISOString().slice(0, 10) : f.publishedAt
+  return [
+    "social",
+    f.platform,
+    ...(published ? [`published:${published}`] : []),
+    ...(f.evidence ? [f.evidence] : []),
+  ]
 }
 
 /** True in the second pass: waiting for pages, or past its research run. */
