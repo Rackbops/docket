@@ -95,6 +95,15 @@ uses `<key>/n`, so a retry replays what was written; a new preview needs a new k
 occasion is never synced. A static
 group's membership is a list of ids and no label decides it; a filter group's is its labels.
 
+`gift-rollover` sets up next year (docket#99). `previewGiftRollover` shows the new occasion (its
+title's year moved on, its date a year later, 29 February becoming the 28th), its roster -- the
+groups re-resolved against today's membership and labels, plus the overrides, with each staying
+person's target and budget, and who is left off -- and only the ideas the owner picks: unbought,
+not handed off, for the people still on. It never carries a purchase or a received, wrapped,
+ready or given state, and every person's decision starts again at planning. Nothing is written
+until `GiftLedger.applyGiftRollover`, which previews again from the store and refuses a preview
+that no longer matches before writing; the old occasion is never written, archived or not.
+
 ## Adopting 0.18.0
 
 **Run now** (rackbops-bot-plugins#369). `runNowKey(taskId, requestId)` keys a run its owner asked for

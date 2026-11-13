@@ -11,6 +11,7 @@ import {
   GiftValidationError,
   type GiftWriteMeta,
 } from "./gift-ports.js"
+import { type GiftRolloverPreview, previewGiftRollover } from "./gift-rollover.js"
 import { allocationUnits, keptUnits } from "./gift-rules.js"
 import { giftProblems } from "./gift-validate.js"
 
@@ -150,6 +151,89 @@ export class GiftLedger {
       current,
     )
     return this.store.update(kind, id, meta, expectedRevision, clean)
+  }
+
+  /**
+   * Makes a reviewed "set up next year" (`previewGiftRollover`, docket#99): the new occasion, its
+   * roster rows (planning, with each staying person's target and budget) and the picked ideas as
+   * new, unbought gifts. It first previews again from the store with the same picks, title and
+   * date, and refuses (`GiftRevisionError`) a preview that no longer matches -- the old occasion,
+   * a group, a label, a roster row or a picked gift moved -- before anything is written. The old
+   * occasion is never written. Not atomic: a refused write leaves the earlier ones (preview
+   * again). With an idempotency key, write n uses `<key>/<n>`, so retrying replays what was made;
+   * the check runs first, so a retry after something moved is refused, not replayed.
+   */
+  async applyGiftRollover(
+    meta: GiftWriteMeta,
+    preview: GiftRolloverPreview,
+  ): Promise<GiftRecord<"occasion">> {
+    const old = await this.store.get("occasion", meta.ownerId, preview.fromOccasionId)
+    if (old === null) throw new GiftNotFoundError(`no occasion ${preview.fromOccasionId}`)
+    const all = { includeArchived: true }
+    let now: GiftRolloverPreview
+    try {
+      now = previewGiftRollover({
+        occasion: old,
+        groups: await this.store.list("group", meta.ownerId, all),
+        recipients: await this.store.list("recipient", meta.ownerId, all),
+        roster: await this.store.list("occasionRecipient", meta.ownerId, {
+          ...all,
+          occasionId: old.id,
+        }),
+        allocations: await this.store.list("allocation", meta.ownerId, {
+          ...all,
+          occasionId: old.id,
+        }),
+        pick: preview.ideas.map((i) => i.fromAllocationId),
+        title: preview.occasion.title,
+        date: preview.occasion.date,
+      })
+    } catch (err) {
+      // What the preview picked cannot be picked now (a person archived, a gift bought): moved.
+      if (!(err instanceof GiftValidationError)) throw err
+      throw new GiftRevisionError(
+        `occasion ${old.id} moved since the preview (${err.problems.join("; ")}); preview again`,
+        old.revision,
+      )
+    }
+    if (JSON.stringify(now) !== JSON.stringify(preview)) {
+      throw new GiftRevisionError(
+        `occasion ${old.id}, its groups, people or gifts changed since the preview; preview again`,
+        old.revision,
+      )
+    }
+    let n = 0
+    const step = (): GiftWriteMeta => {
+      n += 1
+      const { idempotencyKey, ...rest } = meta
+      return idempotencyKey === undefined
+        ? rest
+        : { ...rest, idempotencyKey: `${idempotencyKey}/${n}` }
+    }
+    const made = await this.create("occasion", step(), preview.occasion)
+    for (const r of preview.roster) {
+      await this.create("occasionRecipient", step(), {
+        occasionId: made.id,
+        recipientId: r.recipientId,
+        target: r.target,
+        budgetMinor: r.budgetMinor,
+        decision: "planning",
+        skipReason: null,
+      })
+    }
+    for (const idea of preview.ideas) {
+      await this.create("allocation", step(), {
+        itemId: idea.itemId,
+        occasionId: made.id,
+        recipientIds: idea.recipientIds,
+        quantity: idea.quantity,
+        shared: idea.shared,
+        purchaseId: null,
+        handoff: "none",
+        givenOn: null,
+      })
+    }
+    return made
   }
 
   /**
