@@ -165,9 +165,9 @@ export class GiftLedger {
 
   /**
    * The duplicate warnings and possible duplicates for an allocation about to be written
-   * (`findGiftDuplicates`, docket#100), read from the store. It writes nothing and refuses
-   * nothing: the host shows the report, and an allocation the owner writes anyway carries the
-   * warned ids in `repeatOf`. An item that is not the owner's is refused as not found.
+   * (`findGiftDuplicates`, docket#100), read from the store. It writes nothing, and refuses only
+   * an item that is not the owner's (not found); a warning never refuses: the host shows the
+   * report, and an allocation the owner writes anyway carries the warned ids in `repeatOf`.
    */
   async giftDuplicates(
     ownerId: string,
@@ -190,8 +190,8 @@ export class GiftLedger {
   /**
    * Makes a reviewed "set up next year" (`previewGiftRollover`, docket#99): the new occasion, its
    * roster rows (planning, with each staying person's target and budget) and the picked ideas as
-   * new, unbought gifts, each with `repeatOf` naming the gift it came from. It first previews again from the store with the same picks, title and
-   * date, and refuses (`GiftRevisionError`) before anything is written when what it would write
+   * new, unbought gifts, each with `repeatOf` naming the gift it came from. It first previews
+   * again from the store with the same picks, title and date, and refuses (`GiftRevisionError`) before anything is written when what it would write
    * differs: the old occasion's or a group's revision moved, or the new occasion, the roster (who,
    * with what target and budget) or a picked idea (its people, quantity or sharing) came out
    * different. Order and key order do not count for the check; a gift bought or added that was
@@ -296,7 +296,7 @@ export class GiftLedger {
         purchaseId: null,
         handoff: "none",
         givenOn: null,
-        // The same idea again on purpose: its source is accepted, so it never warns against it.
+        // The same idea again on purpose: a warning against its source reads as accepted.
         repeatOf: [idea.fromAllocationId],
       })
     }

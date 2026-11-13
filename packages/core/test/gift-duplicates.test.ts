@@ -330,6 +330,40 @@ describe("duplicate gift warnings", () => {
     ])
   })
 
+  it("never matches two households through a shared member, nor two members of one household", async () => {
+    const s = await setup()
+    const h1 = await s.ledger.create("recipient", meta, {
+      ...person("Home one"),
+      kind: "household",
+      memberIds: [s.ann.id, s.bob.id],
+    })
+    const h2 = await s.ledger.create("recipient", meta, {
+      ...person("Home two"),
+      kind: "household",
+      memberIds: [s.ann.id],
+    })
+    const game = await s.ledger.create("item", meta, item("Board game", { productKey: "bg-1" }))
+    await s.ledger.create("allocation", meta, allocation(game.id, s.xmas.id, [h1.id]))
+    await s.ledger.create("allocation", meta, allocation(game.id, s.xmas.id, [s.bob.id]))
+    const other = await s.ledger.create("occasion", meta, occasion("custom", "Party"))
+    for (const who of [h2.id]) {
+      const r = await s.ledger.giftDuplicates(A, {
+        itemId: game.id,
+        occasionId: other.id,
+        recipientIds: [who],
+      })
+      expect(r).toEqual({ warnings: [], possible: [] })
+    }
+    // Ann is in Home one, so she matches its gift, but never Bob's own.
+    const ann = await s.ledger.giftDuplicates(A, {
+      itemId: game.id,
+      occasionId: other.id,
+      recipientIds: [s.ann.id],
+    })
+    expect(ann.warnings).toHaveLength(1)
+    expect(ann.warnings[0]?.recipientIds).toEqual([s.ann.id])
+  })
+
   it("refuses an item that is not the owner's, and accepts an empty repeatOf", async () => {
     const s = await setup()
     await expect(

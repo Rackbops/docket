@@ -118,7 +118,10 @@ export interface GiftDuplicate {
   /** Where it sits: on another live occasion, or in the people's history. */
   where: "open" | "history"
   match: GiftDuplicateMatch | GiftPossibleMatch
-  /** The owner already accepted it (the new allocation's `repeatOf` names it). */
+  /**
+   * The owner already accepted it: the new allocation's `repeatOf` names it, or, for an edit of an
+   * existing allocation, its `repeatOf` names that one.
+   */
   accepted: boolean
 }
 
@@ -193,7 +196,9 @@ export function findGiftDuplicates(input: GiftDuplicateInput): GiftDuplicateRepo
       recipientIds: shared,
       where,
       match: "same" in how ? how.same : how.possible,
-      accepted: accepted.has(other.id),
+      accepted:
+        accepted.has(other.id) ||
+        (mine.id !== undefined && (other.repeatOf ?? []).includes(mine.id)),
     }
     if ("same" in how) report.warnings.push(found)
     else report.possible.push(found)
