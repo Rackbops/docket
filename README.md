@@ -327,7 +327,11 @@ what terms, is recorded in [`docs/social-sources.md`](docs/social-sources.md) (d
   page (`/P/<id>`; its search and catalog pages are closed to bots by its robots.txt) through the
   host's Fetch port, and makes each copy in stock a listing: its grade, note and sale price, the
   seller named, keyed by its inventory id so a new copy is new to the watch. A trusted seller: no
-  shop check runs. `nobleKnightProduct` reads a product page's address into its one form.
+  shop check runs. `nobleKnightProduct` reads a product page's address into its one form. Each
+  look asks for US dollars (`?SS=USD`; Noble Knight serves a regional site by the reader's
+  location), and a page still in another currency, or a copy in stock that no longer reads, is a
+  miss. A copy is told once; a later price drop on it is not told again. The tracker plugin must
+  wire the source in before any watch can use it (a plugin PR in Rackbops/rackbops-bot-plugins).
 
 ## Use
 

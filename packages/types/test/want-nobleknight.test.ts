@@ -114,6 +114,12 @@ describe("readNobleKnightCopies", () => {
     expect(readNobleKnightCopies(none, "2147942033", URL_)).toEqual([])
     expect(readNobleKnightCopies(US, "2148112695", URL_)).toBeNull()
     expect(readNobleKnightCopies("<html>Access denied</html>", "2147942033", URL_)).toBeNull()
+    expect(readNobleKnightCopies(US, "2147942033|.*", URL_)).toBeNull()
+  })
+
+  it("answers null when a copy in stock no longer reads, so a changed layout is a miss", () => {
+    const changed = US.replace("Edit quantity Condition", "Change quantity Grade")
+    expect(readNobleKnightCopies(changed, "2147942033", URL_)).toBeNull()
   })
 })
 
@@ -125,7 +131,14 @@ describe("nobleKnightSource", () => {
       f.fetch,
     )
     expect(got).toHaveLength(3)
-    expect(f.calls).toEqual([{ url: URL_, headers: { [NEVER_EBAY]: "1" } }])
+    expect(f.calls).toEqual([{ url: `${URL_}?SS=USD`, headers: { [NEVER_EBAY]: "1" } }])
+    expect(got.map((c) => c.url)).toEqual([URL_, URL_, URL_])
+  })
+
+  it("counts a page still in another currency as a miss, not as copies to drop", async () => {
+    await expect(nobleKnightSource.search(URL_, fakeFetch(200, EDGE_UK).fetch)).rejects.toThrow(
+      "prices in GBP, not US dollars",
+    )
   })
 
   it("counts a miss for another address, another page, a busy or a refusing site", async () => {

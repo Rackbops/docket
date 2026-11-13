@@ -25,6 +25,13 @@ import {
  * ("Edit quantity Condition VG+/NM Price $495.00"), its inventory id in the Add to Cart button
  * (`<product id>#<inventory id>`). A page without the product's heading (`ppn_<id>`) is not the
  * product page and counts as a miss; one with the heading and no row in stock has nothing for sale.
+ * A row in stock whose label no longer reads counts as a miss too, so a changed layout warns the
+ * owner instead of reading as sold out.
+ *
+ * Noble Knight serves a regional site by where the reader is (a UK reader got pounds), so each look
+ * asks for US dollars (`?SS=USD`, the page's own currency menu), and a page that still shows another
+ * currency is a miss rather than copies a USD price limit would quietly drop or misjudge. A copy is
+ * told once: a later price drop on a copy already told is not told again, as with eBay and BGG.
  *
  * Noble Knight is trusted (Rod, same day): its listings name it as the seller and no shop check runs
  * (that is for Shopify stores only, shop-vet.ts).
@@ -99,13 +106,15 @@ function currencyOf(price: string): string | undefined {
 
 /**
  * The copies in stock on Noble Knight product page `html` for product `productId`, each a listing at
- * `url`, or null when the page is not that product's page (no `ppn_<id>` heading). Pure.
+ * `url`, or null when the page is not that product's page (no `ppn_<id>` heading, or an id that
+ * is not digits) or a copy in stock no longer reads (its layout changed). Pure.
  */
 export function readNobleKnightCopies(
   html: string,
   productId: string,
   url: string,
 ): Listing[] | null {
+  if (!/^\d{1,14}$/.test(productId)) return null
   const heading = new RegExp(`<h1[^>]*\\bppn_${productId}\\b[^>]*>([\\s\\S]*?)</h1>`, "i").exec(
     html,
   )
@@ -125,7 +134,7 @@ export function readNobleKnightCopies(
     if (!sku || seen.has(sku)) continue
     const row = rest.slice(0, button.index)
     const label = /aria-label="Edit quantity Condition ([^"]*?) Price ([^"]*)"/i.exec(row)
-    if (!label) continue
+    if (!label) return null
     const grade = clean(decode(label[1] ?? ""), CONDITION_CHARS, true)
     const shown = decode(label[2] ?? "")
     const price = parsePrice(shown)
@@ -162,7 +171,7 @@ export const nobleKnightSource: Source = {
     let status: number
     let body: string
     try {
-      const response = await fetch.get(product.url, { [NEVER_EBAY]: "1" })
+      const response = await fetch.get(`${product.url}?SS=USD`, { [NEVER_EBAY]: "1" })
       status = response.status
       body = response.body
     } catch (err) {
@@ -173,6 +182,12 @@ export const nobleKnightSource: Source = {
     checkSearchStatus(status, NOBLE_KNIGHT, `${NOBLE_KNIGHT} refused the read (HTTP ${status})`)
     const copies = readNobleKnightCopies(body, product.id, product.url)
     if (copies === null) throw new SourceMiss("the page is not the product's page")
+    const other = copies.find((c) => c.currency !== "USD")
+    if (other) {
+      throw new SourceMiss(
+        `the page showed prices in ${other.currency ?? "an unknown currency"}, not US dollars`,
+      )
+    }
     return copies
   },
 }
