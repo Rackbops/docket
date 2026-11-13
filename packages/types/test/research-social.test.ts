@@ -798,6 +798,7 @@ describe("the DM when the whole answer does not fit (docket#126)", () => {
     expect(some).toMatch(
       /Uncertain:\n- Caveat 0: x+\n(- Caveat \d: x+\n)*\(\d more not shown\)\n\nSocial: /,
     )
+    expect(some).toContain("\n\n6 finding(s) on the task's page.\n\nUncertain:")
     expect(some).not.toContain("more lines not shown")
   })
 
@@ -876,7 +877,7 @@ describe("the DM when the whole answer does not fit (docket#126)", () => {
       const shown = dm.split("\n").filter((l) => l.startsWith("- Finding ")).length
       if (shown === 6) expect(dm).not.toContain("on the task's page")
       else if (shown > 0) expect(dm).toContain(`(${6 - shown} more on the task's page)`)
-      else expect(dm).not.toContain("Findings:")
+      else expect(dm).toContain("\n\n6 finding(s) on the task's page.\n")
       expect(dm).not.toMatch(/Findings:\n(\(|\n|$)/)
       // With a long tail the summary is cut, never dropped, and caveats that do not fit are
       // counted (docket#132); no finding line stands while a caveat was cut, and nothing is ever
@@ -887,8 +888,8 @@ describe("the DM when the whole answer does not fit (docket#126)", () => {
       expect(tailed).not.toContain("more lines not shown")
       expect(tailed).not.toMatch(/Findings:\n(\(|\n|$)/)
       expect(tailed).not.toMatch(/Uncertain:\n(\(|\n|$)/)
-      expect(tailed).toMatch(/Findings:|finding\(s\) on the task's page/)
-      expect(tailed).toMatch(/Uncertain:|caveat\(s\) not shown/)
+      expect(tailed).toMatch(/Findings:\n- Finding |\n\n6 finding\(s\) on the task's page\.\n/)
+      expect(tailed).toMatch(/Uncertain:\n- Caveat 0|\n\n5 caveat\(s\) not shown\.\n/)
       if (/more not shown|caveat\(s\) not shown/.test(tailed)) {
         expect(tailed).not.toContain("- Finding ")
       } else {
