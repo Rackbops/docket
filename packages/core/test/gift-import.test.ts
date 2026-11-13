@@ -512,6 +512,18 @@ describe("GiftLedger.applyGiftImport", () => {
     expect(await w.ledger.list("recipient", "u1")).toHaveLength(2)
   })
 
+  it("never matches the people of a row with no occasion, ambiguous or not", async () => {
+    const w = await setup()
+    await person(w.ledger, "ann")
+    const reviewed = await w.review("Kite | Ann")
+    expect(reviewed[0]).toMatchObject({ status: "ready", recipients: [] })
+    const [out] = await w.ledger.applyGiftImport(meta, reviewed, { currency: "USD" })
+    expect(out?.status).toBe("applied")
+    expect(out?.problems).toEqual([
+      'no occasion, so "Kite" is not given to anyone; add an occasion to allocate it',
+    ])
+  })
+
   it("stops a row imported before whose gift the owner archived", async () => {
     const w = await setup()
     const [first] = await w.ledger.applyGiftImport(meta, await w.review("Book"), {
@@ -523,7 +535,7 @@ describe("GiftLedger.applyGiftImport", () => {
     })
     expect(again).toMatchObject({ status: "skipped", itemId: null })
     expect(again?.problems).toEqual([
-      "this row was imported before and its gift has since been archived",
+      "this row was imported before and its item has since been archived",
     ])
   })
 

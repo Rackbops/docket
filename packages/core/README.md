@@ -149,8 +149,8 @@ naming people and an occasion, one unbought gift (one allocation, `shared` false
 them the row's quantity, adding them to the roster unless they were taken off it (a row with people
 but no occasion makes only its item, and says so). Every write is keyed by the row's content, so
 importing the same rows again creates nothing twice; a person or occasion an earlier import made
-that has since been archived or renamed, or an imported gift the owner archived, stops the row
-instead.
+that has since been archived or renamed, or an imported item (gift idea) the owner archived, stops
+the row instead.
 
 ## Adopting 0.18.0
 

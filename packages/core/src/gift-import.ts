@@ -11,7 +11,8 @@ import { GIFT_NOTES_MAX, GIFT_TEXT_MAX } from "./gift-validate.js"
  *    its provenance (source and line) and an idempotency key made from its content.
  * 2. `reviewGiftImport` matches each row's people and occasion to the owner's records by name,
  *    and marks the row `ready`, `new` (it names someone or something not there yet, which applying
- *    creates), `ambiguous` (a name matches more than one) or `invalid`. The owner looks at this
+ *    creates), `ambiguous` (a name matches more than one) or `invalid`; a row with no occasion
+ *    gives nobody a gift, so its people are not matched. The owner looks at this
  *    before anything is written.
  * 3. `GiftLedger.applyGiftImport` writes the rows the owner approved and answers each with its
  *    own outcome; it is not atomic. A host shows the staged `unknownColumns` and `problems` with
@@ -352,7 +353,7 @@ export interface GiftImportReviewed extends GiftImportRow {
  * once, case-folded: a recipient's `displayName`, an occasion's `title`). A row is `invalid` when
  * it has problems, `ambiguous` when any name matches more than one record, `new` when any names
  * nothing yet, and `ready` otherwise; a row with no occasion gives nobody a gift, so its people
- * are listed but do not count toward its status. Pure.
+ * are not matched (`recipients` is empty) and do not count toward its status. Pure.
  */
 export function reviewGiftImport(
   rows: readonly GiftImportRow[],
@@ -371,10 +372,11 @@ export function reviewGiftImport(
     .filter((o) => !o.archived)
     .map((o) => ({ id: o.id, label: o.title }))
   return rows.map((row) => {
-    const recipients = row.recipientNames.map((n) => match(n, people))
+    // A row with no occasion gives nobody a gift: its people are not matched at all.
+    const recipients =
+      row.occasionName === null ? [] : row.recipientNames.map((n) => match(n, people))
     const occasion = row.occasionName === null ? null : match(row.occasionName, occasions)
-    // Without an occasion the people are never matched or made (see `applyGiftImportRows`).
-    const all = occasion === null ? [] : [...recipients, occasion]
+    const all = occasion === null ? recipients : [...recipients, occasion]
     const status: GiftImportStatus =
       row.problems.length > 0
         ? "invalid"
@@ -507,7 +509,7 @@ export async function applyGiftImportRows(
     if (out.problems.length > 0) continue
     // Without an occasion there is no gift to give: nobody is matched or made for it.
     const people = now.occasion === null ? [] : now.recipients
-    if (now.occasion === null && now.recipients.length > 0) {
+    if (now.occasion === null && now.recipientNames.length > 0) {
       out.problems.push(
         `no occasion, so "${now.title}" is not given to anyone; add an occasion to allocate it`,
       )
@@ -515,7 +517,7 @@ export async function applyGiftImportRows(
     // Imported before, its people and occasion were made then: one that needs making again was
     // archived or renamed since. Nothing is made for it.
     if (imported.get(seen.key) === true) {
-      out.problems.push("this row was imported before and its gift has since been archived")
+      out.problems.push("this row was imported before and its item has since been archived")
       continue
     }
     if (imported.has(seen.key)) {
