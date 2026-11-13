@@ -321,6 +321,13 @@ what terms, is recorded in [`docs/social-sources.md`](docs/social-sources.md) (d
   first, then the tracker's shop list (migration, `shopcheck` registered hidden).
   Also two eBay fixes: a judged eBay watch's failed look keeps no runner detail in its summary
   (#108, #109), and a failed eBay search is said in fixed words (#111, #121).
+- **Next -- Noble Knight Games as a want-list source** (Rod, 2026-11-13: "make sure that
+  https://www.nobleknight.com/ is a trusted seller and is included in board game want tasks").
+  Additive, types only: `nobleKnightSource` (source id `nobleknight`) reads one Noble Knight product
+  page (`/P/<id>`; its search and catalog pages are closed to bots by its robots.txt) through the
+  host's Fetch port, and makes each copy in stock a listing: its grade, note and sale price, the
+  seller named, keyed by its inventory id so a new copy is new to the watch. A trusted seller: no
+  shop check runs. `nobleKnightProduct` reads a product page's address into its one form.
 
 ## Use
 
