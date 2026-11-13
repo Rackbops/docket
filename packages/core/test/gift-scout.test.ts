@@ -180,10 +180,12 @@ describe("saving a scout finding as a gift idea", () => {
     for (const text of ["notebay.com", "ebay.example.com/x", "shop.example/ebay", "eBay is big"]) {
       expect(isEbayFinding(f(text, null))).toBe(false)
     }
-    const long = `${"https://".repeat(50_000)}x`
-    const started = Date.now()
-    expect(isEbayFinding(f(long, long))).toBe(false)
-    expect(Date.now() - started).toBeLessThan(1000)
+    expect(isEbayFinding(f("at ebay\uFF0Ecom", null))).toBe(true)
+    for (const long of [`${"https://".repeat(50_000)}x`, `a${".".repeat(200_000)}a`]) {
+      const started = Date.now()
+      expect(isEbayFinding(f(long, long))).toBe(false)
+      expect(Date.now() - started).toBeLessThan(1000)
+    }
     const quoted = await w.finding("Puzzle, also at https://www.ebay.com/itm/99 seller bob")
     expect(giftIdeaFromFinding(quoted, { title: "Puzzle" })).toMatchObject({
       url: null,

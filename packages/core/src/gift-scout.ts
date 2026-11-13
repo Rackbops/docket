@@ -50,17 +50,20 @@ const decodeRuns = (text: string): string =>
 /**
  * A finding that carries eBay data: tagged by the eBay source, or naming an eBay host anywhere
  * -- in its source, in a link wrapped (even percent-encoded twice) inside its source, or in its
- * text, with or without `https://` (a scout or research run quoting a listing). One linear pass
- * over the words.
+ * text, with or without `https://` (a scout or research run quoting a listing). Any word that
+ * reads as an eBay host counts, so it errs toward eBay: a file named `ebay.png` or prose saying
+ * "cheaper than ebay.com" counts too, and then the owner names the gift. Text is NFKC-normalized
+ * first, so a full-width dot is a dot.
  */
 export function isEbayFinding(finding: Pick<StoredFinding, "tags" | "source" | "text">): boolean {
   if (finding.tags.includes("ebay")) return true
-  const raw = `${finding.source ?? ""} ${finding.text}`
+  const raw = `${finding.source ?? ""} ${finding.text}`.normalize("NFKC")
   const all = `${raw} ${decodeRuns(decodeRuns(raw))}`
-  // Hosts are runs of letters, digits, dots and hyphens; anything else ends one.
-  return all
-    .split(/[^a-z0-9.-]+/i)
-    .some((word) => GIFT_EBAY_HOST.test(word.replace(/^\.+|\.+$/g, "")))
+  // Hosts are runs of letters, digits, single dots and hyphens; anything else ends one.
+  return all.split(/[^a-z0-9.-]+|\.{2,}/i).some((w) => {
+    const word = w.startsWith(".") ? w.slice(1) : w
+    return GIFT_EBAY_HOST.test(word.endsWith(".") ? word.slice(0, -1) : word)
+  })
 }
 
 /** An http or https address with no login in it, as given; null otherwise. */
