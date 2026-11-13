@@ -177,6 +177,18 @@ const CHECKS: { [K in GiftKind]: (c: Checker, f: GiftFieldsByKind[K]) => void } 
       )
       if (both.length > 0) c.problems.push("a recipient cannot be both included and excluded")
     }
+    if (f.deadline !== undefined) c.date("deadline")
+    if (
+      typeof f.deadline === "string" &&
+      typeof f.date === "string" &&
+      DATE.test(f.deadline) &&
+      f.deadline > f.date
+    ) {
+      c.problems.push("deadline must be on or before the date")
+    }
+    if (f.digest !== undefined && f.digest !== null && typeof f.digest !== "boolean") {
+      c.problems.push("digest must be true, false or null")
+    }
   },
   occasionRecipient(c, f) {
     c.id("occasionId")
@@ -284,6 +296,8 @@ export const GIFT_FIELD_NAMES: { [K in GiftKind]: readonly (keyof GiftFieldsByKi
     "groupIds",
     "includeIds",
     "excludeIds",
+    "deadline",
+    "digest",
   ],
   occasionRecipient: [
     "occasionId",
@@ -338,6 +352,7 @@ export const GIFT_FIELD_NAMES: { [K in GiftKind]: readonly (keyof GiftFieldsByKi
 /** Fields a record may leave out, read as null: added after records without them were stored. */
 export const GIFT_OPTIONAL_FIELDS: { [K in GiftKind]?: readonly string[] } = {
   group: ["filter"],
+  occasion: ["deadline", "digest"],
   item: ["watchTaskIds"],
   allocation: ["repeatOf"],
 }

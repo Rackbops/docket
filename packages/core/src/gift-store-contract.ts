@@ -270,6 +270,24 @@ export const GIFT_STORE_CONTRACT: readonly GiftStoreContractCase[] = [
     },
   },
   {
+    name: "gift: an occasion keeps its shop-by day and digest choice, and one without reads as before",
+    async run(store) {
+      const before = await store.create("occasion", meta(), occasion())
+      const read = await store.get("occasion", A, before.id)
+      check((read?.deadline ?? null) === null && (read?.digest ?? null) === null, "none")
+      const set = await store.create("occasion", meta(), {
+        ...occasion(),
+        deadline: "2026-12-20",
+        digest: true,
+      })
+      const back = await store.get("occasion", A, set.id)
+      check(
+        back?.deadline === "2026-12-20" && back?.digest === true,
+        "deadline and digest read back",
+      )
+    },
+  },
+  {
     name: "gift: an id read as another kind is missing",
     async run(store) {
       const r = await store.create("recipient", meta(), person())

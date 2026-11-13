@@ -152,6 +152,19 @@ importing the same rows again creates nothing twice; a person or occasion an ear
 that has since been archived or renamed, or an imported item (gift idea) the owner archived, stops
 the row instead.
 
+`gift-digest` sends an opt-in gift digest (docket#103). An occasion may carry a shop-by day
+(`deadline`, on or before its date) and the owner's opt-in (`digest`); both may be left out, as on
+occasions from before. `decideGiftDigest` is pure: from the occasion, its roster, `giftBuckets` and
+the owner's zone and preferred hour, it says whether a digest is due and its text -- who still needs
+a gift (not done, and short of their target in gifts bought) and how many gifts are awaiting
+arrival, with the days left. It is due at most once a local day, at or after the preferred hour,
+only when there is something to say and it changed since the last digest or the shop-by day (or the
+date, when there is no shop-by day) is 0 to 3 days away; never without the opt-in, and never after
+the date. The text names people and counts only: no price, note or item title. The host stores any
+returned `state` for the next call and claims `giftDigestKey(occasionId, day)` once before sending;
+it runs on the notify lane, with no model call. A rollover carries the digest choice and moves the
+shop-by day with the date. Days are counted in the owner's zone.
+
 ## Adopting 0.18.0
 
 **Run now** (rackbops-bot-plugins#369). `runNowKey(taskId, requestId)` keys a run its owner asked for

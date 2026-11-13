@@ -80,6 +80,18 @@ export interface GiftOccasionFields {
   groupIds: string[]
   includeIds: string[]
   excludeIds: string[]
+  /**
+   * The shop-by day (docket#103): local `YYYY-MM-DD`, on or before `date` when both are set. A
+   * digest near it is sent even when nothing changed, when there is anything to say
+   * (`decideGiftDigest`). Null or left out (an
+   * occasion from before docket#103): none.
+   */
+  deadline?: string | null
+  /**
+   * The owner opted in to a gift digest for this occasion (docket#103). Null, false or left out:
+   * no digest is ever sent for it.
+   */
+  digest?: boolean | null
 }
 
 export type GiftCoverageDecision = "planning" | "complete" | "skipped"
