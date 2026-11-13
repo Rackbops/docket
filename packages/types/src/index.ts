@@ -178,6 +178,7 @@ export {
   ZWSP,
 } from "./research-answer.js"
 export {
+  assertsFactFromPost,
   BLUESKY_SEARCH_URL,
   NOT_REPORTED,
   parseSocial,

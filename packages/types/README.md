@@ -236,8 +236,9 @@ The tracker's task types, built on `@rackbops/docket-core`'s contract. Shipped s
   `parseAnswer` so stored drafts and saved findings carry canonical links; a finding repeating an
   earlier one (same claim, same first link) is dropped; with `since` (whole UTC days), a post
   finding dated before it moves to `uncertain` saying when it was posted; a finding whose every source is on a social
-  platform and whose claim speaks of stock, a price or availability (whole words, or a currency
-  amount) moves to `uncertain` "(said in a post, not verified)"; and `coverage` is rebuilt
+  platform and whose claim asserts stock, a price or availability (whole words, or a currency
+  amount; a sentence that says the fact is unverified, not checked or may vary is not a claim of
+  it, docket#127) moves to `uncertain` "(said in a post, not verified)"; and `coverage` is rebuilt
   (`withCoverage`): every chosen platform present (`skipped`, "not reported by the run", when the
   run left one out), Reddit always `unavailable` with `REDDIT_WHY`, the run's other rows after,
   at most 8; `none`, and a `sent` request, drop it. `uncertain` stays within its cap of 6, the

@@ -10,6 +10,7 @@ import { describe, expect, it } from "vitest"
 
 import {
   ANSWER_SCHEMA,
+  assertsFactFromPost,
   BLUESKY_SEARCH_URL,
   canonicalSocialUrl,
   coverageLine,
@@ -545,6 +546,44 @@ describe("the belt under the prompts: stock, price and availability off posts al
     expect(line.endsWith("...")).toBe(true)
     expect(reviewJob(WEB, DRAFT).prompt).toContain(
       "A claim about stock, a price or availability that rests on posts alone moves to `uncertain`",
+    )
+  })
+
+  it("keeps a finding that disclaims the fact instead of asserting it (docket#127)", () => {
+    // The first live run's only opened post, verbatim: the belt moved it for the word "Prices".
+    const live =
+      "One TikTok creator (about 25.6k views, 1.4k likes) recommends six holiday finds: Pasta " +
+      "Festiva ravioli, Cranberry Orange Relish, Jingle Jangle Pretzel Twists, Blue Cheese Roasted " +
+      "Pecan Dip, Mini Quiche Duo and Mini Dark Chocolate Mint Stars. Prices are from the caption " +
+      "and unverified. The post is all praise."
+    const answer = parseAnswer({
+      ...DRAFT,
+      findings: [
+        { claim: live, sources: [TIKTOK], platform: "tiktok", evidence: "read" },
+        { claim: "It is back in stock, posters say; not verified.", sources: [BSKY] },
+        { claim: "The price may vary by store, one poster notes.", sources: [TIKTOK] },
+        // A disclaimer in another sentence does not cover the sentence that asserts.
+        { claim: "It is back in stock. Prices are unverified.", sources: [BSKY] },
+        { claim: "It costs $4.99 at most stores.", sources: [TIKTOK] },
+      ],
+    })
+    if (!answer) throw new Error("no answer")
+    const out = socialOutgoing(answer, { mode: "auto" }, null)
+    expect(out.findings.map((f) => f.claim)).toEqual([
+      live,
+      "It is back in stock, posters say; not verified.",
+      "The price may vary by store, one poster notes.",
+    ])
+    expect(out.uncertain).toEqual([
+      DRAFT.uncertain[0],
+      `It is back in stock. Prices are unverified. (${SAID_IN_POST})`,
+      `It costs $4.99 at most stores. (${SAID_IN_POST})`,
+    ])
+    expect(assertsFactFromPost("Posters say it is sold out everywhere!")).toBe(true)
+    expect(assertsFactFromPost("Stock was not checked.")).toBe(false)
+    // The prompt tells the run to keep price words out of a post finding altogether.
+    expect(researchJob(WEB).prompt).toContain(
+      "a post finding itself says nothing about them, not even that they are unverified",
     )
   })
 })
