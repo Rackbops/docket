@@ -115,7 +115,7 @@ export const SOCIAL_YOUTUBE_CALLS = 4
 export const SOCIAL_ORIANE_CALLS = 2
 /**
  * ... and no Bluesky fetch since docket#125 (2 before it, 1 credit each when Firecrawl read them;
- * free through WebFetch). Kept at 0 so the credit sum and its callers read as before.
+ * free through WebFetch). Kept at 0 so the credit sum reads as before.
  */
 export const SOCIAL_BLUESKY_CALLS = 0
 /** Firecrawl credits a run may spend on posts at most: "about 120" (decision 4). */
@@ -152,7 +152,7 @@ export const REDDIT_WHY =
  */
 export const REDDIT_NOTE = "needs your own browser"
 
-/** "YouTube, TikTok and Bluesky" */
+/** "YouTube, TikTok and Instagram" */
 function names(platforms: readonly SocialPlatform[]): string {
   const n = platforms.map(platformName)
   return n.length <= 1 ? (n[0] ?? "") : `${n.slice(0, -1).join(", ")} and ${n.at(-1)}`

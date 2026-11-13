@@ -282,7 +282,7 @@ export function deadlineOf(config: ResearchConfig): Date | null {
 
 /**
  * The `since` bound, or null when there is none or it does not parse: the start of the instant's
- * UTC day, so the prompt's "on or after <day>", Bluesky's `since` filter and the belt agree.
+ * UTC day, so the prompt's "on or after <day>" and the belt agree.
  */
 export function sinceOf(config: ResearchConfig): Date | null {
   if (typeof config.since !== "string") return null

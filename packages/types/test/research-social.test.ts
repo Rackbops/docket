@@ -958,6 +958,8 @@ describe("the reviewer's social checks", () => {
     expect(reviewJob(ONLY, DRAFT).prompt).not.toContain("bsky.app")
     for (const spec of [
       reviewJob(NONE, DRAFT),
+      // Only Bluesky: nothing in scope, so no social checks either (docket#125).
+      reviewJob({ ...WEB, social: "bsky" }, DRAFT),
       reviewJob(SENT, DRAFT, PAGES),
       reviewJob(WEB, DRAFT, PAGES, DRAFT),
     ]) {
@@ -1105,5 +1107,28 @@ describe("through the lanes", () => {
     expect((await store.listFindings({ taskId: task.id })).map((f) => f.tags)).toEqual([
       ["research", "approve"],
     ])
+  })
+
+  it("only Bluesky, with since: a plain 15-turn run, no date rule, and a Social line of the two fixed rows (docket#125)", async () => {
+    const draft = {
+      ...DRAFT,
+      coverage: [{ platform: "bluesky", status: "searched", note: "12 posts" }],
+    }
+    const { executor, specs } = scripted(
+      ok(draft),
+      ok({ verdict: "approve", problems: [], answer: draft }, 0.1),
+    )
+    const { lanes, notifier } = await setup(executor, { ...WEB, social: "bsky", since: SINCE })
+    await lanes.tickExecute()
+    await lanes.tickExecute()
+    expect(specs.map((s) => s.maxTurns)).toEqual([RESEARCH_MAX_TURNS, REVIEW_MAX_TURNS])
+    expect(specs[0]?.prompt).not.toContain("Only posts published on or after")
+    expect(specs[0]?.prompt).not.toContain("Social platforms")
+    const dm = notifier.sent[0]?.message.text ?? ""
+    // The run's own row (it was told not to search) is overruled by the fixed one.
+    expect(dm).toContain(
+      `Social: Bluesky unavailable (${BLUESKY_NOTE}); Reddit unavailable (${REDDIT_NOTE}).`,
+    )
+    expect(dm).not.toContain("12 posts")
   })
 })

@@ -295,7 +295,8 @@ what terms, is recorded in [`docs/social-sources.md`](docs/social-sources.md) (d
   `auto` leaves it out, `bluesky` in a list parses but searches nothing, and `coverage` lists it
   unavailable, until the own read-only service. A finding from a post carries its platform, date
   and whether it was opened; the answer carries `coverage`, shown as a "Social:" line, with Bluesky
-  and Reddit always unavailable (never a route). Plain code counts a copied link once, moves a
+  and Reddit always unavailable (Reddit never a route; Bluesky until the own service). Plain code
+  counts a copied link once, moves a
   stock, price or availability claim resting on posts alone, and a post older than `since`, to
   `uncertain`, and completes the
   coverage. Behaviour changes: a request without `social` now gets 20 turns and the social rules
