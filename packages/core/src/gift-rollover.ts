@@ -8,6 +8,7 @@ import type {
   GiftRecipient,
 } from "./gift-model.js"
 import { GiftValidationError } from "./gift-ports.js"
+import { giftProblems } from "./gift-validate.js"
 
 /**
  * "Set up next year" (docket#99, plan item 158): a reviewed copy of an occasion -- Christmas 2027
@@ -19,7 +20,8 @@ import { GiftValidationError } from "./gift-ports.js"
  * people -- the groups re-resolved against today's membership and labels, plus the hand-picked
  * overrides -- each staying person's target and budget, and only the ideas the owner picks. Never
  * carried: any purchase, received, wrapped, ready or given state, or a gift with a purchase behind
- * it; each person's decision starts again at planning.
+ * it; each person's decision starts again at planning (a carried target of 0 still reads as
+ * skipped until it is changed).
  */
 
 /** One person on the new roster, with what carries over from their row on the old one. */
@@ -70,7 +72,10 @@ export interface GiftRolloverInput {
   pick?: readonly string[]
   /** The new title; default: the old one with its year moved on. */
   title?: string
-  /** The new date; default: a year after the old one (29 February becomes the 28th). */
+  /**
+   * The new date; default: a year after the old one (29 February becomes the 28th). The new year
+   * is this date's year, or the old year moved on when the date is null.
+   */
   date?: string | null
 }
 
@@ -83,7 +88,8 @@ function nextYearDate(date: string | null): string | null {
   return `${year}-${m}-${day}`
 }
 
-function nextTitle(title: string, year: number | null): string {
+function nextTitle(title: string, year: number | null, date: string | null): string {
+  if (year === null && date !== null) year = Number(date.slice(0, 4))
   if (year === null) return title
   return title.replace(new RegExp(`\\b${year}\\b`, "g"), String(year + 1))
 }
@@ -139,23 +145,27 @@ export function previewGiftRollover(input: GiftRolloverInput): GiftRolloverPrevi
       })
     }
   }
+  const date = input.date === undefined ? nextYearDate(old.date) : input.date
+  const dateYear = date === null ? null : Number(date.slice(0, 4))
+  const occasion: GiftOccasionFields = {
+    kind: old.kind,
+    title: input.title ?? nextTitle(old.title, old.year, old.date),
+    date,
+    timeZone: old.timeZone,
+    year: old.year === null ? null : date === null ? old.year + 1 : dateYear,
+    currency: old.currency,
+    budgetMinor: old.budgetMinor,
+    groupIds: [...old.groupIds],
+    includeIds: [...old.includeIds],
+    excludeIds: [...old.excludeIds],
+  }
+  problems.push(...giftProblems("occasion", occasion))
   if (problems.length > 0) throw new GiftValidationError(problems)
   return {
     fromOccasionId: old.id,
     fromRevision: old.revision,
     groupRevisions: Object.fromEntries(chosen.map((g) => [g.id, g.revision])),
-    occasion: {
-      kind: old.kind,
-      title: input.title ?? nextTitle(old.title, old.year),
-      date: input.date === undefined ? nextYearDate(old.date) : input.date,
-      timeZone: old.timeZone,
-      year: old.year === null ? null : old.year + 1,
-      currency: old.currency,
-      budgetMinor: old.budgetMinor,
-      groupIds: [...old.groupIds],
-      includeIds: [...old.includeIds],
-      excludeIds: [...old.excludeIds],
-    },
+    occasion,
     roster,
     leftOff: oldRows.map((r) => r.recipientId).filter((id) => !want.includes(id)),
     ideas,

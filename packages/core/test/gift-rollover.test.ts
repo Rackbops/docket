@@ -57,7 +57,8 @@ const allocation = (
 
 /**
  * Christmas 2026 for the Family group (Ann, Bob, Cy) plus Dee by hand: Ann's puzzle bought,
- * one of two returned, and given; Bob's scarf an unbought idea; a book on nobody; Cy skipped.
+ * one of two returned (the return is on the given puzzle's purchase), and given; Bob's scarf an
+ * unbought idea; a book on nobody (unassigned); Cy skipped.
  */
 async function lastYear() {
   const store = new MemoryGiftStore()
@@ -170,11 +171,13 @@ describe("setting up next year", () => {
     const allocations = await s.ledger.list("allocation", A, { includeArchived: true })
     const purchases = await s.ledger.list("purchase", A, { includeArchived: true })
     const buckets = giftBuckets(allocations, purchases)
-    expect(rows.map((r) => [r.recipientId, r.decision, r.skipReason])).toEqual([
-      [s.ann.id, "planning", null],
-      [s.bob.id, "planning", null],
-      [s.cy.id, "planning", null],
-      [s.dee.id, "planning", null],
+    expect(
+      rows.map((r) => [r.recipientId, r.decision, r.skipReason, r.target, r.budgetMinor]),
+    ).toEqual([
+      [s.ann.id, "planning", null, 1, 5000],
+      [s.bob.id, "planning", null, null, null],
+      [s.cy.id, "planning", null, null, null],
+      [s.dee.id, "planning", null, null, null],
     ])
     expect(rows.map((r) => giftCoverage(r, buckets).status)).toEqual([
       "needs-planning",
@@ -198,7 +201,17 @@ describe("setting up next year", () => {
     const s = await lastYear()
     const before = await s.read(s.old)
     const purchases = await s.ledger.list("purchase", A, { includeArchived: true })
+    const oldIds = new Set([
+      s.old.id,
+      ...before.roster.map((r) => r.id),
+      ...before.allocations.filter((a) => a.occasionId === s.old.id).map((a) => a.id),
+      ...purchases.map((p) => p.id),
+    ])
+    const history = async () => (await s.store.listEvents(A)).filter((e) => oldIds.has(e.entityId))
+    const historyBefore = await history()
+    expect(historyBefore.length).toBeGreaterThan(0)
     await s.ledger.applyGiftRollover(meta, previewGiftRollover({ ...before, pick: [s.idea.id] }))
+    expect(await history()).toEqual(historyBefore)
     const after = await s.read((await s.ledger.get("occasion", A, s.old.id)) as GiftOccasion)
     expect(after.occasion).toEqual(before.occasion)
     expect(after.roster).toEqual(before.roster)
@@ -226,6 +239,23 @@ describe("setting up next year", () => {
     expect(() => previewGiftRollover({ ...data, pick: [s.idea.id, s.idea.id] })).toThrow(
       GiftValidationError,
     )
+  })
+
+  it("never carries a bought gift not yet handed off, nor a wrapped one with no purchase", async () => {
+    const s = await lastYear()
+    const data = await s.read(s.old)
+    const scarf = data.allocations.find((a) => a.id === s.idea.id)
+    if (scarf === undefined) throw new Error("fixture")
+    const bought = { ...scarf, id: "x-bought", purchaseId: "p-1" }
+    const wrapped = { ...scarf, id: "x-wrapped", handoff: "wrapped" as const }
+    const allocations = [...data.allocations, bought, wrapped]
+    const p = previewGiftRollover({ ...data, allocations })
+    expect(p.pickable).toEqual([s.idea.id])
+    for (const id of ["x-bought", "x-wrapped"]) {
+      expect(() => previewGiftRollover({ ...data, allocations, pick: [id] })).toThrow(
+        `allocation ${id} was bought or handed off: it is never carried`,
+      )
+    }
   })
 
   it("re-resolves the groups against today's membership, and shows who is left off", async () => {
@@ -261,12 +291,70 @@ describe("setting up next year", () => {
     expect(await u.ledger.list("occasion", A, { includeArchived: true })).toHaveLength(1)
 
     const t = await lastYear()
-    const p = previewGiftRollover({ ...(await t.read(t.old)) })
+    const p = previewGiftRollover({ ...(await t.read(t.old)), pick: [t.idea.id] })
     const keyed = { ...meta, idempotencyKey: "roll-1" }
     const first = await t.ledger.applyGiftRollover(keyed, p)
     const again = await t.ledger.applyGiftRollover(keyed, p)
     expect(again.id).toBe(first.id)
     expect(await t.ledger.list("occasion", A, { includeArchived: true })).toHaveLength(2)
+    const on = { includeArchived: true, occasionId: first.id }
+    expect(await t.ledger.list("occasionRecipient", A, on)).toHaveLength(4)
+    expect(await t.ledger.list("allocation", A, on)).toHaveLength(1)
+  })
+
+  it("refuses a second unkeyed apply instead of making the occasion twice", async () => {
+    const s = await lastYear()
+    const p = previewGiftRollover({ ...(await s.read(s.old)) })
+    await s.ledger.applyGiftRollover(meta, p)
+    await expect(s.ledger.applyGiftRollover(meta, p)).rejects.toBeInstanceOf(GiftValidationError)
+    expect(await s.ledger.list("occasion", A, { includeArchived: true })).toHaveLength(2)
+  })
+
+  it("does not refuse for list order, key order or an unpicked gift bought since", async () => {
+    const s = await lastYear()
+    const data = await s.read(s.old)
+    const shuffled = {
+      ...data,
+      groups: [...data.groups].reverse(),
+      recipients: [...data.recipients].reverse(),
+      roster: [...data.roster].reverse(),
+      allocations: [...data.allocations].reverse(),
+    }
+    const p = previewGiftRollover({ ...shuffled, pick: [s.idea.id] })
+    const reKeyed = JSON.parse(
+      JSON.stringify(p, (_k, v) =>
+        v !== null && typeof v === "object" && !Array.isArray(v)
+          ? Object.fromEntries(Object.entries(v).reverse())
+          : v,
+      ),
+    )
+    const book = (await s.ledger.list("item", A)).find((i) => i.title === "Book")
+    if (book === undefined) throw new Error("fixture")
+    await s.ledger.create("allocation", meta, allocation(book.id, s.old.id, [s.dee.id]))
+    const made = await s.ledger.applyGiftRollover(meta, reKeyed)
+    const on = { occasionId: made.id }
+    expect(await s.ledger.list("occasionRecipient", A, on)).toHaveLength(4)
+    expect(await s.ledger.list("allocation", A, on)).toHaveLength(1)
+  })
+
+  it("refuses a picked gift whose item was rejected since the preview", async () => {
+    const s = await lastYear()
+    const p = previewGiftRollover({ ...(await s.read(s.old)), pick: [s.idea.id] })
+    const it0 = await s.ledger.get("item", A, s.idea.itemId)
+    if (it0 === null) throw new Error("fixture")
+    await s.ledger.update("item", it0.id, meta, it0.revision, { planning: "rejected" })
+    const events = (await s.store.listEvents(A)).length
+    await expect(s.ledger.applyGiftRollover(meta, p)).rejects.toBeInstanceOf(GiftRevisionError)
+    expect((await s.store.listEvents(A)).length).toBe(events)
+  })
+
+  it("takes the year from an override date, and refuses a bad one at preview", async () => {
+    const s = await lastYear()
+    const data = await s.read(s.old)
+    const p = previewGiftRollover({ ...data, title: "New Year 2028", date: "2028-01-02" })
+    expect(p.occasion).toMatchObject({ title: "New Year 2028", date: "2028-01-02", year: 2028 })
+    await s.ledger.applyGiftRollover(meta, p)
+    expect(() => previewGiftRollover({ ...data, date: "2027-02-30" })).toThrow(GiftValidationError)
   })
 
   it("moves a 29 February date to the 28th, and keeps a title without the year", () => {
@@ -296,5 +384,14 @@ describe("setting up next year", () => {
       allocations: [],
     })
     expect(p.occasion).toMatchObject({ title: "Leap day party", date: "2029-02-28", year: 2029 })
+    const noYear = { ...occasion, title: "Party 2028", year: null } as GiftOccasion
+    const q = previewGiftRollover({
+      occasion: noYear,
+      groups: [],
+      recipients: [],
+      roster: [],
+      allocations: [],
+    })
+    expect(q.occasion).toMatchObject({ title: "Party 2029", date: "2029-02-28", year: null })
   })
 })

@@ -157,11 +157,16 @@ export class GiftLedger {
    * Makes a reviewed "set up next year" (`previewGiftRollover`, docket#99): the new occasion, its
    * roster rows (planning, with each staying person's target and budget) and the picked ideas as
    * new, unbought gifts. It first previews again from the store with the same picks, title and
-   * date, and refuses (`GiftRevisionError`) a preview that no longer matches -- the old occasion,
-   * a group, a label, a roster row or a picked gift moved -- before anything is written. The old
-   * occasion is never written. Not atomic: a refused write leaves the earlier ones (preview
-   * again). With an idempotency key, write n uses `<key>/<n>`, so retrying replays what was made;
-   * the check runs first, so a retry after something moved is refused, not replayed.
+   * date, and refuses (`GiftRevisionError`) before anything is written when what it would write
+   * differs: the old occasion's or a group's revision moved, or the new occasion, the roster (who,
+   * with what target and budget) or a picked idea (its people, quantity or sharing) came out
+   * different. Order and key order do not count; a gift bought or added that was not picked does
+   * not either. A picked gift's item that is gone, archived or rejected is refused the same way.
+   * The old occasion is never written. Not atomic: a refused write leaves the earlier ones
+   * (preview again). With an idempotency key, write n uses `<key>/<n>`, so retrying replays what
+   * was made; the check runs first, so a retry after something moved is refused, not replayed.
+   * Without a key, a live occasion of the same kind, title and year refuses it
+   * (`GiftValidationError`), so a lost answer retried does not make a second one.
    */
   async applyGiftRollover(
     meta: GiftWriteMeta,
@@ -196,11 +201,29 @@ export class GiftLedger {
         old.revision,
       )
     }
-    if (JSON.stringify(now) !== JSON.stringify(preview)) {
+    if (rolloverKey(now) !== rolloverKey(preview)) {
       throw new GiftRevisionError(
         `occasion ${old.id}, its groups, people or gifts changed since the preview; preview again`,
         old.revision,
       )
+    }
+    for (const idea of preview.ideas) {
+      const it = await this.store.get("item", meta.ownerId, idea.itemId)
+      if (it === null || it.archived || it.planning === "rejected") {
+        throw new GiftRevisionError(
+          `item ${idea.itemId} was archived or rejected since the preview; preview again`,
+          old.revision,
+        )
+      }
+    }
+    if (meta.idempotencyKey === undefined) {
+      const live = await this.store.list("occasion", meta.ownerId)
+      const o = preview.occasion
+      if (live.some((x) => x.kind === o.kind && x.title === o.title && x.year === o.year)) {
+        throw new GiftValidationError([
+          `a live ${o.kind} occasion "${o.title}" already exists: this rollover may have been made`,
+        ])
+      }
     }
     let n = 0
     const step = (): GiftWriteMeta => {
@@ -437,4 +460,34 @@ export class GiftLedger {
       }
     }
   }
+}
+
+/** The parts of a rollover preview that decide its writes, in one canonical string. */
+function rolloverKey(p: GiftRolloverPreview): string {
+  const by = <T>(xs: readonly T[], id: (x: T) => string) =>
+    [...xs].sort((a, b) => (id(a) < id(b) ? -1 : id(a) > id(b) ? 1 : 0))
+  const canon = (v: unknown): unknown =>
+    Array.isArray(v)
+      ? v.map(canon)
+      : v !== null && typeof v === "object"
+        ? Object.fromEntries(
+            Object.keys(v)
+              .sort()
+              .map((k) => [k, canon((v as Record<string, unknown>)[k])]),
+          )
+        : v
+  return JSON.stringify(
+    canon({
+      fromOccasionId: p.fromOccasionId,
+      fromRevision: p.fromRevision,
+      groupRevisions: p.groupRevisions,
+      occasion: p.occasion,
+      roster: by(p.roster, (r) => r.recipientId),
+      ideas: by(p.ideas, (i) => i.fromAllocationId).map((i) => ({
+        ...i,
+        recipientIds: [...i.recipientIds].sort(),
+        dropped: [...i.dropped].sort(),
+      })),
+    }),
+  )
 }
