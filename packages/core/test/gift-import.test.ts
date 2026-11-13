@@ -186,6 +186,15 @@ describe("parseGiftImport, awkward input", () => {
     expect(staged.rows.map((r) => r.line)).toEqual([2, 4])
   })
 
+  it("reports a column with no name that holds data", () => {
+    const staged = csv("title,,notes\nBook,kept,x")
+    expect(staged.unknownColumns).toEqual(["column 2 (no name)"])
+  })
+
+  it("refuses a leading-zero thousands group", () => {
+    expect(csv('title,price\nA,"0,500"').rows[0]?.priceMinor).toBeNull()
+  })
+
   it("names a link that is too long", () => {
     const staged = csv(`title,link\nA,https://x.example/${"a".repeat(2000)}`)
     expect(staged.rows[0]?.problems).toEqual(["link is longer than 2000"])
@@ -376,27 +385,139 @@ describe("GiftLedger.applyGiftImport", () => {
     expect(out[0]?.problems[0]).toMatch(/imported before/)
   })
 
-  it("never gives a row reviewed as new to a record it made before that has since changed", async () => {
+  it("never gives a row reviewed as new to a person it made before who was renamed", async () => {
     const w = await setup()
-    const text = "Kite | Cy | Birthday"
-    const [first] = await w.ledger.applyGiftImport(meta, await w.review(text), { currency: "USD" })
-    const [occasion] = (await w.ledger.list("occasion", "u1")).filter((o) => o.title === "Birthday")
-    await w.ledger.update("occasion", occasion?.id ?? "", meta, 1, { archived: true })
+    const text = "Kite | Cy | Christmas 2026"
+    await w.ledger.applyGiftImport(meta, await w.review(text), { currency: "USD" })
     const cy = (await w.ledger.list("recipient", "u1")).find((r) => r.displayName === "Cy")
     await w.ledger.update("recipient", cy?.id ?? "", meta, 1, { displayName: "Cyril" })
     const reviewed = await w.review(text)
     expect(reviewed[0]?.status).toBe("new")
     const [again] = await w.ledger.applyGiftImport(meta, reviewed, { currency: "USD" })
     expect(again).toMatchObject({ status: "skipped", allocationId: null })
-    expect(again?.problems[0]).toMatch(/earlier import and has changed/)
-    expect(first?.status).toBe("applied")
-    // Another row naming them is new content: it makes a new Cy and a new Birthday.
-    const [other] = await w.ledger.applyGiftImport(meta, await w.review("Yoyo | cy | birthday"), {
+    expect(again?.problems[0]).toMatch(/"Cy" has since been archived or renamed/)
+    expect(await w.ledger.list("recipient", "u1")).toHaveLength(3)
+    // Another row naming them is new content: it makes a new Cy.
+    const [other] = await w.ledger.applyGiftImport(
+      meta,
+      await w.review("Yoyo | cy | Christmas 2026"),
+      { currency: "USD" },
+    )
+    expect(other?.status).toBe("applied")
+    expect(await w.ledger.list("recipient", "u1")).toHaveLength(4)
+  })
+
+  it("never gives a row reviewed as new to an occasion it made before that was archived", async () => {
+    const w = await setup()
+    const text = "Kite | Ann | Birthday"
+    await w.ledger.applyGiftImport(meta, await w.review(text), { currency: "USD" })
+    const [bday] = (await w.ledger.list("occasion", "u1")).filter((o) => o.title === "Birthday")
+    await w.ledger.update("occasion", bday?.id ?? "", meta, 1, { archived: true })
+    const [again] = await w.ledger.applyGiftImport(meta, await w.review(text), { currency: "USD" })
+    expect(again?.status).toBe("skipped")
+    expect(again?.problems[0]).toMatch(/"Birthday" has since been archived or renamed/)
+    expect((await w.ledger.list("occasion", "u1")).map((o) => o.title)).toEqual(["Christmas 2026"])
+  })
+
+  it("stops a replayed person that changed even when its item was never written", async () => {
+    const w = await setup()
+    const reviewed = await w.review("Kite | Cy | Christmas 2026")
+    const key = reviewed[0]?.key ?? ""
+    const cy = await person(w.ledger, "Cy", {
+      ...meta,
+      idempotencyKey: `import:${key}/recipient/cy`,
+    })
+    await w.ledger.update("recipient", cy.id, meta, 1, { archived: true })
+    const [out] = await w.ledger.applyGiftImport(
+      meta,
+      await w.review("Kite | Cy | Christmas 2026"),
+      {
+        currency: "USD",
+      },
+    )
+    expect(out?.status).toBe("skipped")
+    expect(out?.problems[0]).toMatch(/archived or renamed/)
+    expect(await w.ledger.list("item", "u1")).toEqual([])
+  })
+
+  it("stops a replayed renamed person or archived occasion when its item was never written", async () => {
+    const w = await setup()
+    const reviewed = await w.review("Kite | Cy | Bday")
+    const key = reviewed[0]?.key ?? ""
+    const cy = await person(w.ledger, "Cy", {
+      ...meta,
+      idempotencyKey: `import:${key}/recipient/cy`,
+    })
+    await w.ledger.update("recipient", cy.id, meta, 1, { displayName: "Cyril" })
+    const [renamed] = await w.ledger.applyGiftImport(meta, await w.review("Kite | Cy | Bday"), {
       currency: "USD",
     })
-    expect(other?.status).toBe("applied")
-    const live = await w.ledger.list("occasion", "u1")
-    expect(live.map((o) => o.title)).toEqual(["Christmas 2026", "birthday"])
+    expect(renamed?.problems[0]).toMatch(/"Cy" has since been archived or renamed/)
+    const r2 = await w.review("Kite | Ann | Bday")
+    const k2 = r2[0]?.key ?? ""
+    const bday = await w.ledger.create(
+      "occasion",
+      { ...meta, idempotencyKey: `import:${k2}/occasion` },
+      {
+        kind: "custom",
+        title: "Bday",
+        date: null,
+        timeZone: null,
+        year: null,
+        currency: "USD",
+        budgetMinor: null,
+        groupIds: [],
+        includeIds: [],
+        excludeIds: [],
+      },
+    )
+    await w.ledger.update("occasion", bday.id, meta, 1, { archived: true })
+    const [archived] = await w.ledger.applyGiftImport(meta, await w.review("Kite | Ann | Bday"), {
+      currency: "USD",
+    })
+    expect(archived?.problems[0]).toMatch(/"Bday" has since been archived or renamed/)
+    expect(await w.ledger.list("item", "u1")).toEqual([])
+  })
+
+  it("re-imports a file whose new person and occasion were archived without making them again", async () => {
+    const w = await setup()
+    const text = "Book | Cy | Xmas\nPen | Cy | Xmas"
+    await w.ledger.applyGiftImport(meta, await w.review(text), { currency: "USD" })
+    for (const r of await w.ledger.list("recipient", "u1")) {
+      if (r.displayName === "Cy")
+        await w.ledger.update("recipient", r.id, meta, 1, { archived: true })
+    }
+    for (const o of await w.ledger.list("occasion", "u1")) {
+      if (o.title === "Xmas") await w.ledger.update("occasion", o.id, meta, 1, { archived: true })
+    }
+    const out = await w.ledger.applyGiftImport(meta, await w.review(text), { currency: "USD" })
+    expect(out.map((o) => o.status)).toEqual(["skipped", "skipped"])
+    expect((await w.ledger.list("recipient", "u1")).map((r) => r.displayName)).toEqual([
+      "Ann",
+      "Bo",
+    ])
+    expect((await w.ledger.list("occasion", "u1")).map((o) => o.title)).toEqual(["Christmas 2026"])
+    expect(await w.ledger.list("item", "u1", { includeArchived: true })).toHaveLength(2)
+  })
+
+  it("applies a row again with its people in another order", async () => {
+    const w = await setup()
+    const [a] = await w.ledger.applyGiftImport(
+      meta,
+      await w.review("Socks | Bo; Ann | Christmas 2026"),
+      {
+        currency: "USD",
+      },
+    )
+    const [b] = await w.ledger.applyGiftImport(
+      meta,
+      await w.review("Socks | ann; bo | Christmas 2026"),
+      {
+        currency: "USD",
+      },
+    )
+    expect(b).toEqual(a)
+    expect(b?.status).toBe("applied")
   })
 
   it("matches only live records, and makes one person for a name written twice", async () => {
@@ -408,7 +529,9 @@ describe("GiftLedger.applyGiftImport", () => {
       { currency: "USD" },
     )
     expect(out.map((o) => o.status)).toEqual(["applied", "applied"])
-    const bos = (await w.ledger.list("recipient", "u1")).filter((r) => r.displayName === "Bo")
+    const bos = (await w.ledger.list("recipient", "u1")).filter(
+      (r) => r.displayName.toLowerCase() === "bo",
+    )
     expect(bos).toHaveLength(1)
     expect(bos[0]?.id).not.toBe(w.bo.id)
   })

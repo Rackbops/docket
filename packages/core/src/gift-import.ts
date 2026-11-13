@@ -165,7 +165,7 @@ function priceMinor(raw: string): { minor: number | null; symbol: string | null 
   const symbol = first in SYMBOLS ? (SYMBOLS[first] ?? null) : null
   if (first in SYMBOLS) t = t.slice(1).trim()
   if (t === "") return raw.trim() === "" ? { minor: null, symbol: null } : "bad"
-  if (!/^(\d{1,9}|\d{1,3}(,\d{3}){1,2})(\.\d{1,2})?$/.test(t)) return "bad"
+  if (!/^(\d{1,9}|[1-9]\d{0,2}(,\d{3}){1,2})(\.\d{1,2})?$/.test(t)) return "bad"
   const [whole = "", frac = ""] = t.replace(/,/g, "").split(".")
   return { minor: Number(whole) * 100 + Number(frac.padEnd(2, "0")), symbol }
 }
@@ -275,7 +275,11 @@ export function parseGiftImport(text: string, options: GiftImportOptions): GiftI
         ALIASES[c].includes(fold(name)),
       )
       if (col === undefined) {
+        // A blank header over an empty column is a trailing comma; over data it is reported.
         if (name.trim() !== "") staged.unknownColumns.push(name.trim())
+        else if (records.some((r) => (r.cells[i] ?? "").trim() !== "")) {
+          staged.unknownColumns.push(`column ${i + 1} (no name)`)
+        }
       } else if (at.has(col)) staged.problems.push(`column ${col} appears twice`)
       else at.set(col, i)
     })
@@ -394,7 +398,7 @@ export interface GiftImportOutcome {
   /**
    * `applied`: its item (and gift, when it names people and an occasion) is written. `skipped`:
    * the row was left alone, or stopped because something changed since the review. `failed`: a
-   * write was refused. A skipped or failed row may still have written its earlier records (a new
+   * write was refused. A skipped or failed row may still have written its earlier records (roster rows, a new
    * person or occasion, its item: `itemId` is then set); importing it again replays them.
    */
   status: "applied" | "skipped" | "failed"
@@ -407,6 +411,9 @@ export interface GiftImportOutcome {
 /** The row changed since the review: it is skipped, with the reason. */
 class Changed extends Error {}
 
+const changedText = (names: string[]): string =>
+  `this row was imported before, and ${names.map((n) => `"${n}"`).join(", ")} has since been archived or renamed; restore or rename it, or change the row to import it as a new gift`
+
 /**
  * The writes behind `GiftLedger.applyGiftImport`, through the ledger's own checked `create`. The
  * rows are reviewed again against the store first: a row that is `invalid` or `ambiguous` now, or
@@ -415,9 +422,11 @@ class Changed extends Error {}
  * import made it).
  *
  * Every write carries an idempotency key made from the row's content key, never from the
- * caller's key: `import:<row key>/recipient/<name>` and `/occasion` (the name folded) for a record
- * the row creates, `/item`, `/allocation` and `/roster/<recipient>` for its own, so a second
- * import of the same content replays instead of writing. A replayed new person or occasion that
+ * caller's key: `import:<row key>/recipient/<folded name>` and `import:<row key>/occasion` for a
+ * record the row creates, `/item`, `/allocation` and `/roster/<recipient>` for its own, so a second
+ * import of the same content replays instead of writing. A row whose item an earlier import made
+ * (its key is an import item's ref) creates no person or occasion: one it would need again was
+ * archived or renamed since, and the row stops as changed before writing anything. A replayed new person or occasion that
  * is archived now, or renamed away from the row's name, stops the row as changed, so a row the
  * owner saw as making someone new is never quietly given to someone else; so does a key the row
  * used before for other records (it was imported before with other people or another occasion).
@@ -426,7 +435,7 @@ class Changed extends Error {}
  * date, in the row's currency or `options.currency`. The item is an idea (or `selected` when the
  * row allocates it), its price a planning estimate (never spend), its source `import` with the
  * row key as ref. A row naming people and an occasion becomes one unbought gift (one allocation,
- * `shared` false) giving each of them the row's quantity, and each of its people not on that
+ * `shared` false, its people in id order) giving each of them the row's quantity, and each of its people not on that
  * occasion's roster gets a planning row; a person with an archived row there is left off it, with
  * a note.
  */
@@ -446,6 +455,11 @@ export async function applyGiftImportRows(
     recipients: await ledger.list("recipient", meta.ownerId, all),
     occasions: await ledger.list("occasion", meta.ownerId, all),
   })
+  const imported = new Set(
+    (await ledger.list("item", meta.ownerId, all))
+      .filter((it) => it.source.kind === "import" && it.source.ref !== null)
+      .map((it) => it.source.ref),
+  )
   const made = new Map<string, string>()
   const outcomes: GiftImportOutcome[] = []
   for (const [i, seen] of rows.entries()) {
@@ -481,6 +495,19 @@ export async function applyGiftImportRows(
       }
     }
     if (out.problems.length > 0) continue
+    // Imported before, its people and occasion were made then: one that needs making again was
+    // archived or renamed since. Nothing is made for it.
+    if (imported.has(seen.key)) {
+      const gone = [...now.recipients, ...(now.occasion === null ? [] : [now.occasion])].filter(
+        (m) =>
+          m.status === "new" &&
+          !made.has(`${m === now.occasion ? "occasion" : "recipient"}:${fold(m.name)}`),
+      )
+      if (gone.length > 0) {
+        out.problems.push(changedText(gone.map((m) => m.name)))
+        continue
+      }
+    }
     // A record this row creates: replayed from an earlier import, it must still be what the
     // owner saw as new -- live and still called this.
     // A replay answers with the record as first written, so it is read again as it is now.
@@ -488,7 +515,7 @@ export async function applyGiftImportRows(
       const r = await ledger.get(kind, meta.ownerId, id)
       const label = r === null ? null : "title" in r ? r.title : r.displayName
       if (r === null || r.archived || label === null || fold(label) !== fold(name)) {
-        throw new Changed(`"${name}" was made by an earlier import and has changed; review again`)
+        throw new Changed(changedText([name]))
       }
     }
     try {
@@ -581,7 +608,7 @@ export async function applyGiftImportRows(
           {
             itemId: item.id,
             occasionId,
-            recipientIds,
+            recipientIds: [...recipientIds].sort(),
             quantity: now.quantity,
             shared: false,
             purchaseId: null,
@@ -597,7 +624,7 @@ export async function applyGiftImportRows(
         out.problems.push(err.message)
       } else if (err instanceof GiftIdempotencyError) {
         out.problems.push(
-          "this row was imported before with other people, another occasion or other details; review again",
+          "this row was imported before with other people, another occasion or other details; change the row to import it as a new gift",
         )
       } else {
         out.status = "failed"
