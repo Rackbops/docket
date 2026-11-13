@@ -27,6 +27,7 @@ import {
   sameClaim,
 } from "./research-answer.js"
 import {
+  postDate,
   SOCIAL_MAX_TURNS,
   socialChecks,
   socialChoice,
@@ -753,7 +754,7 @@ function afterReview(
   const n = answer.findings.length
   const verdict = review.verdict === "approve" ? "approved" : "revised"
   // One finding per claim, its first source the one it is filed under (`parseAnswer` keeps only
-  // claims with at least one); a post's finding is tagged `social` and its platform (0.23.0).
+  // claims with at least one); a post's finding carries `postTags` (0.23.0, docket#124).
   const findings = answer.findings.map((f) => ({
     text: f.claim,
     ...(f.sources[0] ? { source: f.sources[0] } : {}),
@@ -846,9 +847,30 @@ function waitTail(
   )
 }
 
-/** The tags a finding from a post carries besides the type's (0.23.0): `social` and its platform. */
-function postTags(f: ResearchAnswer["findings"][number]): string[] {
-  return f.platform ? ["social", f.platform] : []
+/** What a `published:` tag may hold: letters, digits, space and date punctuation; markup never. */
+const TAG_TEXT = /^[A-Za-z0-9 .,:+/-]+$/
+
+/**
+ * The tags a finding from a post carries besides the type's (0.23.0): `social` and its platform;
+ * since docket#124 also its date, `published:<day>` for an instant (its UTC day, the day
+ * `socialOutgoing` reads it as against `since`, so a zoned instant can name the day after the one
+ * the DM shows) or `published:<text>` for an "about <date>" or `undated` as written, when it is
+ * plain text (`TAG_TEXT`); and its evidence, `read` or `snippet`. These are the facts the DM's
+ * finding line is built from; the DM shows the instant as kept and marks only `snippet`. An
+ * instant-shaped date that does not parse gives no date tag. A finding on web pages gets none.
+ */
+export function postTags(f: ResearchAnswer["findings"][number]): string[] {
+  if (!f.platform) return []
+  return ["social", f.platform, ...publishedTag(f.publishedAt), ...(f.evidence ? [f.evidence] : [])]
+}
+
+function publishedTag(publishedAt: string | undefined): string[] {
+  if (!publishedAt) return []
+  if (/^\d{4}-\d{2}-\d{2}T/.test(publishedAt)) {
+    const at = postDate(publishedAt)
+    return at ? [`published:${at.toISOString().slice(0, 10)}`] : []
+  }
+  return TAG_TEXT.test(publishedAt) ? [`published:${publishedAt}`] : []
 }
 
 /** True in the second pass: waiting for pages, or past its research run. */
