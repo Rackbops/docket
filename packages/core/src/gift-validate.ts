@@ -10,6 +10,8 @@ export const GIFT_NOTES_MAX = 2000
 export const GIFT_LABEL_MAX = 40
 export const GIFT_LABELS_MAX = 20
 export const GIFT_IDS_MAX = 500
+/** The most watches one gift links to. */
+export const GIFT_WATCHES_MAX = 20
 
 const DATE = /^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/
 
@@ -211,6 +213,12 @@ const CHECKS: { [K in GiftKind]: (c: Checker, f: GiftFieldsByKind[K]) => void } 
     if (f.estimateMinor !== null && f.currency === null) {
       c.problems.push("estimateMinor needs a currency")
     }
+    if (f.watchTaskIds !== undefined && f.watchTaskIds !== null) {
+      c.ids("watchTaskIds", 0)
+      if (Array.isArray(f.watchTaskIds) && f.watchTaskIds.length > GIFT_WATCHES_MAX) {
+        c.problems.push(`watchTaskIds holds more than ${GIFT_WATCHES_MAX} watches`)
+      }
+    }
   },
   purchase(c, f) {
     c.id("itemId")
@@ -295,6 +303,7 @@ export const GIFT_FIELD_NAMES: { [K in GiftKind]: readonly (keyof GiftFieldsByKi
     "planning",
     "estimateMinor",
     "currency",
+    "watchTaskIds",
   ],
   purchase: [
     "itemId",
@@ -329,6 +338,7 @@ export const GIFT_FIELD_NAMES: { [K in GiftKind]: readonly (keyof GiftFieldsByKi
 /** Fields a record may leave out, read as null: added after records without them were stored. */
 export const GIFT_OPTIONAL_FIELDS: { [K in GiftKind]?: readonly string[] } = {
   group: ["filter"],
+  item: ["watchTaskIds"],
   allocation: ["repeatOf"],
 }
 

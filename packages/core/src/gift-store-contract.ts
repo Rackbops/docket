@@ -246,6 +246,30 @@ export const GIFT_STORE_CONTRACT: readonly GiftStoreContractCase[] = [
     },
   },
   {
+    name: "gift: an item keeps the watches it links to, and one without them reads as before",
+    async run(store) {
+      const fields = {
+        title: "Puzzle",
+        url: null,
+        productKey: null,
+        variant: null,
+        notes: null,
+        source: { kind: "scout" as const, ref: "task-1/finding-1" },
+        planning: "idea" as const,
+        estimateMinor: null,
+        currency: null,
+      }
+      const before = await store.create("item", meta(), fields)
+      check(((await store.get("item", A, before.id))?.watchTaskIds ?? null) === null, "none")
+      const linked = await store.create("item", meta(), { ...fields, watchTaskIds: ["task-9"] })
+      same(
+        (await store.get("item", A, linked.id))?.watchTaskIds,
+        ["task-9"],
+        "watchTaskIds reads back",
+      )
+    },
+  },
+  {
     name: "gift: an id read as another kind is missing",
     async run(store) {
       const r = await store.create("recipient", meta(), person())

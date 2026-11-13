@@ -18,7 +18,9 @@ import {
 } from "./gift-ports.js"
 import { type GiftRolloverPreview, previewGiftRollover } from "./gift-rollover.js"
 import { allocationUnits, keptUnits } from "./gift-rules.js"
+import { type GiftIdeaChoice, giftIdeaFromFinding, giftWatchProblems } from "./gift-scout.js"
 import { giftProblems } from "./gift-validate.js"
+import type { StoredFinding, Task } from "./model.js"
 
 /** The ids one record points at, by the kind each must be. */
 type Refs = [GiftKind, string][]
@@ -161,6 +163,50 @@ export class GiftLedger {
       current,
     )
     return this.store.update(kind, id, meta, expectedRevision, clean)
+  }
+
+  /**
+   * "Save as gift idea" (docket#101): one of the owner's findings, as the host read it from its
+   * task `Store`, made a new item in the `idea` state (`giftIdeaFromFinding`), linked back to it.
+   * It allocates nothing, so it covers nobody, and it never touches the finding or its task.
+   * Another owner's finding is refused as not found. Without an idempotency key, a finding a live
+   * (unarchived, rejected or not) item is already linked to is refused (`GiftValidationError`), so
+   * a double save makes one idea; with a key, a retry replays, and a new key is a new save. The
+   * check reads, then the store writes: two saves racing can both pass.
+   */
+  async saveFindingAsIdea(
+    meta: GiftWriteMeta,
+    finding: StoredFinding,
+    choice: GiftIdeaChoice = {},
+  ): Promise<GiftRecord<"item">> {
+    if (finding.ownerId !== meta.ownerId) throw new GiftNotFoundError(`no finding ${finding.id}`)
+    const fields = giftIdeaFromFinding(finding, choice)
+    if (meta.idempotencyKey === undefined) {
+      const live = await this.store.list("item", meta.ownerId)
+      const ref = fields.source.ref
+      if (live.some((i) => i.source.kind === "scout" && i.source.ref === ref)) {
+        throw new GiftValidationError([`finding ${finding.id} is already saved as a gift idea`])
+      }
+    }
+    return this.create("item", meta, fields)
+  }
+
+  /**
+   * Sets the watches a gift follows (`watchTaskIds`, docket#101), refusing
+   * (`GiftValidationError`) any that `giftWatchProblems` refuses against `tasks`, the host's read
+   * of the owner's tasks. The gift store cannot see tasks, so this is the checked way to link;
+   * it writes only the item, never a task.
+   */
+  async linkGiftWatches(
+    meta: GiftWriteMeta,
+    itemId: string,
+    expectedRevision: number,
+    watchTaskIds: string[],
+    tasks: readonly Pick<Task, "id" | "ownerId" | "type">[],
+  ): Promise<GiftRecord<"item">> {
+    const problems = giftWatchProblems(meta.ownerId, watchTaskIds, tasks)
+    if (problems.length > 0) throw new GiftValidationError(problems)
+    return this.update("item", itemId, meta, expectedRevision, { watchTaskIds })
   }
 
   /**
