@@ -33,6 +33,7 @@ import {
   socialChoice,
   socialLines,
   socialOutgoing,
+  socialPlatforms,
 } from "./research-social.js"
 import {
   GATHERED_ALLOWED_TOOLS,
@@ -119,11 +120,12 @@ import { retryOutcome } from "./retry.js"
  * with no qualifying entry as "none yet"; the reviewer revises an answer that invents its own.
  *
  * **Social platforms** (0.23.0, docket#107; `research-social.ts`): a web first pass may search
- * YouTube, TikTok, Instagram and Bluesky for what people say, through `firecrawl_scrape`'s typed
- * bodies and Bluesky's public search, when the request's `social` asks (`auto`, the default:
- * when the question asks for opinions; `none`; or a list of platforms) and from `since` on. It
- * gets `SOCIAL_MAX_TURNS` then. A post finding carries its platform, date and whether the post
- * was opened; the answer carries `coverage`, one row per platform and Reddit (never searched),
+ * YouTube, TikTok and Instagram for what people say, through `firecrawl_scrape`'s typed bodies
+ * (and, until docket#125, Bluesky's public search by WebFetch), when the request's `social` asks
+ * (`auto`, the default: when the question asks for opinions; `none`; or a list of platforms) and
+ * from `since` on. It gets `SOCIAL_MAX_TURNS` then. A post finding carries its platform, date and
+ * whether the post was opened; the answer carries `coverage`, one row per platform and one each
+ * for Bluesky and Reddit (never searched),
  * shown as the DM's "Social:" line. Plain code (`socialOutgoing`) counts a copied link once,
  * moves a stock, price or availability claim resting on posts alone and a dated post before
  * `since` to `uncertain`, and completes the coverage. Runs on gathered pages search no platform.
@@ -157,8 +159,9 @@ export interface ResearchConfig {
   /**
    * Social platforms (0.23.0, docket#107): `auto` (the default, and what an absent or unreadable
    * value means) searches them when the question asks what people recommend, think or
-   * experienced; `none` never; a list of `youtube`, `tiktok`, `instagram`, `bluesky` (commas or
-   * spaces) always searches those. `parseSocial` reads it; a host refuses any other value.
+   * experienced; `none` never; a list of `youtube`, `tiktok`, `instagram` (commas or spaces)
+   * always searches those; `bluesky` is read but not searched (docket#125). `parseSocial` reads
+   * it; a host refuses any other value.
    */
   social?: string
   /**
@@ -279,7 +282,7 @@ export function deadlineOf(config: ResearchConfig): Date | null {
 
 /**
  * The `since` bound, or null when there is none or it does not parse: the start of the instant's
- * UTC day, so the prompt's "on or after <day>", Bluesky's `since` filter and the belt agree.
+ * UTC day, so the prompt's "on or after <day>" and the belt agree.
  */
 export function sinceOf(config: ResearchConfig): Date | null {
   if (typeof config.since !== "string") return null
@@ -357,7 +360,8 @@ export function researchJob(
   const webFirst = !sent && earlier === undefined
   const social = socialChoice(config.social)
   // Social platforms (0.23.0): a web first pass only; a run on gathered pages cannot open pages.
-  const socialOn = webFirst && social.mode !== "none"
+  // Nothing to search (`none`, or `only` Bluesky since docket#125) is off.
+  const socialOn = webFirst && socialPlatforms(social).length > 0
   const prompt = [
     "You are researching a one-off question for a person, who will read your answer as a " +
       "Discord DM.",
@@ -1061,7 +1065,7 @@ export function researchType(options: ResearchOptions = {}): TaskType<ResearchCo
           name: "social",
           description:
             "Social platforms: auto (searched when the question asks what people think), none, " +
-            "or some of youtube, tiktok, instagram, bluesky",
+            "or some of youtube, tiktok, instagram (bluesky is accepted but not searched)",
           required: false,
           kind: "string",
         },

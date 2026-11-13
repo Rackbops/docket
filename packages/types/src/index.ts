@@ -182,7 +182,9 @@ export {
 } from "./research-answer.js"
 export {
   assertsFactFromPost,
+  BLUESKY_NOTE,
   BLUESKY_SEARCH_URL,
+  BLUESKY_WHY,
   NOT_REPORTED,
   parseSocial,
   postDate,
@@ -190,6 +192,7 @@ export {
   REDDIT_WHY,
   SAID_IN_POST,
   SOCIAL_AUTO,
+  SOCIAL_AUTO_PLATFORMS,
   SOCIAL_BLUESKY_CALLS,
   SOCIAL_MAX_CREDITS,
   SOCIAL_MAX_TURNS,

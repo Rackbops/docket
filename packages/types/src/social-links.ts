@@ -7,8 +7,10 @@
  */
 
 /**
- * The platforms a `web` first pass may search for posts (docs/social-sources.md, decision 3:
- * YouTube, Bluesky, TikTok and Instagram; X skipped, Reddit blocked, Threads later).
+ * The platforms a request may name, a finding may carry and a link is canonicalised for
+ * (docs/social-sources.md, decision 3: YouTube, Bluesky, TikTok and Instagram; X skipped, Reddit
+ * blocked, Threads later). Which of them a run searches is `SOCIAL_AUTO_PLATFORMS` and
+ * `socialPlatforms` in research-social.ts: Bluesky is suspended (docket#125).
  */
 export const SOCIAL_PLATFORMS = ["youtube", "tiktok", "instagram", "bluesky"] as const
 
