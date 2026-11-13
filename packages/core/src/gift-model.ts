@@ -117,6 +117,14 @@ export interface GiftItemFields {
   /** A planning price, never spend. */
   estimateMinor: number | null
   currency: string | null
+  /**
+   * The owner's price or want-list watches this gift follows (docket#101), by task id. A link
+   * only: linking, buying or archiving the gift never creates, pauses, edits or cancels a watch,
+   * and what a watch observed (price, stock) stays in the watch, never in a purchase line. Check
+   * a link with `giftWatchProblems`. May be left out (an item from before docket#101), which is
+   * the same as null.
+   */
+  watchTaskIds?: string[] | null
 }
 
 /**

@@ -18,7 +18,9 @@ import {
 } from "./gift-ports.js"
 import { type GiftRolloverPreview, previewGiftRollover } from "./gift-rollover.js"
 import { allocationUnits, keptUnits } from "./gift-rules.js"
+import { type GiftIdeaChoice, giftIdeaFromFinding } from "./gift-scout.js"
 import { giftProblems } from "./gift-validate.js"
+import type { StoredFinding } from "./model.js"
 
 /** The ids one record points at, by the kind each must be. */
 type Refs = [GiftKind, string][]
@@ -161,6 +163,20 @@ export class GiftLedger {
       current,
     )
     return this.store.update(kind, id, meta, expectedRevision, clean)
+  }
+
+  /**
+   * "Save as gift idea" (docket#101): one of the owner's findings as a new item in the `idea`
+   * state (`giftIdeaFromFinding`), linked back to it. It allocates nothing, so it covers nobody,
+   * and it never touches the finding or its task. Another owner's finding is refused as not found.
+   */
+  async saveFindingAsIdea(
+    meta: GiftWriteMeta,
+    finding: StoredFinding,
+    choice: GiftIdeaChoice = {},
+  ): Promise<GiftRecord<"item">> {
+    if (finding.ownerId !== meta.ownerId) throw new GiftNotFoundError(`no finding ${finding.id}`)
+    return this.create("item", meta, giftIdeaFromFinding(finding, choice))
   }
 
   /**

@@ -119,6 +119,16 @@ allocation then records the warned ids in its optional `repeatOf`, which must na
 allocations. A rollover's carried idea names its source there. Only allocations count, so a watch or
 scout having seen a listing is never taken as ownership.
 
+`gift-scout` joins gifts to the scout (docket#101). `giftIdeaFromFinding` (or
+`GiftLedger.saveFindingAsIdea`, which refuses another owner's finding) makes one finding a new item
+in the `idea` state, linked back by `source: { kind: "scout", ref: "<taskId>/<findingId>" }`; it is
+never selected, bought or allocated, so it covers nobody, and its text is kept only as notes,
+cleaned. An eBay finding (tagged `ebay` or at an eBay address) copies nothing of the listing, as the
+eBay watch keeps none: the owner names the gift. An item's optional `watchTaskIds` links the owner's
+price or want-list watches (check with `giftWatchProblems`); nothing in the gift ledger reads or
+writes a task, so linking, buying or archiving a gift never changes a watch. `giftScoutBrief` gives
+a scout run for a gift only the interests and avoidances the owner picks.
+
 ## Adopting 0.18.0
 
 **Run now** (rackbops-bot-plugins#369). `runNowKey(taskId, requestId)` keys a run its owner asked for
