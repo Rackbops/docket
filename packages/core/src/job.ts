@@ -50,6 +50,12 @@ export interface JobSuccess {
   /** The CLI's client-side list-price estimate; a proxy under a subscription, not a bill. */
   totalCostUsd?: number
   usage?: unknown
+  /**
+   * The CLI's `modelUsage`, per model, nested requests included (its `usage` counts only the
+   * top-level loop): where a WebSearch tool call's searches are counted, as `webSearchRequests`
+   * (docket#128).
+   */
+  modelUsage?: unknown
   numTurns?: number
   durationMs: number
 }

@@ -4,6 +4,7 @@ import {
   judgeState,
   type Listing,
   listingKey,
+  mergeShopCheck,
   parseShopCheck,
   renderJudged,
   SHOP_UNVETTED,
@@ -19,6 +20,7 @@ import {
   type WantConfig,
   wantjudgeType,
   wantlistType,
+  webSearches,
 } from "../src/index.js"
 
 /** The shop check (docket#120): Rod's decisions of 2026-11-11, one test each where it has a rule. */
@@ -195,15 +197,61 @@ describe("the check's Job", () => {
     expect(c?.sources).toEqual(["https://www.trustpilot.com/review/x"])
     expect(c?.checkedAt).toBe(NOW.toISOString())
   })
-  it("reads a pass with no source as unknown, never a six-month pass", () => {
-    const c = parseShopCheck({ verdict: "ok", reasons: ["looks fine"], sources: [] }, "x.us", NOW)
-    expect(c?.verdict).toBe("unknown")
+  it("records no pass with no source behind it, so the listing stays held (docket#128)", () => {
+    expect(
+      parseShopCheck({ verdict: "ok", reasons: ["looks fine"], sources: [] }, "x.us", NOW),
+    ).toBeNull()
     const backed = parseShopCheck(
       { verdict: "ok", reasons: [], sources: ["https://www.trustpilot.com/review/x.us"] },
       "x.us",
       NOW,
     )
     expect(backed?.verdict).toBe("ok")
+    const thin = parseShopCheck({ verdict: "unknown", reasons: [], sources: [] }, "x.us", NOW)
+    expect(thin?.verdict).toBe("unknown")
+  })
+  it("keeps a flagged shop flagged after a re-check that finds too little; a supported pass lifts it", () => {
+    const flagged = { ...check("bad.us", "flagged", "2026-05-01T00:00:00Z") }
+    const unknown = check("bad.us", "unknown", NOW.toISOString())
+    const kept = mergeShopCheck(flagged, unknown)
+    expect(kept.verdict).toBe("flagged")
+    expect(kept.checkedAt).toBe(NOW.toISOString())
+    expect(kept.reasons[0]).toContain("too little found to lift the flag")
+    expect(kept.reasons).toContain("Trustpilot reviews say it never ships")
+    expect(shopStanding(kept, NOW)).toBe("flagged")
+    const again = mergeShopCheck(kept, { ...unknown, checkedAt: "2027-05-14T00:00:00.000Z" })
+    expect(again.reasons.filter((r) => r.startsWith("re-checked "))).toHaveLength(1)
+    expect(again.reasons).toContain("Trustpilot reviews say it never ships")
+    const passed = { ...check("bad.us", "ok", NOW.toISOString()), sources: ["https://a.example/r"] }
+    expect(mergeShopCheck(flagged, passed).verdict).toBe("ok")
+    expect(mergeShopCheck(undefined, unknown)).toEqual(unknown)
+    expect(mergeShopCheck(check("bad.us", "ok", "2026-05-01T00:00:00Z"), unknown)).toEqual(unknown)
+  })
+  it("counts the web searches a run reports, and none when it names none", () => {
+    const run = (usage: unknown): JobResult => ({
+      kind: "success",
+      result: "",
+      usage,
+      durationMs: 1,
+    })
+    expect(webSearches(run({ server_tool_use: { web_search_requests: 1 } }))).toBe(1)
+    expect(webSearches(run({ server_tool_use: { web_search_requests: 0 } }))).toBe(0)
+    expect(webSearches(run({ server_tool_use: {} }))).toBe(0)
+    expect(webSearches(run(undefined))).toBe(0)
+    expect(webSearches({ kind: "error", detail: "x", durationMs: 1 })).toBe(0)
+    // Claude Code's WebSearch is counted in modelUsage, across models, not in usage.
+    const nested: JobResult = {
+      kind: "success",
+      result: "",
+      usage: { server_tool_use: { web_search_requests: 0 } },
+      modelUsage: {
+        "claude-main": { webSearchRequests: 0 },
+        "claude-small": { webSearchRequests: 1 },
+        odd: "x",
+      },
+      durationMs: 1,
+    }
+    expect(webSearches(nested)).toBe(1)
   })
   it("refuses an answer that is not one", () => {
     expect(parseShopCheck(null, "x.us", NOW)).toBeNull()
@@ -232,16 +280,18 @@ describe("the shopcheck type", () => {
       history: { events: [], replies: [], series: [] },
     }
   }
-  const ok = (out: unknown): JobResult => ({
+  const ok = (out: unknown, searches = 1): JobResult => ({
     kind: "success",
     result: "",
     structuredOutput: out,
+    usage: { server_tool_use: { web_search_requests: searches } },
     durationMs: 1,
   })
+  const none = async () => undefined
 
   it("records a verdict and completes", async () => {
     const recorded: ShopCheck[] = []
-    const type = shopcheckType({ record: async (c) => void recorded.push(c) })
+    const type = shopcheckType({ record: async (c) => void recorded.push(c), prior: none })
     const job = await type.prepare?.(ctx("bad.us"))
     expect(job && "prompt" in job && job.prompt).toContain("is bad.us a legitimate website")
     const out = await type.finish?.(
@@ -253,7 +303,7 @@ describe("the shopcheck type", () => {
   })
   it("records nothing when the Job failed or answered badly, so the listing stays held", async () => {
     const recorded: ShopCheck[] = []
-    const type = shopcheckType({ record: async (c) => void recorded.push(c) })
+    const type = shopcheckType({ record: async (c) => void recorded.push(c), prior: none })
     const failed = await type.finish?.(ctx("bad.us"), {
       kind: "usage_limit",
       detail: "limit",
@@ -264,8 +314,30 @@ describe("the shopcheck type", () => {
     expect(bad?.complete).toBe(true)
     expect(recorded).toEqual([])
   })
+  it("records nothing when the run reports no web search, whatever it answered (docket#128)", async () => {
+    const recorded: ShopCheck[] = []
+    const type = shopcheckType({ record: async (c) => void recorded.push(c), prior: none })
+    const said = { verdict: "unknown", reasons: ["nothing found"], sources: [] }
+    const skipped = await type.finish?.(ctx("new.shop"), ok(said, 0))
+    expect(skipped?.summary).toBe("no web search ran; the next look asks again")
+    const bare: JobResult = { kind: "success", result: "", structuredOutput: said, durationMs: 1 }
+    await type.finish?.(ctx("new.shop"), bare)
+    expect(recorded).toEqual([])
+    await type.finish?.(ctx("new.shop"), ok(said))
+    expect(recorded.map((c) => c.verdict)).toEqual(["unknown"])
+  })
+  it("keeps a flagged shop flagged when its re-check finds too little", async () => {
+    const recorded: ShopCheck[] = []
+    const prior = async () => check("tradingcardgame.us", "flagged", "2026-05-01T00:00:00Z")
+    const type = shopcheckType({ record: async (c) => void recorded.push(c), prior })
+    await type.finish?.(
+      ctx("tradingcardgame.us"),
+      ok({ verdict: "unknown", reasons: [], sources: [] }),
+    )
+    expect(recorded.map((c) => c.verdict)).toEqual(["flagged"])
+  })
   it("checks nothing for a config that is not a shop name", async () => {
-    const type = shopcheckType({ record: async () => {} })
+    const type = shopcheckType({ record: async () => {}, prior: none })
     const out = await type.prepare?.(ctx("10.0.0.1"))
     expect(out && "outcome" in out && out.outcome.complete).toBe(true)
   })
@@ -422,9 +494,34 @@ describe("a Shopify watch with the shop list", () => {
     expect(asked).toEqual([])
   })
 
-  it("is unchanged without a shop list", async () => {
+  it("holds every listing without a shop list, plain or judged: a disabled lane passes no flag by (docket#128)", async () => {
     const out = await wantlistType({ shopify }).run?.(ctx("wantlist"))
-    expect(out?.notify?.text).toContain("tradingcardgame.us")
+    expect(out?.notify).toBeUndefined()
+    expect(out?.summary).toBe("4 listed, 4 within limits, 4 held for a shop check, 0 new")
+    expect((out?.state as { reported?: string[] } | undefined)?.reported).toEqual([])
+    const prep = await wantjudgeType({ shopify }).prepare?.(ctx("wantjudge"))
+    const outcome = prep && "outcome" in prep ? prep.outcome : undefined
+    expect(outcome?.followUp).toBeUndefined()
+    expect(outcome?.summary).toContain("4 held for a shop check")
+  })
+
+  it("tells nothing from tradingcardgame.us, flagged, on a plain or a judged watch: a finding, no DM", async () => {
+    const only = shopifySource(async () => ({
+      status: 200,
+      body: answer(["https://tradingcardgame.us/p?variant=1"]),
+    }))
+    const plain = await wantlistType({ shopify: only }, { shops: shops().vet }).run?.(
+      ctx("wantlist"),
+    )
+    expect(plain?.notify).toBeUndefined()
+    expect(plain?.findings?.map((f) => f.tags)).toEqual([["wantlist", "shopify", "shop-flagged"]])
+    const judged = wantjudgeType({ shopify: only }, { shops: shops().vet })
+    const prep = await judged.prepare?.(ctx("wantjudge"))
+    const outcome = prep && "outcome" in prep ? prep.outcome : undefined
+    expect(outcome?.followUp).toBeUndefined()
+    expect(outcome?.notify).toBeUndefined()
+    expect(judgeState(outcome?.state).pending).toEqual([])
+    expect(outcome?.findings?.map((f) => f.tags)).toEqual([["wantlist", "shopify", "shop-flagged"]])
   })
 
   it("vets before the judged watch's look, and keeps the unvetted mark for its DM", async () => {

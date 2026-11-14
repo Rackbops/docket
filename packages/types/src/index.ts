@@ -269,6 +269,8 @@ export {
 } from "./scout.js"
 export {
   flaggedFinding,
+  mergeShopCheck,
+  type PriorShopCheck,
   parseShopCheck,
   type RecordShopCheck,
   SHOP_ALLOWED_TOOLS,
@@ -297,6 +299,7 @@ export {
   type VetResult,
   type Vetted,
   vetListings,
+  webSearches,
 } from "./shop-vet.js"
 export {
   canonicalSocialUrl,

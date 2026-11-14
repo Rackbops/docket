@@ -4,12 +4,31 @@ import {
   type Listing,
   MAX_EXCLUDE,
   parseExclude,
+  type ShopVet,
   SOURCE_IDS,
   type Source,
   type SourceId,
   wantjudgeType,
   wantlistType,
 } from "../src/index.js"
+
+/** A shop list that passed every shop: a Shopify watch with none holds every listing (docket#128). */
+const allPassed: ShopVet = {
+  get: async (domains) =>
+    new Map(
+      domains.map((d) => [
+        d,
+        {
+          domain: d,
+          verdict: "ok",
+          reasons: [],
+          sources: [],
+          checkedAt: "2026-10-28T00:00:00.000Z",
+        },
+      ]),
+    ),
+  request: async () => {},
+}
 
 /**
  * Exclude words on want-list watches (docket#77, the Arkham pilot of rackbops-bot-plugins#368): a
@@ -35,6 +54,7 @@ const stub = (id: SourceId): Source => ({ id, search: async () => [CAMPAIGN, INV
 const ctx = (config: Record<string, unknown>, dedupeKey = "2026-10-29T00:00:00.000Z") =>
   ({
     task: { id: "t1", title: "Edge of the Earth" },
+    owner: { id: "u1" },
     occurrence: { dedupeKey },
     config,
     state: null,
@@ -90,7 +110,7 @@ describe("parseExclude", () => {
 describe("exclude words on a plain watch, from every source", () => {
   for (const id of SOURCE_IDS) {
     it(`drops the investigator expansion and keeps the campaign one (${id})`, async () => {
-      const type = wantlistType({ [id]: stub(id) })
+      const type = wantlistType({ [id]: stub(id) }, { shops: allPassed })
       const out = await type.run(
         ctx({ source: id, target: "edge of the earth", exclude: ["investigator"] }),
       )
@@ -131,7 +151,7 @@ describe("exclude words on a plain watch, from every source", () => {
 describe("exclude words on a judged watch, from every source", () => {
   for (const id of SOURCE_IDS) {
     it(`never sends the investigator expansion to the judge (${id})`, async () => {
-      const type = wantjudgeType({ [id]: stub(id) })
+      const type = wantjudgeType({ [id]: stub(id) }, { shops: allPassed })
       const out = (await type.prepare?.(
         ctx({ source: id, target: "edge of the earth", exclude: ["investigator"] }),
       )) as { outcome: { state: { pending: Listing[] }; summary: string } }

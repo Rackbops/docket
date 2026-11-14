@@ -380,13 +380,17 @@ export async function pollWant(
   // Vetted before the per-run cap, so a flagged store's many listings never take the slots of a
   // good one. Held and flagged ones are not remembered, so a later look tells them once their shop
   // passes.
+  // A host with no shop list holds every Shopify listing: none is told unvetted, and a stored flag
+  // is never passed by (docket#128).
   const vetted =
-    o.shops && ctx.config.source === "shopify"
-      ? await vetListings(priced.send, o.shops, ctx.now, {
-          taskId: ctx.task.id,
-          ownerId: ctx.owner.id,
-        })
-      : { send: priced.send, flagged: [], held: [] }
+    ctx.config.source !== "shopify"
+      ? { send: priced.send, flagged: [], held: [] }
+      : o.shops
+        ? await vetListings(priced.send, o.shops, ctx.now, {
+            taskId: ctx.task.id,
+            ownerId: ctx.owner.id,
+          })
+        : { send: [], flagged: [], held: [...priced.send] }
   const candidates = vetted.send.slice(0, MAX_NEW_PER_RUN)
   const checked = await confirmListings(candidates, ctx.config, source, o.detail !== false)
   const fresh = checked.kept

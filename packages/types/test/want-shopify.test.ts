@@ -9,6 +9,7 @@ import {
   SHOPIFY_CAPABILITY,
   SHOPIFY_PROVIDER,
   type ShopifyRequest,
+  type ShopVet,
   SourceMiss,
   SourceUnavailableError,
   searchWords,
@@ -18,6 +19,24 @@ import {
   wantlistType,
   withinLimits,
 } from "../src/index.js"
+
+/** A shop list that passed every shop: a Shopify watch with none holds every listing (docket#128). */
+const allPassed: ShopVet = {
+  get: async (domains) =>
+    new Map(
+      domains.map((d) => [
+        d,
+        {
+          domain: d,
+          verdict: "ok",
+          reasons: [],
+          sources: [],
+          checkedAt: "2026-10-18T00:00:00.000Z",
+        },
+      ]),
+    ),
+  request: async () => {},
+}
 
 /**
  * The Shopify source (0.12.0). `answer()` is cut down from a real Firecrawl answer to
@@ -295,9 +314,12 @@ describe("a Shopify watch", () => {
   }
 
   it("DMs the new copies at or under the top price, via Shopify, once", async () => {
-    const type = wantlistType({
-      shopify: shopifySource(async () => ({ status: 200, body: answer([STONEMAIER, BARNES]) })),
-    })
+    const type = wantlistType(
+      {
+        shopify: shopifySource(async () => ({ status: 200, body: answer([STONEMAIER, BARNES]) })),
+      },
+      { shops: allPassed },
+    )
     const first = await type.run(ctx())
     expect(first.summary).toBe("2 listed, 1 within limits, 1 new")
     expect(first.notify?.text).toContain("Stonemaier Games")
