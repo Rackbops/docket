@@ -353,7 +353,11 @@ what terms, is recorded in [`docs/social-sources.md`](docs/social-sources.md) (d
   every answer that carries `coverage` lists it unavailable (#125, PR #143). Release order: docket
   0.27.0 first, then the tracker's adoption (issue rackbops-bot-plugins#386; it must move to the new
   `previewGroupSync`).
-- **Next -- a want-list watch holds a price spike** ([#144](https://github.com/Rackbops/docket/issues/144);
+- **0.28.0 -- price spikes, a linear Noble Knight reader, and the shop check's release blocker**
+  ([#144](https://github.com/Rackbops/docket/issues/144) via #145, [#128](https://github.com/Rackbops/docket/issues/128)
+  via #146). Breaking for a host, types: `shopcheckType` takes `prior`. Additive, core: `JobSuccess`
+  carries the CLI's `modelUsage`. The two entries below are what it releases.
+- **0.28.0 -- a want-list watch holds a price spike** ([#144](https://github.com/Rackbops/docket/issues/144);
   Rod, 2026-11-14: "If $350 is the normal price and suddenly you're seeing a single thing for $600,
   I don't need to see that $600 one."). Additive, types: a watch keeps the prices of the new listings
   it confirmed and passed on (state `prices`: price, currency, condition and day; at most 100; none
@@ -365,7 +369,7 @@ what terms, is recorded in [`docs/social-sources.md`](docs/social-sources.md) (d
   only the prices of listings the model found worth a look. An eBay API watch keeps no history, so it holds nothing; a listing once told is
   not weighed again, so a later repricing of it is not caught. No price cap: every copy near
   the usual price is told.
-- **Next -- the shop check holds what it cannot show it checked** ([#128](https://github.com/Rackbops/docket/issues/128),
+- **0.28.0 -- the shop check holds what it cannot show it checked** ([#128](https://github.com/Rackbops/docket/issues/128),
   the release blocker for #120). Types: a Shopify watch with no shop list (a host whose execute lane
   is off) holds every listing, plain or judged, so no flag is passed by. A check is recorded only
   when the run reports a web search (`webSearches`: the CLI's `modelUsage[*].webSearchRequests`, where
