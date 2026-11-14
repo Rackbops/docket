@@ -27,6 +27,7 @@ import {
   SourceMiss,
   SourceUnavailableError,
 } from "./want-sources.js"
+import { keepPrices, type PricePoint, readPrices, spikeFinding, splitSpikes } from "./want-spike.js"
 import { sourceText } from "./want-text.js"
 
 /**
@@ -87,6 +88,12 @@ export interface WantState {
   told: number
   /** Whether this run of misses has been told about already: once per run, whatever the reason. */
   warned: boolean
+  /**
+   * Prices of new listings it confirmed and passed on, for its usual price (want-spike.ts,
+   * docket#144): price, currency, condition and day only. Never kept by an eBay API watch, which
+   * keeps no eBay data.
+   */
+  prices?: PricePoint[]
 }
 
 export const MAX_REPORTED = 500
@@ -136,6 +143,7 @@ export function wantState(value: unknown): WantState {
     misses: typeof s.misses === "number" ? s.misses : 0,
     told: typeof s.told === "number" ? s.told : 0,
     warned: s.warned === true,
+    ...(Array.isArray(s.prices) ? { prices: readPrices(s.prices) } : {}),
   }
 }
 
@@ -365,20 +373,33 @@ export async function pollWant(
   const limited = listings.filter((l) => withinLimits(l, ctx.config))
   const within = limited.filter((l) => !isExcluded(l.title, ctx.config.exclude))
   const unseen = within.filter((l) => !told.has(listingKey(l.id)))
+  // A listing far above the usual price is held (docket#144), before a shop check is asked for it.
+  const kept = keepsFindings(ctx.config) ? (state.prices ?? []) : []
+  const priced = splitSpikes(unseen, kept, ctx.now, ctx.config.currency)
   // A Shopify listing can come from any store: its shop is vetted before it is told (docket#120).
   // Vetted before the per-run cap, so a flagged store's many listings never take the slots of a
   // good one. Held and flagged ones are not remembered, so a later look tells them once their shop
   // passes.
   const vetted =
     o.shops && ctx.config.source === "shopify"
-      ? await vetListings(unseen, o.shops, ctx.now, { taskId: ctx.task.id, ownerId: ctx.owner.id })
-      : { send: unseen, flagged: [], held: [] }
+      ? await vetListings(priced.send, o.shops, ctx.now, {
+          taskId: ctx.task.id,
+          ownerId: ctx.owner.id,
+        })
+      : { send: priced.send, flagged: [], held: [] }
   const candidates = vetted.send.slice(0, MAX_NEW_PER_RUN)
   const checked = await confirmListings(candidates, ctx.config, source, o.detail !== false)
   const fresh = checked.kept
-  const findings = vetted.flagged
-    .slice(0, MAX_NEW_PER_RUN)
-    .map((f) => flaggedFinding(f.listing, f.check, ctx.config.source))
+  const findings = [
+    ...vetted.flagged
+      .slice(0, MAX_NEW_PER_RUN)
+      .map((f) => flaggedFinding(f.listing, f.check, ctx.config.source)),
+    ...(keepsFindings(ctx.config)
+      ? priced.spikes
+          .slice(0, MAX_NEW_PER_RUN)
+          .map((s) => spikeFinding(s.listing, s.usual, ctx.config.source, ctx.config.currency))
+      : []),
+  ]
   const dropped = limited.length - within.length
   const ruled = checked.ruledOut.length
   const summary =
@@ -386,9 +407,13 @@ export async function pollWant(
     `${dropped > 0 ? `${dropped} excluded, ` : ""}` +
     `${ruled > 0 ? `${ruled} not confirmed and ruled out, ` : ""}` +
     `${checked.unchecked.size > 0 ? `${checked.unchecked.size} to check, ` : ""}` +
+    `${priced.spikes.length > 0 ? `${priced.spikes.length} held as a price spike, ` : ""}` +
     `${vetted.flagged.length > 0 ? `${vetted.flagged.length} from a flagged shop, ` : ""}` +
     `${vetted.held.length > 0 ? `${vetted.held.length} held for a shop check, ` : ""}${fresh.length} new`
-  // A listing ruled out is remembered as told, so it is not read in full again on every look.
+  // A listing ruled out is remembered as told, so it is not read in full again on every look. A
+  // spike is not, so it is told once its price falls. Only the prices of new listings that
+  // confirmed are kept for the usual price: never a spike's, a ruled-out one's or one still to be
+  // checked, so neither an outlier nor a cheap insert moves the price the next is weighed against.
   const read: WantState = {
     ...state,
     misses: 0,
@@ -396,6 +421,16 @@ export async function pollWant(
     reported: [...state.reported, ...checked.ruledOut.map((l) => listingKey(l.id))].slice(
       -MAX_REPORTED,
     ),
+    ...(keepsFindings(ctx.config)
+      ? {
+          prices: keepPrices(
+            kept,
+            fresh.filter((l) => !checked.unchecked.has(l.id)),
+            ctx.now,
+            ctx.config.currency,
+          ),
+        }
+      : {}),
   }
   if (fresh.length === 0)
     return {
