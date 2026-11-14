@@ -30,6 +30,12 @@ import { isObj, type Listing, listingKey } from "./want-sources.js"
  * - a flagged shop's listing is never told; it is kept as a finding with the reasons, and not
  *   remembered, so if the shop passes its re-check a listing still up is told then.
  *
+ * Release blocker docket#128 (roshne, 2026-11-13): a check counts only when it can be shown to have
+ * run. A Job that reports no completed web search records nothing, so its shop's listings stay held
+ * and the next look asks again; so does an `ok` with no result behind it. A flagged shop stays
+ * flagged after a re-check that finds too little (`mergeShopCheck`): only a supported `ok` lifts it.
+ * A host with no shop list holds every Shopify listing (`pollWant`).
+ *
  * Observe only (tier 0): the check reads search results and opens nothing, buys nothing, sends nothing.
  */
 
@@ -264,10 +270,34 @@ export function parseShopCheck(value: unknown, domain: string, now: Date): ShopC
     .map((s) => safeUrl(s))
     .filter((s): s is string => s !== null)
     .slice(0, SHOP_SOURCES)
-  // A pass with no result behind it (the search did not run, or found nothing it could name) is not
-  // a pass: it is told marked, and checked again in 30 days, not trusted for six months.
-  const said = verdict === "ok" && sources.length === 0 ? "unknown" : (verdict as ShopVerdict)
-  return { domain, verdict: said, reasons, sources, checkedAt: now.toISOString() }
+  // A pass with no result behind it is not a check that can be shown to have found anything: it is
+  // not recorded, so the shop's listings stay held and the next look asks again (docket#128).
+  if (verdict === "ok" && sources.length === 0) return null
+  return { domain, verdict: verdict as ShopVerdict, reasons, sources, checkedAt: now.toISOString() }
+}
+
+/**
+ * The web searches a Job's run reports having made: the CLI's `usage.server_tool_use
+ * .web_search_requests`, 0 when it names none. Pure.
+ */
+export function webSearches(result: JobResult): number {
+  if (result.kind !== "success" || !isObj(result.usage)) return 0
+  const tools = result.usage.server_tool_use
+  if (!isObj(tools)) return 0
+  const n = tools.web_search_requests
+  return typeof n === "number" && Number.isFinite(n) && n > 0 ? Math.floor(n) : 0
+}
+
+/** What a re-check stores: one that finds too little keeps a flagged shop flagged. Pure. */
+export function mergeShopCheck(prior: ShopCheck | undefined, next: ShopCheck): ShopCheck {
+  if (prior?.verdict !== "flagged" || next.verdict !== "unknown") return next
+  // Still flagged, for another six months, with what flagged it; the re-check is named first.
+  const note = `re-checked ${next.checkedAt.slice(0, 10)}: too little found to lift the flag`
+  return {
+    ...prior,
+    reasons: [clean(note, REASON_CHARS, true), ...prior.reasons].slice(0, SHOP_REASONS),
+    checkedAt: next.checkedAt,
+  }
 }
 
 export interface ShopCheckConfig {
@@ -278,13 +308,20 @@ export interface ShopCheckConfig {
 /** The host's write of a finished check to its shop list. */
 export type RecordShopCheck = (check: ShopCheck) => Promise<void>
 
+/** The host's read of the shop's check as it stands, before a new one is recorded. */
+export type PriorShopCheck = (domain: string) => Promise<ShopCheck | undefined>
+
 /**
  * The check as a task type of its own, on the execute lane: a host makes one `once` task per shop
- * to check (`ShopVet.request`) and records what `finish` found. Not for people to create: a host
- * keeps it out of its intake and its lists. A failed Job records nothing, so the shop's listings
- * stay held and the next look asks again.
+ * to check (`ShopVet.request`) and records what `finish` found, merged with the check it had
+ * (`prior`, `mergeShopCheck`). Not for people to create: a host keeps it out of its intake and its
+ * lists. A failed Job, one that reports no web search, or an unusable answer records nothing, so
+ * the shop's listings stay held and the next look asks again.
  */
-export function shopcheckType(o: { record: RecordShopCheck }): TaskType<ShopCheckConfig> {
+export function shopcheckType(o: {
+  record: RecordShopCheck
+  prior: PriorShopCheck
+}): TaskType<ShopCheckConfig> {
   return defineTaskType<ShopCheckConfig>({
     id: "shopcheck",
     lane: "execute",
@@ -303,8 +340,12 @@ export function shopcheckType(o: { record: RecordShopCheck }): TaskType<ShopChec
           complete: true,
           summary: `check failed (${result.kind}); the next look asks again`,
         }
-      const check = parseShopCheck(result.structuredOutput, domain, ctx.now)
-      if (!check) return { complete: true, summary: "no usable answer; the next look asks again" }
+      // A check stands only on a search the run reports it made (docket#128).
+      if (webSearches(result) === 0)
+        return { complete: true, summary: "no web search ran; the next look asks again" }
+      const parsed = parseShopCheck(result.structuredOutput, domain, ctx.now)
+      if (!parsed) return { complete: true, summary: "no usable answer; the next look asks again" }
+      const check = mergeShopCheck(await o.prior(domain), parsed)
       await o.record(check)
       return {
         complete: true,

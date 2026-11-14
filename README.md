@@ -365,6 +365,14 @@ what terms, is recorded in [`docs/social-sources.md`](docs/social-sources.md) (d
   only the prices of listings the model found worth a look. An eBay API watch keeps no history, so it holds nothing; a listing once told is
   not weighed again, so a later repricing of it is not caught. No price cap: every copy near
   the usual price is told.
+- **Next -- the shop check holds what it cannot show it checked** ([#128](https://github.com/Rackbops/docket/issues/128),
+  the release blocker for #120). Types: a Shopify watch with no shop list (a host whose execute lane
+  is off) holds every listing, plain or judged, so no flag is passed by. A check is recorded only
+  when the run reports a web search (`webSearches`: the CLI's `usage.server_tool_use
+  .web_search_requests`); an `ok` with no source is not recorded. Either way the listing stays held
+  and the next look asks again. A flagged shop stays flagged after a re-check that finds too little
+  (`mergeShopCheck`; another six months), and only a supported `ok` lifts it. **Breaking for a
+  host:** `shopcheckType` now takes `prior`, the shop's check as it stands.
 
 ## Use
 
