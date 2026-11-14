@@ -305,7 +305,7 @@ export function mergeShopCheck(prior: ShopCheck | undefined, next: ShopCheck): S
   const note = `re-checked ${next.checkedAt.slice(0, 10)}: too little found to lift the flag`
   return {
     ...prior,
-    // One re-check note only, the newest, so what flagged it is never pushed out.
+    // One re-check note only, the newest, so repeated re-checks push out at most one of its reasons.
     reasons: [
       clean(note, REASON_CHARS, true),
       ...prior.reasons.filter((r) => !r.startsWith("re-checked ")),
