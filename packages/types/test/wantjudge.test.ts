@@ -304,4 +304,39 @@ describe("the judge's runs", () => {
     expect(gave.notify).toBeUndefined()
     expect(gave.state.reported).toEqual([])
   })
+
+  it("keeps the price of a listing only once the model finds it worth a look (docket#144)", async () => {
+    const two = {
+      ...pending,
+      prices: [{ p: 30, c: "USD", at: "2026-10-01" }],
+      pending: [
+        listing("Insert", "https://shop.example/p/1", 5),
+        listing("Box", "https://shop.example/p/2", 31),
+      ],
+    }
+    const result = {
+      kind: "success",
+      result: "",
+      structuredOutput: {
+        verdicts: [
+          { n: 1, fit: "no", why: "an insert" },
+          { n: 2, fit: "match", why: "yes" },
+        ],
+      },
+      durationMs: 1,
+    } as const
+    const done = (await type.finish?.(ctx("followup:o1", two), result)) as {
+      state: { prices: { p: number }[] }
+    }
+    expect(done.state.prices.map((x) => x.p)).toEqual([30, 31])
+  })
+
+  it("keeps no price at the look itself: the model has not judged yet", async () => {
+    const kept = [{ p: 30, c: "USD", at: "2026-10-01" }]
+    const out = (await type.prepare?.(
+      ctx("2026-10-02T00:00:00.000Z", { ...pending, pending: [], prices: kept }),
+    )) as { outcome: { state: { pending: unknown[]; prices: unknown[] } } }
+    expect(out.outcome.state.pending).toHaveLength(1)
+    expect(out.outcome.state.prices).toEqual(kept)
+  })
 })

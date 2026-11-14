@@ -321,7 +321,7 @@ export async function pollWant(
   ctx: RunContext<WantConfig>,
   sources: Partial<Record<SourceId, Source>>,
   stored?: WantState,
-  o: { detail?: boolean; shops?: ShopVet } = {},
+  o: { detail?: boolean; shops?: ShopVet; keepPrices?: boolean } = {},
 ): Promise<Polled> {
   const state = stored ?? wantState(ctx.state)
   const source = sources[ctx.config.source]
@@ -421,7 +421,9 @@ export async function pollWant(
     reported: [...state.reported, ...checked.ruledOut.map((l) => listingKey(l.id))].slice(
       -MAX_REPORTED,
     ),
-    ...(keepsFindings(ctx.config)
+    // A judged watch keeps its prices when the model has judged (`keepPrices: false`): only a
+    // listing it found worth a look counts.
+    ...(keepsFindings(ctx.config) && o.keepPrices !== false
       ? {
           prices: keepPrices(
             kept,

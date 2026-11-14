@@ -14,8 +14,8 @@ import { type Listing, listingKey } from "./want-sources.js"
  * weighed, and only from prices in the listing's own currency and condition, so a sealed copy is
  * never weighed against worn ones. A listing at 150% or more of it is held: never told or judged,
  * and kept as a finding tagged `price-spike` where the watch keeps findings (a finding's key keeps
- * it from being added twice). It is not remembered as told, so if its price later falls it is told
- * then. With fewer than `MIN_PRICES` kept prices to compare, for a listing with no price, and for a
+ * it from being added twice). It is not remembered as told, so it is weighed again on every look
+ * and told once its price falls, or the usual price rises, to within 150%. With fewer than `MIN_PRICES` kept prices to compare, for a listing with no price, and for a
  * watch that keeps no prices (an eBay API watch), nothing is held.
  */
 

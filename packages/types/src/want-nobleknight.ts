@@ -91,12 +91,17 @@ function decode(text: string): string {
  * Every pattern below is bounded so the read stays linear on any body, however hostile (review of
  * rackbops-bot-plugins#403: an unbounded `[^>]*` scanned to the end of the page from every `<h1`).
  * A tag's attributes run at most `TAG_CHARS` and stop at the next `<`; a heading at most
- * `HEADING_CHARS`. Real pages, 2026-11-14: the h1 tag is 63 characters, its heading 113.
+ * `HEADING_CHARS`; a copy's label at most `TAG_CHARS`. Real pages, 2026-11-14: the h1 tag is 63
+ * characters, its heading 113, a label under 100.
  */
-const TAG_CHARS = 2000
+const TAG_CHARS = 300
 const HEADING_CHARS = 4000
 const ROW_START = new RegExp(
   `<div[^<>]{0,${TAG_CHARS}}class="[^"<>]{0,${TAG_CHARS}}\\bcondition-col\\b`,
+  "i",
+)
+const LABEL = new RegExp(
+  `aria-label="Edit quantity Condition ([^"]{0,${TAG_CHARS}}?) Price ([^"]{0,${TAG_CHARS}})"`,
   "i",
 )
 const NOTE = new RegExp(`<span class="condition-note">([\\s\\S]{0,${TAG_CHARS}}?)</span>`, "i")
@@ -155,7 +160,7 @@ export function readNobleKnightCopies(
     if (!sku) return null
     if (seen.has(sku)) continue
     const row = rest.slice(0, button.index)
-    const label = /aria-label="Edit quantity Condition ([^"]*?) Price ([^"]*)"/i.exec(row)
+    const label = LABEL.exec(row)
     if (!label) return null
     const grade = clean(decode(label[1] ?? ""), CONDITION_CHARS, true)
     const shown = decode(label[2] ?? "")

@@ -360,8 +360,9 @@ what terms, is recorded in [`docs/social-sources.md`](docs/social-sources.md) (d
   for an eBay API watch, which keeps no eBay data). A new listing at 150% or more of the usual price
   -- the median of those kept prices in its own currency and condition, each raised 2% a year for its
   age, once there are at least 3; never this look's own prices -- is held: not told or judged, kept
-  as a `price-spike` finding, and counted in the summary. It is not remembered, so it is told if its
-  price later falls. An eBay API watch keeps no history, so it holds nothing; a listing once told is
+  as a `price-spike` finding, and counted in the summary. It is not remembered, so it is weighed again on every
+  look and told once its price falls, or the usual price rises, to within 150%; a judged watch keeps
+  only the prices of listings the model found worth a look. An eBay API watch keeps no history, so it holds nothing; a listing once told is
   not weighed again, so a later repricing of it is not caught. No price cap: every copy near
   the usual price is told.
 
