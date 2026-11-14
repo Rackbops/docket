@@ -219,6 +219,9 @@ describe("the check's Job", () => {
     expect(kept.reasons[0]).toContain("too little found to lift the flag")
     expect(kept.reasons).toContain("Trustpilot reviews say it never ships")
     expect(shopStanding(kept, NOW)).toBe("flagged")
+    const again = mergeShopCheck(kept, { ...unknown, checkedAt: "2027-05-14T00:00:00.000Z" })
+    expect(again.reasons.filter((r) => r.startsWith("re-checked "))).toHaveLength(1)
+    expect(again.reasons).toContain("Trustpilot reviews say it never ships")
     const passed = { ...check("bad.us", "ok", NOW.toISOString()), sources: ["https://a.example/r"] }
     expect(mergeShopCheck(flagged, passed).verdict).toBe("ok")
     expect(mergeShopCheck(undefined, unknown)).toEqual(unknown)
@@ -236,6 +239,19 @@ describe("the check's Job", () => {
     expect(webSearches(run({ server_tool_use: {} }))).toBe(0)
     expect(webSearches(run(undefined))).toBe(0)
     expect(webSearches({ kind: "error", detail: "x", durationMs: 1 })).toBe(0)
+    // Claude Code's WebSearch is counted in modelUsage, across models, not in usage.
+    const nested: JobResult = {
+      kind: "success",
+      result: "",
+      usage: { server_tool_use: { web_search_requests: 0 } },
+      modelUsage: {
+        "claude-main": { webSearchRequests: 0 },
+        "claude-small": { webSearchRequests: 1 },
+        odd: "x",
+      },
+      durationMs: 1,
+    }
+    expect(webSearches(nested)).toBe(1)
   })
   it("refuses an answer that is not one", () => {
     expect(parseShopCheck(null, "x.us", NOW)).toBeNull()

@@ -368,8 +368,9 @@ what terms, is recorded in [`docs/social-sources.md`](docs/social-sources.md) (d
 - **Next -- the shop check holds what it cannot show it checked** ([#128](https://github.com/Rackbops/docket/issues/128),
   the release blocker for #120). Types: a Shopify watch with no shop list (a host whose execute lane
   is off) holds every listing, plain or judged, so no flag is passed by. A check is recorded only
-  when the run reports a web search (`webSearches`: the CLI's `usage.server_tool_use
-  .web_search_requests`); an `ok` with no source is not recorded. Either way the listing stays held
+  when the run reports a web search (`webSearches`: the CLI's `modelUsage[*].webSearchRequests`, where
+  Claude Code's WebSearch is counted, or `usage.server_tool_use.web_search_requests`; core's
+  `JobSuccess` gains `modelUsage`, additive, which the runner must pass on); an `ok` with no source is not recorded. Either way the listing stays held
   and the next look asks again. A flagged shop stays flagged after a re-check that finds too little
   (`mergeShopCheck`; another six months), and only a supported `ok` lifts it. **Breaking for a
   host:** `shopcheckType` now takes `prior`, the shop's check as it stands.

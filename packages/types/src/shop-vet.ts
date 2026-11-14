@@ -31,7 +31,7 @@ import { isObj, type Listing, listingKey } from "./want-sources.js"
  *   remembered, so if the shop passes its re-check a listing still up is told then.
  *
  * Release blocker docket#128 (roshne, 2026-11-13): a check counts only when it can be shown to have
- * run. A Job that reports no completed web search records nothing, so its shop's listings stay held
+ * run. A Job that reports no completed web search (`webSearches`) records nothing, so its shop's listings stay held
  * and the next look asks again; so does an `ok` with no result behind it. A flagged shop stays
  * flagged after a re-check that finds too little (`mergeShopCheck`): only a supported `ok` lifts it.
  * A host with no shop list holds every Shopify listing (`pollWant`).
@@ -277,15 +277,25 @@ export function parseShopCheck(value: unknown, domain: string, now: Date): ShopC
 }
 
 /**
- * The web searches a Job's run reports having made: the CLI's `usage.server_tool_use
- * .web_search_requests`, 0 when it names none. Pure.
+ * The web searches a Job's run reports having made. Claude Code's WebSearch is a client tool that
+ * makes its own nested request, so its searches land in the CLI's `modelUsage` (each model's
+ * `webSearchRequests`, summed), not in `usage`, which counts the top-level loop only; a server-side
+ * search would show in `usage.server_tool_use.web_search_requests`. The larger of the two, 0 when
+ * neither names any. Pure.
  */
 export function webSearches(result: JobResult): number {
-  if (result.kind !== "success" || !isObj(result.usage)) return 0
-  const tools = result.usage.server_tool_use
-  if (!isObj(tools)) return 0
-  const n = tools.web_search_requests
-  return typeof n === "number" && Number.isFinite(n) && n > 0 ? Math.floor(n) : 0
+  if (result.kind !== "success") return 0
+  const count = (n: unknown): number =>
+    typeof n === "number" && Number.isFinite(n) && n > 0 ? Math.floor(n) : 0
+  let nested = 0
+  if (isObj(result.modelUsage))
+    for (const m of Object.values(result.modelUsage))
+      if (isObj(m)) nested += count(m.webSearchRequests)
+  const top =
+    isObj(result.usage) && isObj(result.usage.server_tool_use)
+      ? count(result.usage.server_tool_use.web_search_requests)
+      : 0
+  return Math.max(nested, top)
 }
 
 /** What a re-check stores: one that finds too little keeps a flagged shop flagged. Pure. */
@@ -295,7 +305,11 @@ export function mergeShopCheck(prior: ShopCheck | undefined, next: ShopCheck): S
   const note = `re-checked ${next.checkedAt.slice(0, 10)}: too little found to lift the flag`
   return {
     ...prior,
-    reasons: [clean(note, REASON_CHARS, true), ...prior.reasons].slice(0, SHOP_REASONS),
+    // One re-check note only, the newest, so what flagged it is never pushed out.
+    reasons: [
+      clean(note, REASON_CHARS, true),
+      ...prior.reasons.filter((r) => !r.startsWith("re-checked ")),
+    ].slice(0, SHOP_REASONS),
     checkedAt: next.checkedAt,
   }
 }
