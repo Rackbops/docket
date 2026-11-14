@@ -89,8 +89,9 @@ export interface WantState {
   /** Whether this run of misses has been told about already: once per run, whatever the reason. */
   warned: boolean
   /**
-   * Prices of listings it told or ruled out, for its usual price (want-spike.ts, docket#144): price,
-   * currency and day only. Never kept by an eBay API watch, which keeps no eBay data.
+   * Prices of new listings it confirmed and passed on, for its usual price (want-spike.ts,
+   * docket#144): price, currency, condition and day only. Never kept by an eBay API watch, which
+   * keeps no eBay data.
    */
   prices?: PricePoint[]
 }
@@ -374,7 +375,7 @@ export async function pollWant(
   const unseen = within.filter((l) => !told.has(listingKey(l.id)))
   // A listing far above the usual price is held (docket#144), before a shop check is asked for it.
   const kept = keepsFindings(ctx.config) ? (state.prices ?? []) : []
-  const priced = splitSpikes(unseen, within, kept, ctx.now)
+  const priced = splitSpikes(unseen, kept, ctx.now, ctx.config.currency)
   // A Shopify listing can come from any store: its shop is vetted before it is told (docket#120).
   // Vetted before the per-run cap, so a flagged store's many listings never take the slots of a
   // good one. Held and flagged ones are not remembered, so a later look tells them once their shop
@@ -396,7 +397,7 @@ export async function pollWant(
     ...(keepsFindings(ctx.config)
       ? priced.spikes
           .slice(0, MAX_NEW_PER_RUN)
-          .map((s) => spikeFinding(s.listing, s.usual, ctx.config.source))
+          .map((s) => spikeFinding(s.listing, s.usual, ctx.config.source, ctx.config.currency))
       : []),
   ]
   const dropped = limited.length - within.length
@@ -409,20 +410,26 @@ export async function pollWant(
     `${priced.spikes.length > 0 ? `${priced.spikes.length} held as a price spike, ` : ""}` +
     `${vetted.flagged.length > 0 ? `${vetted.flagged.length} from a flagged shop, ` : ""}` +
     `${vetted.held.length > 0 ? `${vetted.held.length} held for a shop check, ` : ""}${fresh.length} new`
-  // A listing ruled out is remembered as told, so it is not read in full again on every look; a
-  // spike too, so it is weighed once. Their prices and the new ones' are kept for the usual price,
-  // a spike's never, so one spike does not lift the price the next is weighed against.
+  // A listing ruled out is remembered as told, so it is not read in full again on every look. A
+  // spike is not, so it is told once its price falls. Only the prices of new listings that
+  // confirmed are kept for the usual price: never a spike's, a ruled-out one's or one still to be
+  // checked, so neither an outlier nor a cheap insert moves the price the next is weighed against.
   const read: WantState = {
     ...state,
     misses: 0,
     warned: false,
-    reported: [
-      ...state.reported,
-      ...checked.ruledOut.map((l) => listingKey(l.id)),
-      ...priced.spikes.map((s) => listingKey(s.listing.id)),
-    ].slice(-MAX_REPORTED),
+    reported: [...state.reported, ...checked.ruledOut.map((l) => listingKey(l.id))].slice(
+      -MAX_REPORTED,
+    ),
     ...(keepsFindings(ctx.config)
-      ? { prices: keepPrices(kept, [...fresh, ...checked.ruledOut], ctx.now) }
+      ? {
+          prices: keepPrices(
+            kept,
+            fresh.filter((l) => !checked.unchecked.has(l.id)),
+            ctx.now,
+            ctx.config.currency,
+          ),
+        }
       : {}),
   }
   if (fresh.length === 0)

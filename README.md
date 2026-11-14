@@ -355,12 +355,15 @@ what terms, is recorded in [`docs/social-sources.md`](docs/social-sources.md) (d
   `previewGroupSync`).
 - **Next -- a want-list watch holds a price spike** ([#144](https://github.com/Rackbops/docket/issues/144);
   Rod, 2026-11-14: "If $350 is the normal price and suddenly you're seeing a single thing for $600,
-  I don't need to see that $600 one."). Additive, types: a watch keeps the prices of the listings it
-  told or ruled out (state `prices`: price, currency and day; at most 100; none for an eBay API
-  watch, which keeps no eBay data). A new listing at 150% or more of the usual price -- the median of
-  those, each raised 2% a year for its age, and this look's prices, in its currency, once there are
-  at least 3 -- is held: not told or judged, remembered, kept as a `price-spike` finding (not for
-  eBay), and counted in the summary. No price cap: every copy near the usual price is told.
+  I don't need to see that $600 one."). Additive, types: a watch keeps the prices of the new listings
+  it confirmed and passed on (state `prices`: price, currency, condition and day; at most 100; none
+  for an eBay API watch, which keeps no eBay data). A new listing at 150% or more of the usual price
+  -- the median of those kept prices in its own currency and condition, each raised 2% a year for its
+  age, once there are at least 3; never this look's own prices -- is held: not told or judged, kept
+  as a `price-spike` finding, and counted in the summary. It is not remembered, so it is told if its
+  price later falls. An eBay API watch keeps no history, so it holds nothing; a listing once told is
+  not weighed again, so a later repricing of it is not caught. No price cap: every copy near
+  the usual price is told.
 
 ## Use
 

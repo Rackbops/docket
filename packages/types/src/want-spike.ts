@@ -8,18 +8,25 @@ import { type Listing, listingKey } from "./want-sources.js"
  * $350 is the normal price and suddenly you're seeing a single thing for $600, I don't need to see
  * that $600 one." No price cap: every copy at the usual price is told; one far above it is held.
  *
- * A watch's usual price, in one currency, is the median of the prices it has to compare: the ones
- * it kept from listings it told or ruled out (its state's `prices`: price, currency and day only,
- * never which listing), each raised 2% a year for its age, and this look's listings' prices. A
- * listing at 150% or more of that is held: never told or judged, remembered so it is not weighed
- * again, and kept as a finding tagged `price-spike` where the watch keeps findings. With fewer than
- * `MIN_PRICES` prices to compare, or for a listing with no price, nothing is held.
+ * A watch's usual price is the median of the prices it kept from listings it confirmed and passed
+ * on (its state's `prices`: price, currency, condition and day only, never which listing), each
+ * raised 2% a year for its age. It is drawn from that history only, never from the look being
+ * weighed, and only from prices in the listing's own currency and condition, so a sealed copy is
+ * never weighed against worn ones. A listing at 150% or more of it is held: never told or judged,
+ * and kept as a finding tagged `price-spike` where the watch keeps findings (a finding's key keeps
+ * it from being added twice). It is not remembered as told, so if its price later falls it is told
+ * then. With fewer than `MIN_PRICES` kept prices to compare, for a listing with no price, and for a
+ * watch that keeps no prices (an eBay API watch), nothing is held.
  */
 
-/** One price a watch kept: the amount, its currency code ("" when unknown) and the day it was seen. */
+/**
+ * One price a watch kept: the amount, its currency code ("" when unknown), the listing's condition
+ * in lower case (absent when it named none) and the day it was seen.
+ */
 export interface PricePoint {
   p: number
   c: string
+  g?: string
   at: string
 }
 
@@ -43,15 +50,24 @@ export function readPrices(value: unknown): PricePoint[] {
         v.p > 0 &&
         typeof v.c === "string" &&
         typeof v.at === "string" &&
-        !Number.isNaN(Date.parse(v.at)),
+        !Number.isNaN(Date.parse(v.at)) &&
+        (v.g === undefined || typeof v.g === "string"),
     )
-    .map((v) => ({ p: v.p, c: v.c, at: v.at }))
+    .map((v) => ({ p: v.p, c: v.c, ...(v.g ? { g: v.g } : {}), at: v.at }))
     .slice(-MAX_PRICES)
 }
 
-/** A listing's currency as a code, or "" when it names none or an invalid one. */
-function codeOf(l: Listing): string {
-  return currencyCode(l.currency) ?? ""
+/**
+ * A listing's currency as a code: its own, else the watch's (`fallback`), else "" when neither
+ * names a valid one.
+ */
+function codeOf(l: Listing, fallback?: string): string {
+  return currencyCode(l.currency) ?? currencyCode(fallback) ?? ""
+}
+
+/** A listing's condition as compared: lower case, "" when it names none. */
+function gradeOf(l: Listing): string {
+  return (l.condition ?? "").trim().toLowerCase()
 }
 
 function priced(l: Listing): l is Listing & { price: number } {
@@ -66,36 +82,33 @@ function median(xs: number[]): number {
 }
 
 /**
- * The usual price in currency `code` at `now`, from the kept prices and this look's listings, or
- * null with fewer than `MIN_PRICES` to compare. Pure.
+ * The usual price at `now` for a listing in currency `code` and condition `grade` ("" for none),
+ * from the kept prices alone, or null with fewer than `MIN_PRICES` of them to compare. Pure.
  */
 export function usualPrice(
   kept: readonly PricePoint[],
-  look: readonly Listing[],
   code: string,
+  grade: string,
   now: Date,
 ): number | null {
   const adjusted = kept
-    .filter((k) => k.c === code)
+    .filter((k) => k.c === code && (k.g ?? "") === grade)
     .map((k) => {
       const years = Math.max(0, (now.getTime() - Date.parse(k.at)) / YEAR_MS)
       return k.p * (1 + INFLATION_PER_YEAR) ** years
     })
-  const current = look.filter((l) => priced(l) && codeOf(l) === code).map((l) => l.price as number)
-  const all = [...adjusted, ...current]
-  return all.length >= MIN_PRICES ? median(all) : null
+  return adjusted.length >= MIN_PRICES ? median(adjusted) : null
 }
 
 /**
  * `candidates` split into those to go on and the spikes, each spike with the usual price it was
- * weighed against. `look` is everything this look read within the watch's limits (the candidates
- * among it). Pure.
+ * weighed against. `currency` is the watch's own, for a listing that names none. Pure.
  */
 export function splitSpikes(
   candidates: readonly Listing[],
-  look: readonly Listing[],
   kept: readonly PricePoint[],
   now: Date,
+  currency?: string,
 ): { send: Listing[]; spikes: { listing: Listing; usual: number }[] } {
   const usual = new Map<string, number | null>()
   const send: Listing[] = []
@@ -105,9 +118,11 @@ export function splitSpikes(
       send.push(l)
       continue
     }
-    const code = codeOf(l)
-    if (!usual.has(code)) usual.set(code, usualPrice(kept, look, code, now))
-    const u = usual.get(code) ?? null
+    const code = codeOf(l, currency)
+    const grade = gradeOf(l)
+    const group = `${code}\n${grade}`
+    if (!usual.has(group)) usual.set(group, usualPrice(kept, code, grade, now))
+    const u = usual.get(group) ?? null
     if (u !== null && l.price >= u * SPIKE_RATIO) spikes.push({ listing: l, usual: u })
     else send.push(l)
   }
@@ -119,9 +134,13 @@ export function keepPrices(
   kept: readonly PricePoint[],
   listings: readonly Listing[],
   now: Date,
+  currency?: string,
 ): PricePoint[] {
   const day = now.toISOString().slice(0, 10)
-  const added = listings.filter(priced).map((l) => ({ p: l.price, c: codeOf(l), at: day }))
+  const added = listings.filter(priced).map((l) => {
+    const g = gradeOf(l)
+    return { p: l.price, c: codeOf(l, currency), ...(g ? { g } : {}), at: day }
+  })
   return [...kept, ...added].slice(-MAX_PRICES)
 }
 
@@ -130,8 +149,9 @@ export function spikeFinding(
   l: Listing & { price?: number },
   usual: number,
   source: string,
+  currency?: string,
 ): Finding {
-  const code = codeOf(l)
+  const code = codeOf(l, currency)
   return {
     text: clean(
       `${l.title} -- not sent: ${money(l.price ?? 0, code)} is ${Math.round(((l.price ?? 0) / usual) * 100)}% of the usual ${money(usual, code)}`,
