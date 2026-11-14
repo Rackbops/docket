@@ -353,6 +353,14 @@ what terms, is recorded in [`docs/social-sources.md`](docs/social-sources.md) (d
   every answer that carries `coverage` lists it unavailable (#125, PR #143). Release order: docket
   0.27.0 first, then the tracker's adoption (issue rackbops-bot-plugins#386; it must move to the new
   `previewGroupSync`).
+- **Next -- a want-list watch holds a price spike** ([#144](https://github.com/Rackbops/docket/issues/144);
+  Rod, 2026-11-14: "If $350 is the normal price and suddenly you're seeing a single thing for $600,
+  I don't need to see that $600 one."). Additive, types: a watch keeps the prices of the listings it
+  told or ruled out (state `prices`: price, currency and day; at most 100; none for an eBay API
+  watch, which keeps no eBay data). A new listing at 150% or more of the usual price -- the median of
+  those, each raised 2% a year for its age, and this look's prices, in its currency, once there are
+  at least 3 -- is held: not told or judged, remembered, kept as a `price-spike` finding (not for
+  eBay), and counted in the summary. No price cap: every copy near the usual price is told.
 
 ## Use
 
