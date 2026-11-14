@@ -136,6 +136,36 @@ describe("readNobleKnightCopies", () => {
       "no longer reads as it did",
     )
   })
+  const BUTTON = 'id="2147942033#2149237670"'
+  const inRow = (spam: string) => EDGE_UK.replace(BUTTON, `${spam}${BUTTON}`)
+
+  it("reads a hostile page in linear time: every pattern is bounded (review of bot-plugins#403)", () => {
+    // Unbounded, each of these took tens of seconds at 400 KB (O(n^2)); bounded, a few ms at 2 MB.
+    const n = 2_000_000
+    const bodies = [
+      "<h1 ".repeat(n / 4),
+      "<div ".repeat(n / 5),
+      '<div class="'.repeat(n / 12),
+      "<h1 ppn_2147942033>".repeat(n / 19),
+      `<h1 ppn_2147942033>${"<a ".repeat(n / 3)}</h1>`,
+      // Inside a copy's row, before its button, where the row's own patterns run.
+      inRow('<span class="condition-note">'.repeat(n / 29)),
+      inRow(`aria-label="Edit quantity Condition ${'" Price '.repeat(n / 8)}`),
+      inRow(`aria-label="Edit quantity Condition SW Price $1${",".repeat(n)}1"`),
+    ]
+    for (const body of bodies) {
+      const t = performance.now()
+      readNobleKnightCopies(body, "2147942033", URL_)
+      expect(performance.now() - t).toBeLessThan(2000)
+    }
+  })
+
+  it("still reads a heading whose closing tag is in another case", () => {
+    const upper = EDGE_UK.replace("</h1>", "</H1>")
+    expect(readNobleKnightCopies(upper, "2147942033", URL_)?.length).toBe(
+      readNobleKnightCopies(EDGE_UK, "2147942033", URL_)?.length,
+    )
+  })
 })
 
 describe("nobleKnightSource", () => {

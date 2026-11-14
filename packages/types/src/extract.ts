@@ -27,7 +27,11 @@ export function parsePrice(text: string): number | null {
   // 12.99 and "1 299,50" is 1299.5.
   const m = /-?\d(?:\d|\s(?=\d{3}(?!\d)))*(?:[.,][\d.,]*)?/.exec(text.replace(/\u00a0/g, " "))
   if (!m) return null
-  let digits = m[0].replace(/\s+/g, "").replace(/[.,]+$/, "")
+  let digits = m[0].replace(/\s+/g, "")
+  // Trailing separators off, by hand: `/[.,]+$/` is quadratic on a long run of them.
+  let end = digits.length
+  while (end > 0 && (digits[end - 1] === "." || digits[end - 1] === ",")) end--
+  digits = digits.slice(0, end)
   const negative = digits.startsWith("-")
   if (negative) digits = digits.slice(1)
   let whole = digits

@@ -382,6 +382,18 @@ export {
   type Submitted,
   submittedListing,
 } from "./want-sources.js"
+export {
+  INFLATION_PER_YEAR,
+  keepPrices,
+  MAX_PRICES,
+  MIN_PRICES,
+  type PricePoint,
+  readPrices,
+  SPIKE_RATIO,
+  spikeFinding,
+  splitSpikes,
+  usualPrice,
+} from "./want-spike.js"
 export { SOURCE_TEXT, type SourceText, sourceText } from "./want-text.js"
 export {
   FITS,

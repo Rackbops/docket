@@ -31,6 +31,7 @@ import {
   type SourceId,
   SourceMiss,
 } from "./want-sources.js"
+import { keepPrices } from "./want-spike.js"
 import { sourceText } from "./want-text.js"
 import {
   clip,
@@ -514,8 +515,20 @@ function judged(
     ),
   )
   const summary = `judged ${all.length}: ${all.length - passed} worth a look, ${passed} not it`
+  // Only a listing found worth a look keeps its price for the usual price (docket#144): never one
+  // the model called not it.
+  const priced = keepsFindings(ctx.config)
+    ? {
+        prices: keepPrices(
+          stored.prices ?? [],
+          shown.map((x) => x.l),
+          ctx.now,
+          ctx.config.currency,
+        ),
+      }
+    : {}
   return {
-    state: settled(state, shown.length),
+    state: { ...settled(state, shown.length), ...priced },
     ...(shown.length > 0
       ? {
           notify: {
@@ -648,7 +661,7 @@ export interface JudgeOptions {
  * judges instead), and a stored listing keeps no shipping. An eBay watch reads its held listings in
  * full when the model looks, not here.
  */
-const NO_DETAIL = { detail: false } as const
+const NO_DETAIL = { detail: false, keepPrices: false } as const
 
 /** The judged type over `sources` (the plain watch's); BGG's spacing is waited out once, on this background lane. */
 export function wantjudgeType(
