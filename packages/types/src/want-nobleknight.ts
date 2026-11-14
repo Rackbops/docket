@@ -87,8 +87,22 @@ function decode(text: string): string {
   })
 }
 
+/**
+ * Every pattern below is bounded so the read stays linear on any body, however hostile (review of
+ * rackbops-bot-plugins#403: an unbounded `[^>]*` scanned to the end of the page from every `<h1`).
+ * A tag's attributes run at most `TAG_CHARS` and stop at the next `<`; a heading at most
+ * `HEADING_CHARS`. Real pages, 2026-11-14: the h1 tag is 63 characters, its heading 113.
+ */
+const TAG_CHARS = 2000
+const HEADING_CHARS = 4000
+const ROW_START = new RegExp(
+  `<div[^<>]{0,${TAG_CHARS}}class="[^"<>]{0,${TAG_CHARS}}\\bcondition-col\\b`,
+  "i",
+)
+const NOTE = new RegExp(`<span class="condition-note">([\\s\\S]{0,${TAG_CHARS}}?)</span>`, "i")
+
 function plain(html: string): string {
-  return decode(html.replace(/<[^>]*>/g, " "))
+  return decode(html.replace(/<[^<>]*>/g, " "))
     .replace(/\s+/g, " ")
     .trim()
 }
@@ -115,16 +129,20 @@ export function readNobleKnightCopies(
   url: string,
 ): Listing[] | null {
   if (!/^\d{1,14}$/.test(productId)) return null
-  const heading = new RegExp(`<h1[^>]*\\bppn_${productId}\\b[^>]*>([\\s\\S]*?)</h1>`, "i").exec(
-    html,
-  )
-  const name = heading ? clean(plain(heading[1] ?? ""), TITLE_CHARS, true) : ""
+  // The first heading tag naming the product, then its text up to the first `</h1>`: one scan each.
+  const open = new RegExp(
+    `<h1[^<>]{0,${TAG_CHARS}}\\bppn_${productId}\\b[^<>]{0,${TAG_CHARS}}>`,
+    "i",
+  ).exec(html)
+  const start = open ? open.index + open[0].length : -1
+  const end = start < 0 ? -1 : html.slice(start, start + HEADING_CHARS).search(/<\/h1>/i)
+  const name = end < 0 ? "" : clean(plain(html.slice(start, start + end)), TITLE_CHARS, true)
   if (!name) return null
   const out: Listing[] = []
   const seen = new Set<string>()
   // Each row runs from its condition column to its own Add to Cart button. Related products further
   // down the page have buttons too, under other product ids, so a row counts only with this one's.
-  const rows = html.split(/<div[^>]*class="[^"]*\bcondition-col\b/i).slice(1)
+  const rows = html.split(ROW_START).slice(1)
   // A layout change must not read as sold out: a copy's button with no row around it, or a row in
   // stock without this product's button or a label that reads, is a page this no longer reads.
   if (rows.length === 0 && new RegExp(`\\bid="${productId}#\\d`).test(html)) return null
@@ -142,7 +160,7 @@ export function readNobleKnightCopies(
     const grade = clean(decode(label[1] ?? ""), CONDITION_CHARS, true)
     const shown = decode(label[2] ?? "")
     const price = parsePrice(shown)
-    const noteMatch = /<span class="condition-note">([\s\S]*?)<\/span>/i.exec(row)
+    const noteMatch = NOTE.exec(row)
     const note = noteMatch
       ? clean(plain(noteMatch[1] ?? "").replace(/^\((.*)\)$/, "$1"), NOTE_CHARS, true)
       : ""

@@ -136,6 +136,30 @@ describe("readNobleKnightCopies", () => {
       "no longer reads as it did",
     )
   })
+  it("reads a hostile page in linear time: every pattern is bounded (review of bot-plugins#403)", () => {
+    // Unbounded, each of these took tens of seconds at 400 KB (O(n^2)); bounded, a few ms at 2 MB.
+    const n = 2_000_000
+    const bodies = [
+      "<h1 ".repeat(n / 4),
+      "<div ".repeat(n / 5),
+      '<div class="'.repeat(n / 12),
+      "<h1 ppn_2147942033>".repeat(n / 19),
+      `<h1 ppn_2147942033>${"<a ".repeat(n / 3)}</h1>`,
+      `${EDGE_UK}${'<span class="condition-note">'.repeat(n / 29)}`,
+    ]
+    for (const body of bodies) {
+      const t = performance.now()
+      readNobleKnightCopies(body, "2147942033", URL_)
+      expect(performance.now() - t).toBeLessThan(2000)
+    }
+  })
+
+  it("still reads a heading whose closing tag is in another case", () => {
+    const upper = EDGE_UK.replace("</h1>", "</H1>")
+    expect(readNobleKnightCopies(upper, "2147942033", URL_)?.length).toBe(
+      readNobleKnightCopies(EDGE_UK, "2147942033", URL_)?.length,
+    )
+  })
 })
 
 describe("nobleKnightSource", () => {
