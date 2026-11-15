@@ -101,18 +101,17 @@ describe("a watch's places", () => {
   it("reads stored place states defensively", () => {
     expect(readPlaceStates(null)).toEqual({})
     expect(readPlaceStates({ places: [1] })).toEqual({})
-    const read = readPlaceStates({
-      places: {
-        "ebay:x": { misses: 2, warned: true, lastAt: "2026-11-15T00:00:00Z" },
-        "bgg:1": { misses: -3, lastAt: "never" },
-        __proto__: { misses: 9 },
-        "page:y": 4,
-      },
-    })
+    const read = readPlaceStates(
+      JSON.parse(
+        '{"places":{"ebay:x":{"misses":2,"warned":true,"lastAt":"2026-11-15T00:00:00Z"},' +
+          '"bgg:1":{"misses":-3,"lastAt":"never"},"__proto__":{"misses":9},"page:y":4}}',
+      ),
+    )
     expect(read).toEqual({
       "ebay:x": { misses: 2, warned: true, lastAt: "2026-11-15T00:00:00Z" },
       "bgg:1": { misses: 0, warned: false },
     })
+    expect(Object.hasOwn(read, "__proto__")).toBe(false)
     expect(Object.getPrototypeOf(read)).toBe(Object.prototype)
   })
 
@@ -252,6 +251,49 @@ describe("a look at several places", () => {
     })
     const out = await type.run(ctx({ also: [EBAY], maxPrice: 50, exclude: ["insert"] }))
     expect(out.notify?.text.split("\n")[0]).toBe("Rougarou: a new listing.")
+  })
+
+  it("keeps prices only of the listings it told, so an overflow is not counted twice", async () => {
+    const many = (prefix: string) => Array.from({ length: 15 }, (_, i) => copy(`${prefix}${i}`, 30))
+    const type = wantlistType({
+      page: stub("page", () => many("p")),
+      bgg: stub("bgg", () => many("b")),
+    })
+    const config = { also: [{ source: "bgg", target: "300580" }] }
+    const first = await type.run(ctx(config))
+    const s1 = first.state as { told: number; prices: unknown[]; reported: string[] }
+    expect(s1.told).toBe(20)
+    expect(s1.prices).toHaveLength(20)
+    expect(first.notify?.text).toContain("...and 15 more: `/task history t1` lists them all.")
+    const second = await type.run(ctx(config, first.state))
+    const s2 = second.state as typeof s1
+    expect(s2.told).toBe(30)
+    expect(s2.prices).toHaveLength(30)
+  })
+
+  it("says which hidden listings are kept when eBay's are among them", async () => {
+    const type = wantlistType({
+      page: stub("page", () => Array.from({ length: 6 }, (_, i) => copy(`p${i}`, 30))),
+      ebay: stub("ebay", () => [copy("e1", 30), copy("e2", 30)]),
+    })
+    const out = await type.run(ctx({ also: [EBAY] }))
+    expect(out.notify?.text).toContain(
+      "...and 3 more: `/task history t1` lists 1; the 2 from eBay are not kept here",
+    )
+  })
+
+  it("makes a place that throws that place's miss, keeping the others' listings", async () => {
+    const bgg: Source = {
+      id: "bgg",
+      search: async () => {
+        throw new Error("boom")
+      },
+    }
+    const type = wantlistType({ page: stub("page", () => [copy("a", 30)]), bgg })
+    const out = await type.run(ctx({ also: [{ source: "bgg", target: "300580" }] }))
+    expect(out.notify?.text).toContain("Rougarou: a new listing.")
+    const state = out.state as { places: Record<string, { misses: number }> }
+    expect(state.places["bgg:300580"]?.misses).toBe(1)
   })
 
   it("is refused by a judged watch, which looks in one place", async () => {

@@ -736,7 +736,8 @@ export function wantjudgeType(
     async prepare(ctx: RunContext<WantConfig>): Promise<JobSpec | NoJob> {
       const state = judgeState(ctx.state)
       // A judged watch looks in one place (want-places.ts): a stored one with more is never read,
-      // and says so once, rather than judge only its first place and look healthy.
+      // and says so once, rather than judge only its first place and look healthy. Anything it
+      // held for a look is not judged either; hosts never give a judged watch more than one place.
       if (wantPlaces(ctx.config).length > 1)
         return { outcome: miss(ctx, state, new SourceUnavailableError(ONE_PLACE)) }
       const followUp = ctx.occurrence.dedupeKey.startsWith(FOLLOW_UP_PREFIX)

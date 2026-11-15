@@ -20,14 +20,15 @@ export interface WantPlace {
   search?: string
   game?: string
   /**
-   * The fewest hours between two looks at this place, when the watch polls more often than the
+   * An extra place's fewest hours between two looks, when the watch polls more often than the
    * place may be read (a paid Shopify search): a look before then skips it. Absent, every look
-   * reads it. The host sets it; this library holds no policy of its own about any source.
+   * reads it. The first place has none: it is read on every look, so a host puts a place that
+   * needs one in `also`. The host sets it; this library holds no policy about any source.
    */
   everyHours?: number
 }
 
-/** At most this many places beyond the first: one per source a watch can name. */
+/** At most this many places beyond the first (a host offers five sources to tick, so four more). */
 export const MAX_EXTRA_PLACES = 4
 
 /** The longest `target` kept on an extra place, as a host's longest address. */

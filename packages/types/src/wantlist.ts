@@ -276,6 +276,12 @@ export function renderWant(
   return clip(lines.join("\n"))
 }
 
+/** What a look that read nothing says: where, how often, and why. */
+function missText(config: WantConfig, misses: number, reason: string): string {
+  const where = sourceText(config.source).where ?? config.target
+  return `I could read no listings from ${where} ${misses === 1 ? "just now" : `${misses} times in a row`} (${reason}).`
+}
+
 export function miss<S extends WantState>(
   ctx: RunContext<WantConfig>,
   state: S,
@@ -290,11 +296,9 @@ export function miss<S extends WantState>(
     summary: `nothing read: ${reason}`,
   }
   if (tell) {
-    const where = sourceText(ctx.config.source).where ?? ctx.config.target
     outcome.notify = {
       text: clip(
-        `${ctx.task.title}: I could read no listings from ${where} ${misses === 1 ? "just now" : `${misses} times in a row`} (${reason}). ` +
-          "I keep looking; press Done to stop.",
+        `${ctx.task.title}: ${missText(ctx.config, misses, reason)} I keep looking; press Done to stop.`,
       ),
       actions: ["done"],
     }
@@ -636,6 +640,12 @@ function placeConfig(config: WantConfig, place: WantPlace): WantConfig {
   } as WantConfig
 }
 
+/** The reason a place's miss gave, from its summary (`nothing read: <reason>`). */
+function missReason(outcome: Outcome): string {
+  const said = outcome.summary ?? ""
+  return said.startsWith("nothing read: ") ? said.slice("nothing read: ".length) : said
+}
+
 /** One listing found new by one place, with the place's config it is told by. */
 interface Found {
   listing: Listing
@@ -647,8 +657,12 @@ interface Found {
  * A run of a watch with several places (want-places.ts): each place due a look is read as a
  * one-place watch (`pollWant`, unchanged), one after another, so a listing one place found is not
  * told again by the next; `reported`, `told` and `prices` are shared, each place keeps its own
- * misses. What they found goes out in one DM, each line with its place's attribution, followed by
- * any place's warning that it could read nothing; a place's warning alone is DMed by itself.
+ * misses. A listing two places list under the same id is told once (`seen`); the same copy under
+ * two ids (a shop page and BGG) is two listings. Prices are kept for the listings told, once. A
+ * place that throws is that place's miss, never the run's failure. What they found goes out in one
+ * DM, each line with its place's attribution, followed by any place's warning that it could read
+ * nothing; warnings alone are DMed by themselves. Places are read in order, so a first place that
+ * finds `MAX_NEW_PER_RUN` new listings every run tells first; the rest wait for a later run.
  */
 async function runPlaces(
   ctx: RunContext<WantConfig>,
@@ -678,26 +692,26 @@ async function runPlaces(
     const config = placeConfig(ctx.config, place)
     const mine = i === 0 ? firstMiss : { misses: own?.misses ?? 0, warned: own?.warned === true }
     const state: WantState = { ...shared, ...mine }
-    const polled = await pollWant(
-      { ...ctx, config, state },
-      sources,
-      state,
-      o.shops ? { shops: o.shops } : {},
-    )
+    const placeCtx = { ...ctx, config, state }
+    // Prices are kept once, at the end, for the listings told: a place's own read would keep the
+    // prices of listings this run finds but does not tell (past `MAX_NEW_PER_RUN`), again each run.
+    const opts = { keepPrices: false, ...(o.shops ? { shops: o.shops } : {}) }
+    let polled: Polled
+    try {
+      polled = await pollWant(placeCtx, sources, state, opts)
+    } catch (err) {
+      // One place's failure, whatever it is, never costs the others' listings: it is that place's miss.
+      polled = { kind: "done", outcome: miss(placeCtx, state, err) }
+    }
     const outcome = polled.kind === "done" ? polled.outcome : null
     const next = outcome ? wantState(outcome.state) : polled.kind === "fresh" ? polled.state : state
-    shared = {
-      ...shared,
-      reported: next.reported,
-      ...(next.prices !== undefined ? { prices: next.prices } : {}),
-    }
+    shared = { ...shared, reported: next.reported }
     const left = { misses: next.misses, warned: next.warned }
     if (i === 0) firstMiss = left
     else after[key] = { ...left, lastAt: ctx.now.toISOString() }
-    if (i === 0 && place.everyHours !== undefined)
-      after[key] = { ...left, lastAt: ctx.now.toISOString() }
     if (outcome) {
-      if (outcome.notify) warnings.push(outcome.notify.text)
+      // The same words as a one-place watch's warning, told once per run of misses.
+      if (outcome.notify) warnings.push(missText(config, next.misses, missReason(outcome)))
       if (outcome.findings) findings.push(...outcome.findings)
       summaries.push(`${label}: ${outcome.summary ?? ""}`)
       continue
@@ -713,8 +727,15 @@ async function runPlaces(
     }
   }
   const told = found.slice(0, MAX_NEW_PER_RUN)
+  // The usual price learns from listings told and confirmed, never an eBay one (no eBay data kept).
+  const priced = told.filter((f) => keepsFindings(f.config) && !f.unchecked).map((f) => f.listing)
+  const prices =
+    priced.length > 0
+      ? keepPrices(base.prices ?? [], priced, ctx.now, ctx.config.currency)
+      : base.prices
   const state: WantState = {
     ...shared,
+    ...(prices !== undefined ? { prices } : {}),
     ...firstMiss,
     reported: [...shared.reported, ...told.map((f) => listingKey(f.listing.id))].slice(
       -MAX_REPORTED,
@@ -731,7 +752,13 @@ async function runPlaces(
     told.length > 0
       ? renderPlaces(ctx.task.title, ctx.task.id, told, warnings)
       : warnings.length > 0
-        ? clip(warnings.join("\n"))
+        ? clip(
+            warnings.length === 1
+              ? `${ctx.task.title}: ${warnings[0]} I keep looking; press Done to stop.`
+              : [`${ctx.task.title}:`, ...warnings, "I keep looking; press Done to stop."].join(
+                  "\n",
+                ),
+          )
         : null
   return {
     state,
@@ -755,21 +782,17 @@ function renderPlaces(
     lines.push(listingLine(f.listing, f.config, f.unchecked))
   const hidden = told.slice(SHOWN_IN_DM)
   if (hidden.length > 0) {
-    const anyKept = hidden.some((f) => keepsFindings(f.config))
+    const kept = hidden.filter((f) => keepsFindings(f.config)).length
+    const ebay = hidden.length - kept
     lines.push(
-      anyKept
+      ebay === 0
         ? `...and ${hidden.length} more: \`/task history ${taskId}\` lists them all.`
-        : `...and ${hidden.length} more, not kept here: eBay's own search shows them.`,
+        : kept === 0
+          ? `...and ${hidden.length} more, not kept here: eBay's own search shows them.`
+          : `...and ${hidden.length} more: \`/task history ${taskId}\` lists ${kept}; the ${ebay} from eBay are not kept here, and eBay's own search shows them.`,
     )
   }
-  // A place's warning, as it would be DMed alone, without the title before it or its own last line.
-  lines.push(
-    ...warnings.map((w) =>
-      w
-        .slice(title.length + 2)
-        .replace(/ I keep looking; press Done to stop\.$/, " I keep looking there."),
-    ),
-  )
+  for (const w of warnings) lines.push(`${w} I keep looking there.`)
   lines.push("Press Done once you have it, and I stop looking.")
   return clip(lines.join("\n"))
 }
