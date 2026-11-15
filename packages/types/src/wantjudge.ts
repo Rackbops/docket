@@ -336,9 +336,9 @@ export interface JudgeReach {
 }
 
 /**
- * The judge Job over numbered listings, each priced by its own watch's config (`configOf`, the
- * place it came from in a watch of several; the watch's own otherwise). `config` gives the limits
- * and the notes, which every place shares.
+ * The judge Job over numbered listings, each read with its own place's config (`configOf`, the
+ * place it came from in a watch of several; the watch's own otherwise). `config` gives the limits,
+ * currency and notes, which every place shares.
  */
 export function buildJudgeJob(
   title: string,
@@ -716,6 +716,18 @@ export interface JudgeOptions {
  */
 const NO_DETAIL = { detail: false, keepPrices: false } as const
 
+/**
+ * Whether a look is a several-place one (wantjudge-places.ts): the watch has several places, or
+ * what waits for the model was read by one (its entries carry their place), so a look keeps the
+ * numbering it was asked with even if an edit changed the places in between. A one-place watch's
+ * state never carries a place, so it always runs as before.
+ */
+function byPlaces(ctx: RunContext<WantConfig>): boolean {
+  if (wantPlaces(ctx.config).length > 1) return true
+  const s = judgeState(ctx.state)
+  return s.pending.some((l) => l.place !== undefined) || s.held.some((h) => h.place !== undefined)
+}
+
 /** The judged type over `sources` (the plain watch's); BGG's spacing is waited out once, on this background lane. */
 export function wantjudgeType(
   sources: Partial<Record<SourceId, Source>>,
@@ -781,7 +793,7 @@ export function wantjudgeType(
     },
     async prepare(ctx: RunContext<WantConfig>): Promise<JobSpec | NoJob> {
       // A watch of several places reads and judges them all together (wantjudge-places.ts).
-      if (wantPlaces(ctx.config).length > 1) return preparePlaces(ctx, sources, look)
+      if (byPlaces(ctx)) return preparePlaces(ctx, sources, look)
       const state = judgeState(ctx.state)
       const followUp = ctx.occurrence.dedupeKey.startsWith(FOLLOW_UP_PREFIX)
       if (state.pending.length > 0 || state.held.length > 0) {
@@ -859,7 +871,7 @@ export function wantjudgeType(
       }
     },
     async finish(ctx: RunContext<WantConfig>, result: JobResult): Promise<Outcome> {
-      if (wantPlaces(ctx.config).length > 1) return finishPlaces(ctx, result, sources)
+      if (byPlaces(ctx)) return finishPlaces(ctx, result, sources)
       const state = judgeState(ctx.state)
       if (state.held.length > 0) return finishHeld(ctx, state, result, sources.ebay)
       if (state.pending.length === 0) return { summary: "nothing was waiting to be checked" }

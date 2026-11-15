@@ -147,6 +147,7 @@ describe("a judged watch of several places", () => {
     const text = out?.notify?.text ?? ""
     expect(text).toContain("Rougarou: a new listing worth a look (1 more did not look like it).")
     expect(text).toContain("<https://shop.example/p/a>")
+    expect(text).not.toContain("BGG 9")
     expect(out?.findings?.map((f) => f.tags)).toEqual([
       ["wantlist", "page", "match"],
       ["wantlist", "bgg", "no"],
@@ -180,6 +181,7 @@ describe("a judged watch of several places", () => {
     expect(job.prompt).toContain("2. Curse of the Rougarou eBay 1")
     expect(job.prompt).toContain("Item specifics for Curse of the Rougarou eBay 1.")
     expect(job.allowedTools).toEqual(["WebFetch(domain:shop.example)"])
+    expect(job.disallowedTools).not.toContain("WebFetch")
 
     const out = await type.finish?.(
       ctx(config, state, FOLLOW_UP),
@@ -188,6 +190,9 @@ describe("a judged watch of several places", () => {
     const text = out?.notify?.text ?? ""
     expect(text).toContain("2 new listings worth a look")
     expect(text).toContain("<https://www.ebay.com/itm/100001>")
+    // Each line by its own place: eBay's carries eBay's attribution, the page's none.
+    expect(text).toMatch(/itm\/100001> \(.*eBay.*\)/)
+    expect(text).toMatch(/p\/a>\n/)
     // The eBay listing is neither a finding nor a price.
     expect(out?.findings?.map((f) => f.source)).toEqual(["https://shop.example/p/a"])
     const after = out?.state as { prices?: { p: number }[]; reported: string[] }
@@ -285,5 +290,118 @@ describe("a judged watch of several places", () => {
     const job = (await type.prepare?.(ctx(config, state, FOLLOW_UP))) as JobSpec
     expect(job.allowedTools).toEqual([])
     expect(job.disallowedTools).toContain("WebFetch")
+  })
+
+  it("lets a held eBay listing the model said nothing of go, to be judged afresh", async () => {
+    const page = stub("page", () => [copy("a", 30)])
+    const e = ebay([ebayItem(1, 20)])
+    const type = wantjudgeType({ page, ebay: e.s })
+    const config = { also: [EBAY] }
+    const state = outcomeOf(await type.prepare?.(ctx(config, null))).state
+    const out = await type.finish?.(ctx(config, state, FOLLOW_UP), success(verdicts([1, "match"])))
+    expect(out?.notify?.text).toContain("Rougarou: a new listing worth a look.")
+    expect(out?.notify?.text).not.toContain("100001")
+    expect((out?.state as { reported: string[] } | undefined)?.reported).toHaveLength(1)
+  })
+
+  it("tells a listing two places list under one id once, and counts a failing first place's misses at the top", async () => {
+    const shared = copy("x", 30)
+    const page: Source = {
+      id: "page",
+      search: async () => {
+        throw new SourceMiss("the shop said 503")
+      },
+    }
+    const shopify = stub("shopify", () => [shared])
+    const inbox = stub("inbox", () => [shared])
+    const type = wantjudgeType({ page, shopify, inbox })
+    const config = {
+      also: [
+        { source: "shopify", target: "rougarou" },
+        { source: "inbox", target: "k" },
+      ],
+    }
+    const read = outcomeOf(await type.prepare?.(ctx(config, null)))
+    const state = read.state as {
+      pending: unknown[]
+      misses: number
+      places?: Record<string, { misses: number }>
+    }
+    expect(state.pending).toHaveLength(1)
+    expect(state.misses).toBe(1)
+    expect(state.places?.["shopify:rougarou"]?.misses).toBe(0)
+  })
+
+  it("keeps each place's misses and looks while a failed look waits to be retried", async () => {
+    const page = stub("page", () => [copy("a", 30)])
+    const shopify = stub("shopify", () => [copy("s", 40, "https://store.example/products/s")])
+    const type = wantjudgeType({ page, shopify })
+    const config = { also: [{ source: "shopify", target: "rougarou", everyHours: 24 }] }
+    const state = outcomeOf(await type.prepare?.(ctx(config, null))).state
+    const out = await type.finish?.(ctx(config, state, FOLLOW_UP), {
+      kind: "error",
+      detail: "x",
+    } as JobResult)
+    expect(out?.followUp).toBeDefined()
+    const s = out?.state as { failures: number; places?: Record<string, { lastAt?: string }> }
+    expect(s.failures).toBe(1)
+    expect(s.places?.["shopify:rougarou"]?.lastAt).toBe(NOW.toISOString())
+  })
+
+  it("never keeps a held eBay listing as a finding or a price, even when its place was edited away", async () => {
+    const page = stub("page", () => [copy("a", 30)])
+    const e = ebay([ebayItem(1, 20)])
+    const type = wantjudgeType({ page, ebay: e.s })
+    const state = outcomeOf(await type.prepare?.(ctx({ also: [EBAY] }, null))).state
+    // The eBay place is gone from the config while its listing waits: it still keeps no data.
+    const edited = { also: [BGG] }
+    const out = await type.finish?.(
+      ctx(edited, state, FOLLOW_UP),
+      success(verdicts([1, "match"], [2, "match"])),
+    )
+    expect(out?.findings?.map((f) => f.source)).toEqual(["https://shop.example/p/a"])
+    expect(
+      (out?.state as { prices?: { p: number }[] } | undefined)?.prices?.map((x) => x.p),
+    ).toEqual([30])
+  })
+
+  it("keeps the numbering it asked with when an edit leaves one place mid-look", async () => {
+    const page = stub("page", () => [copy("a", 30)])
+    const e = ebay([ebayItem(1, 20)])
+    const type = wantjudgeType({ page, ebay: e.s })
+    const state = outcomeOf(await type.prepare?.(ctx({ also: [EBAY] }, null))).state
+    // Now one place; the look's verdicts still land on the listings they were given for.
+    const out = await type.finish?.(
+      ctx({}, state, FOLLOW_UP),
+      success(verdicts([1, "no"], [2, "match"])),
+    )
+    const text = out?.notify?.text ?? ""
+    expect(text).toContain("a new listing worth a look (1 more did not look like it)")
+    expect(text).toContain("itm/100001")
+    expect(text).not.toContain("shop.example/p/a")
+  })
+
+  it("counts eBay failing to read its listings back as eBay's miss, and tells it at the usual count", async () => {
+    const page = stub("page", () => [])
+    const e = ebay([ebayItem(1, 20)])
+    const type = wantjudgeType({ page, ebay: e.s })
+    const config = { also: [EBAY] }
+    let state: unknown = null
+    let told: string | undefined
+    for (let i = 0; i < 6 && told === undefined; i++) {
+      state = outcomeOf(await type.prepare?.(ctx(config, state))).state
+      e.down.on = true
+      const out = outcomeOf(await type.prepare?.(ctx(config, state, FOLLOW_UP)))
+      e.down.on = false
+      state = out.state
+      expect((state as { held: unknown[] }).held).toEqual([])
+      told = out.notify?.text
+    }
+    expect(told).toContain("I could read no listings from")
+    expect(told).toContain("eBay could not read its listings back just now")
+    expect(
+      (state as { places: Record<string, { misses: number }> }).places["ebay:curse rougarou"]
+        ?.misses,
+    ).toBeGreaterThan(1)
   })
 })

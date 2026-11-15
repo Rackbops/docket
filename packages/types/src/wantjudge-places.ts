@@ -55,6 +55,7 @@ import {
   type WantConfig,
   type WantState,
   wanted,
+  wantState,
 } from "./wantlist.js"
 
 /**
@@ -80,7 +81,7 @@ import {
  * A one-place judged watch never comes here (wantjudge.ts), so its behaviour is unchanged.
  */
 
-/** A pending or held listing's place: its key's place, or the watch's first when the key is unknown. */
+/** A pending listing's place: its key's place, or the watch's first when the key is unknown. */
 function configFor(
   config: WantConfig,
   places: readonly WantPlace[],
@@ -88,6 +89,22 @@ function configFor(
 ): WantConfig {
   const place = places.find((p) => placeKey(p) === key) ?? (places[0] as WantPlace)
   return placeConfig(config, place)
+}
+
+/**
+ * A held listing's place: always an eBay one, whatever its key says, so an eBay listing is never
+ * kept as a finding or a price -- its key's place, else the watch's first eBay place, else an eBay
+ * place of the watch's limits (a place edited away while it waited).
+ */
+function heldConfig(
+  config: WantConfig,
+  places: readonly WantPlace[],
+  key: string | undefined,
+): WantConfig {
+  const ebay = places.filter((p) => p.source === "ebay")
+  const place = ebay.find((p) => placeKey(p) === key) ?? ebay[0]
+  if (place) return placeConfig(config, place)
+  return placeConfig(config, { source: "ebay", target: config.target })
 }
 
 /** The state with the places' own misses and looks, which `judgeState` does not carry. */
@@ -154,7 +171,7 @@ async function entriesOf(
       entries.push({
         ...x,
         n: state.pending.length + x.n,
-        config: configFor(ctx.config, places, h.place),
+        config: heldConfig(ctx.config, places, h.place),
         held: h.id,
       })
     }
@@ -175,6 +192,7 @@ function settle(
   remember: readonly string[],
   told: number,
   extra: Partial<WantState> = {},
+  places: Record<string, PlaceState> = readPlaceStates(ctx.state),
 ): JudgeState {
   const { retryAt: _done, ...rest } = state
   return withPlaces(
@@ -187,15 +205,82 @@ function settle(
       held: [],
       failures: 0,
     },
-    readPlaceStates(ctx.state),
+    places,
   )
 }
 
 /**
- * The ids a look ends by remembering: every pending listing (as the one-place watch: told, passed
- * over, or left out by the limits as they are now), and every held one but those eBay will never
- * read, those it could not read just now, and `unseen` (no verdict: judged afresh next time).
- * A held listing eBay says is gone (sold or ended) is remembered.
+ * eBay could not read its held listings back just now: a miss for each eBay place, told once at
+ * `MISSES_BEFORE_TELLING` in a row (the one-place watch's rule, through `miss`). The listings are
+ * let go, not held: a watch of several places keeps reading its other places, and the next read
+ * of eBay finds them again.
+ */
+function heldDown(
+  ctx: RunContext<WantConfig>,
+  state: JudgeState,
+): { extra: Partial<WantState>; places: Record<string, PlaceState>; warning?: string } {
+  const places = readPlaceStates(ctx.state)
+  let extra: Partial<WantState> = {}
+  let warning: string | undefined
+  for (const [i, p] of wantPlaces(ctx.config).entries()) {
+    if (p.source !== "ebay") continue
+    const key = placeKey(p)
+    const config = placeConfig(ctx.config, p)
+    const own =
+      i === 0
+        ? { misses: state.misses, warned: state.warned }
+        : { misses: places[key]?.misses ?? 0, warned: places[key]?.warned === true }
+    const st = { ...state, ...own }
+    const out = miss(
+      { ...ctx, config, state: st },
+      st,
+      new SourceMiss("eBay could not read its listings back just now"),
+    )
+    const s = wantState(out.state)
+    if (i === 0) extra = { misses: s.misses, warned: s.warned }
+    else places[key] = { ...places[key], misses: s.misses, warned: s.warned }
+    if (out.notify) warning = missText(config, s.misses, missReason(out))
+  }
+  return { extra, places, ...(warning !== undefined ? { warning } : {}) }
+}
+
+/** eBay read its held listings back: each eBay place's misses are over, as after any good read. */
+function heldUp(
+  ctx: RunContext<WantConfig>,
+  state: JudgeState,
+): { extra: Partial<WantState>; places: Record<string, PlaceState> } {
+  const places = readPlaceStates(ctx.state)
+  let extra: Partial<WantState> = {}
+  for (const [i, p] of wantPlaces(ctx.config).entries()) {
+    if (p.source !== "ebay") continue
+    if (i === 0) extra = { misses: 0, warned: false }
+    else {
+      const key = placeKey(p)
+      places[key] = { ...places[key], misses: 0, warned: false }
+    }
+  }
+  return state.held.length > 0 ? { extra, places } : { extra: {}, places }
+}
+
+/** `text` with `warning` before its last line (the Done line); the warning alone when there is no text. */
+function withWarning(
+  title: string,
+  text: string | null,
+  warning: string | undefined,
+): string | null {
+  if (warning === undefined) return text
+  if (text === null) return clip(`${title}: ${warning} I keep looking; press Done to stop.`)
+  const lines = text.split("\n")
+  const last = lines.pop() ?? ""
+  return [...lines, `${warning} I keep looking there.`, last].join("\n")
+}
+
+/**
+ * The ids a look ends by remembering, as the one-place watch: every pending listing told or passed
+ * over, and every held one but those eBay will never read, those it could not read just now, and
+ * `unseen` (no verdict: judged afresh next time). One the limits as they are now leave out
+ * (`unwanted`) is not remembered, so it comes back once it is within them again. A held listing
+ * eBay says is gone (sold or ended) is remembered.
  */
 function remembered(
   state: JudgeState,
@@ -265,7 +350,11 @@ async function readPlaces(
           ? polled.state
           : st
     shared = { ...shared, reported: next.reported }
-    const left = { misses: next.misses, warned: next.warned }
+    // An eBay place's look is good only once its listings read back (`heldUp`): a search that
+    // holds some keeps the misses so far, so a host that cannot read them back is still told.
+    const holds =
+      config.source === "ebay" && polled.kind === "fresh" && polled.fresh.some((l) => l.ref)
+    const left = holds ? mine : { misses: next.misses, warned: next.warned }
     if (i === 0) firstMiss = left
     else after[key] = { ...left, lastAt: ctx.now.toISOString() }
     if (outcome) {
@@ -335,13 +424,22 @@ export async function preparePlaces(
       return { outcome: { summary: "a retry of the last look is waiting" } }
     const { entries, dropped, down } = await entriesOf(ctx, state, sources.ebay)
     if (entries.length === 0) {
-      const gone = down ? [] : state.held.filter((h) => !dropped.has(h.id)).map((h) => h.id)
+      if (down) {
+        const d = heldDown(ctx, state)
+        const text = withWarning(ctx.task.title, null, d.warning)
+        return {
+          outcome: {
+            state: settle(ctx, state, [], 0, d.extra, d.places),
+            summary: `nothing to check: eBay could not be read just now; its ${state.held.length} new listing(s) are let go for the next read of eBay to find again`,
+            ...(text !== null ? { notify: { text, actions: ["done"] } } : {}),
+          },
+        }
+      }
+      const gone = state.held.filter((h) => !dropped.has(h.id)).map((h) => h.id)
       return {
         outcome: {
           state: settle(ctx, state, gone, 0),
-          summary: down
-            ? `nothing to check: eBay could not be read just now; its ${state.held.length} new listing(s) are looked for again next time`
-            : `nothing to check: the ${state.held.length} new listing(s) are gone from eBay or could not be read`,
+          summary: `nothing to check: the ${state.held.length} new listing(s) are gone from eBay or could not be read`,
         },
       }
     }
@@ -368,7 +466,9 @@ function failed(
 ): Outcome {
   const failures = state.failures + 1
   // The runner's detail can quote a listing; with an eBay place it is left out (no eBay data kept).
-  const keepsAll = wantPlaces(ctx.config).every((p) => keepsFindings(placeConfig(ctx.config, p)))
+  const keepsAll =
+    state.held.length === 0 &&
+    wantPlaces(ctx.config).every((p) => keepsFindings(placeConfig(ctx.config, p)))
   const summary =
     keepsAll || kind === "malformed"
       ? clean(`judge ${kind} (try ${failures}): ${detail}`, 300, true)
@@ -385,28 +485,31 @@ function failed(
   const byId = new Map(within.map((e) => [e.l.id, e.config]))
   const reason = SAID[kind] ?? "the check failed"
   const kept = within.filter((e) => keepsFindings(e.config))
+  const d = forget.down ? heldDown(ctx, state) : null
+  const text = withWarning(
+    ctx.task.title,
+    within.length > 0
+      ? renderUnchecked(
+          ctx.task.title,
+          ctx.task.id,
+          within.map((e) => e.l),
+          reason,
+          ctx.config,
+          (l) => byId.get(l.id) ?? ctx.config,
+        )
+      : null,
+    d?.warning,
+  )
   return {
     state: settle(
       ctx,
       state,
       remembered(state, forget.dropped, forget.down, new Set(), unwanted),
       within.length,
+      d?.extra ?? {},
+      d?.places,
     ),
-    ...(within.length > 0
-      ? {
-          notify: {
-            text: renderUnchecked(
-              ctx.task.title,
-              ctx.task.id,
-              within.map((e) => e.l),
-              reason,
-              ctx.config,
-              (l) => byId.get(l.id) ?? ctx.config,
-            ),
-            actions: ["done"] as const,
-          },
-        }
-      : {}),
+    ...(text !== null ? { notify: { text, actions: ["done"] as const } } : {}),
     ...(kept.length > 0
       ? {
           findings: kept.map((e) =>
@@ -470,28 +573,31 @@ export async function finishPlaces(
     priced.length > 0
       ? keepPrices(state.prices ?? [], priced, ctx.now, ctx.config.currency)
       : undefined
+  // eBay could not read its held listings back for the DM: they are let go, and it is a miss.
+  const d = down ? heldDown(ctx, state) : heldUp(ctx, state)
+  const text = withWarning(
+    ctx.task.title,
+    shown.length > 0
+      ? renderJudged(
+          ctx.task.title,
+          ctx.task.id,
+          shown.map(({ e, v }) => ({ l: e.l, v, config: e.config })),
+          passed,
+          ctx.config,
+        )
+      : null,
+    "warning" in d ? (d.warning as string | undefined) : undefined,
+  )
   return {
     state: settle(
       ctx,
       state,
       remembered(state, dropped, down, unseen, unwanted),
       shown.length,
-      prices !== undefined ? { prices } : {},
+      { ...(prices !== undefined ? { prices } : {}), ...d.extra },
+      d.places,
     ),
-    ...(shown.length > 0
-      ? {
-          notify: {
-            text: renderJudged(
-              ctx.task.title,
-              ctx.task.id,
-              shown.map(({ e, v }) => ({ l: e.l, v, config: e.config })),
-              passed,
-              ctx.config,
-            ),
-            actions: ["done"],
-          },
-        }
-      : {}),
+    ...(text !== null ? { notify: { text, actions: ["done"] } } : {}),
     ...(findings.length > 0 ? { findings } : {}),
     summary: `judged ${all.length}: ${shown.length} worth a look, ${passed} not it`,
   }
