@@ -378,6 +378,17 @@ what terms, is recorded in [`docs/social-sources.md`](docs/social-sources.md) (d
   and the next look asks again. A flagged shop stays flagged after a re-check that finds too little
   (`mergeShopCheck`; another six months), and only a supported `ok` lifts it. **Breaking for a
   host:** `shopcheckType` now takes `prior`, the shop's check as it stands.
+- **0.29.0 -- one want-list watch looks in several places** ([#150](https://github.com/Rackbops/docket/pull/150);
+  Rod, 2026-11-15, on the tracker's New want-list watch form: "This should be check boxes for
+  multiple selections, not single pull down choices"). Additive, types: `WantConfig.also` holds up
+  to four places beyond the first (`source`/`target`), each read as a one-place watch; one DM per
+  look with each line's own attribution, a listing two places list under the same id told once, and
+  one Done for all. `reported`, `told` and `prices` are shared; each extra place keeps its own misses
+  and last look (`state.places`), and may carry a host-set `everyHours` floor (Shopify's paid
+  search). A place that throws is that place's miss. A judged watch with several places reads none
+  and warns once (`ONE_PLACE`). A watch with no `also` runs as before. New exports: `wantPlaces`,
+  `WantPlace`, `placeKey`, `placeDue`, `readPlaceStates`, `PlaceState`, `MAX_EXTRA_PLACES`,
+  `ONE_PLACE`.
 
 ## Use
 
