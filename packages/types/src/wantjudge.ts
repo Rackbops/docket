@@ -20,6 +20,7 @@ import { retryOutcome } from "./retry.js"
 import type { ShopVet, Vetted } from "./shop-vet.js"
 import { BGG_HOST, BGG_SPACING_MS } from "./want-bgg.js"
 import { EBAY_ITEM_ID } from "./want-ebay.js"
+import { wantPlaces } from "./want-places.js"
 import {
   isEbayHost,
   isObj,
@@ -30,6 +31,7 @@ import {
   type Source,
   type SourceId,
   SourceMiss,
+  SourceUnavailableError,
 } from "./want-sources.js"
 import { keepPrices } from "./want-spike.js"
 import { sourceText } from "./want-text.js"
@@ -89,6 +91,11 @@ import {
  */
 
 export const FITS = ["match", "maybe", "no"] as const
+
+/** Why a judged watch with several places reads none of them. */
+export const ONE_PLACE =
+  "a watch the model checks looks in one place only; make one checked watch per place, or a plain watch that looks in several"
+
 export type Fit = (typeof FITS)[number]
 
 /** Proposed, like the scout's (item 61): a short look at up to 20 pages. */
@@ -728,6 +735,10 @@ export function wantjudgeType(
     },
     async prepare(ctx: RunContext<WantConfig>): Promise<JobSpec | NoJob> {
       const state = judgeState(ctx.state)
+      // A judged watch looks in one place (want-places.ts): a stored one with more is never read,
+      // and says so once, rather than judge only its first place and look healthy.
+      if (wantPlaces(ctx.config).length > 1)
+        return { outcome: miss(ctx, state, new SourceUnavailableError(ONE_PLACE)) }
       const followUp = ctx.occurrence.dedupeKey.startsWith(FOLLOW_UP_PREFIX)
       if (state.pending.length > 0 || state.held.length > 0) {
         // A retry waits for its own follow-up (an auth failure's is an hour off): a scheduled run
