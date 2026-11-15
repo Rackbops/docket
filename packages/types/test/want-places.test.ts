@@ -264,22 +264,24 @@ describe("a look at several places", () => {
     const s1 = first.state as { told: number; prices: unknown[]; reported: string[] }
     expect(s1.told).toBe(20)
     expect(s1.prices).toHaveLength(20)
-    expect(first.notify?.text).toContain("...and 15 more: `/task history t1` lists them all.")
+    // Every listing told is shown (docket#152), past one message: none hidden behind a more line.
+    expect(first.notify?.text.split("\n").filter((x) => x.startsWith("- "))).toHaveLength(20)
+    expect(first.notify?.text).not.toContain("more:")
     const second = await type.run(ctx(config, first.state))
     const s2 = second.state as typeof s1
     expect(s2.told).toBe(30)
     expect(s2.prices).toHaveLength(30)
   })
 
-  it("says which hidden listings are kept when eBay's are among them", async () => {
+  it("shows every listing from every place, eBay's too, with no more line (docket#152)", async () => {
     const type = wantlistType({
       page: stub("page", () => Array.from({ length: 6 }, (_, i) => copy(`p${i}`, 30))),
       ebay: stub("ebay", () => [copy("e1", 30), copy("e2", 30)]),
     })
     const out = await type.run(ctx({ also: [EBAY] }))
-    expect(out.notify?.text).toContain(
-      "...and 3 more: `/task history t1` lists 1; the 2 from eBay are not kept here",
-    )
+    expect(out.notify?.text.split("\n").filter((x) => x.startsWith("- "))).toHaveLength(8)
+    expect(out.notify?.text).toContain("(via eBay)")
+    expect(out.notify?.text).not.toContain("not kept here")
   })
 
   it("makes a place that throws that place's miss, keeping the others' listings", async () => {

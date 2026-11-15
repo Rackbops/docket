@@ -51,6 +51,11 @@ export interface Identity {
 }
 
 export interface OutgoingMessage {
+  /**
+   * The message. It may run past one chat message's limit (a want DM with many listings,
+   * docket#152): the Notifier then sends it as several messages in a row, split between lines,
+   * with the buttons on the last. A Notifier that cannot split cuts it to fit, as before.
+   */
   text: string
   /** Replies the message offers as buttons; the adapter renders them (discord-ai#7). */
   actions?: ReplyKind[]
