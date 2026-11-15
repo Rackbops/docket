@@ -31,10 +31,10 @@ import {
   type Source,
   type SourceId,
   SourceMiss,
-  SourceUnavailableError,
 } from "./want-sources.js"
 import { keepPrices } from "./want-spike.js"
 import { sourceText } from "./want-text.js"
+import { finishPlaces, preparePlaces } from "./wantjudge-places.js"
 import {
   inert,
   keepsFindings,
@@ -92,7 +92,10 @@ import {
 
 export const FITS = ["match", "maybe", "no"] as const
 
-/** Why a judged watch with several places reads none of them. */
+/**
+ * Why a judged watch with several places read none of them, in 0.29.0 and 0.30.0. Since 0.31.0 a
+ * judged watch looks in every place (wantjudge-places.ts); kept for hosts that still name it.
+ */
 export const ONE_PLACE =
   "a watch the model checks looks in one place only; make one checked watch per place, or a plain watch that looks in several"
 
@@ -111,8 +114,11 @@ const PENDING_TITLE = 150
 const PENDING_TEXT = 80
 
 export interface JudgeState extends WantState {
-  /** Listings read and not told yet, waiting for the model's look; at most `MAX_NEW_PER_RUN`. */
-  pending: Listing[]
+  /**
+   * Listings read and not told yet, waiting for the model's look; at most `MAX_NEW_PER_RUN`. In a
+   * watch of several places each carries its place's key (`placeKey`), so it is told by that place.
+   */
+  pending: PlacedListing[]
   /**
    * An eBay watch's new listings in place of `pending`: eBay's item numbers only, so no eBay data is
    * kept (`keepsFindings`); each is read back in full from eBay's API when the model looks, and
@@ -129,7 +135,12 @@ export interface JudgeState extends WantState {
 export interface HeldItem {
   id: string
   ref: string
+  /** In a watch of several places, its eBay place's key (`placeKey`). */
+  place?: string
 }
+
+/** A listing waiting for the model's look, with its place's key in a watch of several places. */
+export type PlacedListing = Listing & { place?: string }
 
 export interface JudgeVerdict {
   fit: Fit
@@ -160,8 +171,12 @@ export const JUDGE_SCHEMA = {
 
 const str = (v: unknown, max: number): string => (typeof v === "string" ? clean(v, max, true) : "")
 
+/** A stored place key, kept only when it is one (`source:target`, short). */
+const placeOf = (v: unknown): { place: string } | Record<string, never> =>
+  typeof v === "string" && v.includes(":") && v.length <= 1100 ? { place: v } : {}
+
 /** One stored listing, re-checked as stored data must be; null when unusable. */
-function pendingListing(v: unknown): Vetted | null {
+function pendingListing(v: unknown): (Vetted & { place?: string }) | null {
   if (!isObj(v) || typeof v.id !== "string") return null
   const url = safeUrl(v.url)
   const title = str(v.title, PENDING_TITLE)
@@ -178,6 +193,7 @@ function pendingListing(v: unknown): Vetted | null {
     ...(condition ? { condition } : {}),
     ...(seller ? { seller } : {}),
     ...(v.shop === "unvetted" ? { shop: "unvetted" as const } : {}),
+    ...placeOf(v.place),
   }
 }
 
@@ -186,7 +202,7 @@ export function judgeState(value: unknown): JudgeState {
   const s = isObj(value) ? value : {}
   const pending = (Array.isArray(s.pending) ? s.pending : [])
     .map(pendingListing)
-    .filter((l): l is Listing => l !== null)
+    .filter((l): l is PlacedListing => l !== null)
     .slice(0, MAX_NEW_PER_RUN)
   const held = (Array.isArray(s.held) ? s.held : [])
     .filter(
@@ -197,7 +213,7 @@ export function judgeState(value: unknown): JudgeState {
         typeof h.ref === "string" &&
         EBAY_ITEM_ID.test(h.ref),
     )
-    .map((h) => ({ id: h.id, ref: h.ref }))
+    .map((h) => ({ id: h.id, ref: h.ref, ...placeOf(h.place) }))
     .slice(0, MAX_NEW_PER_RUN)
   const failures = typeof s.failures === "number" && s.failures >= 0 ? s.failures : 0
   const retryAt =
@@ -258,7 +274,7 @@ function grantableHost(raw: string): string | null {
 }
 
 /** A watch whose listings the judge may not open at all: sent in, Shopify's, or eBay's. */
-function closedSource(config: WantConfig): boolean {
+export function closedSource(config: WantConfig): boolean {
   return config.source === "inbox" || config.source === "shopify" || config.source === "ebay"
 }
 
@@ -296,15 +312,47 @@ export function judgeJob(
   pending: readonly Listing[] | readonly JudgeItem[],
 ): JobSpec {
   // An inbox, Shopify or eBay watch's listings are on sites the tracker never reads: the judge opens none.
-  const closed = closedSource(config)
-  const where = sourceText(config.source).judgeWhere
   const items: JudgeItem[] = pending.map((p, i) =>
     "l" in p && "n" in p ? p : { n: i + 1, l: p as Listing },
   )
-  const lines = items.flatMap(({ n, l, detail }) => {
+  return buildJudgeJob(title, config, items, {
+    closed: closedSource(config),
+    where: sourceText(config.source).judgeWhere,
+    hosts: judgeHosts(
+      items.map((x) => x.l),
+      config,
+    ),
+  })
+}
+
+/** Where a judge Job's listings came from, and what it may open: one place's, or several's together. */
+export interface JudgeReach {
+  /** It may open no page at all. */
+  closed: boolean
+  /** Where the listings were read, in the prompt's words. */
+  where: string
+  /** The hosts it may open (`judgeHosts`). */
+  hosts: string[]
+}
+
+/**
+ * The judge Job over numbered listings, each read with its own place's config (`configOf`, the
+ * place it came from in a watch of several; the watch's own otherwise). `config` gives the limits,
+ * currency and notes, which every place shares.
+ */
+export function buildJudgeJob(
+  title: string,
+  config: WantConfig,
+  items: readonly JudgeItem[],
+  reach: JudgeReach,
+  configOf: (x: JudgeItem) => WantConfig = () => config,
+): JobSpec {
+  const { closed, where } = reach
+  const lines = items.flatMap((x) => {
+    const { n, l, detail } = x
     const parts = [
       inert(l.title),
-      priceText(l, config),
+      priceText(l, configOf(x)),
       ...(l.shipping ? [inert(l.shipping)] : []),
       ...(l.condition ? [inert(l.condition)] : []),
       ...(l.seller ? [`seller: ${inert(l.seller)}`] : []),
@@ -339,10 +387,7 @@ export function judgeJob(
   return {
     prompt,
     jsonSchema: JUDGE_SCHEMA as unknown as Record<string, unknown>,
-    allowedTools: judgeHosts(
-      items.map((x) => x.l),
-      config,
-    ).map((h) => `WebFetch(domain:${h})`),
+    allowedTools: reach.hosts.map((h) => `WebFetch(domain:${h})`),
     // No web search, and no reading the runner's own files: a listing's text could ask for either.
     // An inbox, Shopify or eBay watch opens no page at all, so WebFetch goes too.
     disallowedTools: [
@@ -384,7 +429,7 @@ export function parseVerdicts(value: unknown, count: number): Map<number, JudgeV
   return out
 }
 
-const FIT_SAID: Readonly<Record<Fit, string>> = {
+export const FIT_SAID: Readonly<Record<Fit, string>> = {
   match: "looks right",
   maybe: "check it",
   no: "not it",
@@ -394,7 +439,7 @@ const FIT_SAID: Readonly<Record<Fit, string>> = {
 export function renderJudged(
   title: string,
   taskId: string,
-  shown: readonly { l: Listing; v: JudgeVerdict }[],
+  shown: readonly { l: Listing; v: JudgeVerdict; config?: WantConfig }[],
   passed: number,
   config: WantConfig,
 ): string {
@@ -402,8 +447,8 @@ export function renderJudged(
   const lines = [
     `${title}: ${shown.length === 1 ? "a new listing" : `${shown.length} new listings`} worth a look${more}.`,
   ]
-  for (const { l, v } of shown.slice(0, SHOWN_IN_DM)) {
-    lines.push(listingLine(l, config))
+  for (const { l, v, config: own } of shown.slice(0, SHOWN_IN_DM)) {
+    lines.push(listingLine(l, own ?? config))
     lines.push(
       `  ${FIT_SAID[v.fit]}${v.why ? `: ${v.why}` : ""}${v.seller && !/^not shown\.?$/i.test(v.seller) ? ` Seller: ${v.seller}` : ""}`,
     )
@@ -420,11 +465,12 @@ export function renderUnchecked(
   pending: readonly Listing[],
   reason: string,
   config: WantConfig,
+  configOf: (l: Listing) => WantConfig = () => config,
 ): string {
   const lines = [
     `${title}: ${pending.length === 1 ? "a new listing" : `${pending.length} new listings`}, unchecked: ${reason}.`,
   ]
-  for (const l of pending.slice(0, SHOWN_IN_DM)) lines.push(listingLine(l, config))
+  for (const l of pending.slice(0, SHOWN_IN_DM)) lines.push(listingLine(l, configOf(l)))
   if (pending.length > SHOWN_IN_DM)
     lines.push(moreLine(pending.length - SHOWN_IN_DM, taskId, config))
   lines.push("Press Done once you have it, and I stop looking.")
@@ -446,7 +492,7 @@ function settled(state: JudgeState, told: number): JudgeState {
   }
 }
 
-const SAID: Readonly<Partial<Record<FailureKind | "malformed", string>>> = {
+export const SAID: Readonly<Partial<Record<FailureKind | "malformed", string>>> = {
   auth_failed: "the model runner could not sign in",
   turn_cap: "the check needed more steps than it is allowed",
   budget_cap: "the check cost more than it is allowed",
@@ -557,7 +603,7 @@ function judged(
  * just now (or the host has no eBay), so a failed read is never taken for a gone listing: the
  * caller keeps them held for the next look.
  */
-async function readHeld(
+export async function readHeld(
   source: Source | undefined,
   held: readonly HeldItem[],
 ): Promise<{ items: JudgeItem[]; dropped: Set<string> }> {
@@ -670,6 +716,18 @@ export interface JudgeOptions {
  */
 const NO_DETAIL = { detail: false, keepPrices: false } as const
 
+/**
+ * Whether a look is a several-place one (wantjudge-places.ts): the watch has several places, or
+ * what waits for the model was read by one (its entries carry their place), so a look keeps the
+ * numbering it was asked with even if an edit changed the places in between. A one-place watch's
+ * state never carries a place, so it always runs as before.
+ */
+function byPlaces(ctx: RunContext<WantConfig>): boolean {
+  if (wantPlaces(ctx.config).length > 1) return true
+  const s = judgeState(ctx.state)
+  return s.pending.some((l) => l.place !== undefined) || s.held.some((h) => h.place !== undefined)
+}
+
 /** The judged type over `sources` (the plain watch's); BGG's spacing is waited out once, on this background lane. */
 export function wantjudgeType(
   sources: Partial<Record<SourceId, Source>>,
@@ -677,7 +735,7 @@ export function wantjudgeType(
 ): TaskType<WantConfig> {
   const wait = o.wait ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)))
   const poll = o.shops ? { ...NO_DETAIL, shops: o.shops } : NO_DETAIL
-  const look = async (ctx: RunContext<WantConfig>, state: JudgeState) => {
+  const look = async (ctx: RunContext<WantConfig>, state: WantState) => {
     try {
       return await pollWant(ctx, sources, state, poll)
     } catch (err) {
@@ -734,12 +792,9 @@ export function wantjudgeType(
       ],
     },
     async prepare(ctx: RunContext<WantConfig>): Promise<JobSpec | NoJob> {
+      // A watch of several places reads and judges them all together (wantjudge-places.ts).
+      if (byPlaces(ctx)) return preparePlaces(ctx, sources, look)
       const state = judgeState(ctx.state)
-      // A judged watch looks in one place (want-places.ts): a stored one with more is never read,
-      // and says so once, rather than judge only its first place and look healthy. Anything it
-      // held for a look is not judged either; hosts never give a judged watch more than one place.
-      if (wantPlaces(ctx.config).length > 1)
-        return { outcome: miss(ctx, state, new SourceUnavailableError(ONE_PLACE)) }
       const followUp = ctx.occurrence.dedupeKey.startsWith(FOLLOW_UP_PREFIX)
       if (state.pending.length > 0 || state.held.length > 0) {
         // A retry waits for its own follow-up (an auth failure's is an hour off): a scheduled run
@@ -816,6 +871,7 @@ export function wantjudgeType(
       }
     },
     async finish(ctx: RunContext<WantConfig>, result: JobResult): Promise<Outcome> {
+      if (byPlaces(ctx)) return finishPlaces(ctx, result, sources)
       const state = judgeState(ctx.state)
       if (state.held.length > 0) return finishHeld(ctx, state, result, sources.ebay)
       if (state.pending.length === 0) return { summary: "nothing was waiting to be checked" }

@@ -304,7 +304,7 @@ export function renderWant(
 }
 
 /** What a look that read nothing says: where, how often, and why. */
-function missText(config: WantConfig, misses: number, reason: string): string {
+export function missText(config: WantConfig, misses: number, reason: string): string {
   const where = sourceText(config.source).where ?? config.target
   return `I could read no listings from ${where} ${misses === 1 ? "just now" : `${misses} times in a row`} (${reason}).`
 }
@@ -651,7 +651,7 @@ export function wantlistType(
 }
 
 /** The one-place watch a place is read as: the watch's limits and words, the place's source and target. */
-function placeConfig(config: WantConfig, place: WantPlace): WantConfig {
+export function placeConfig(config: WantConfig, place: WantPlace): WantConfig {
   const { also: _also, ...rest } = config
   const {
     search: _s,
@@ -668,7 +668,7 @@ function placeConfig(config: WantConfig, place: WantPlace): WantConfig {
 }
 
 /** The reason a place's miss gave, from its summary (`nothing read: <reason>`). */
-function missReason(outcome: Outcome): string {
+export function missReason(outcome: Outcome): string {
   const said = outcome.summary ?? ""
   return said.startsWith("nothing read: ") ? said.slice("nothing read: ".length) : said
 }
