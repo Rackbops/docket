@@ -7,6 +7,8 @@ import {
   judgeJob,
   judgeState,
   type Listing,
+  MAX_DM_CHARS,
+  MAX_WANT_LINE_CHARS,
   parseVerdicts,
   renderJudged,
   type Source,
@@ -171,6 +173,31 @@ describe("the judge's Job and verdicts", () => {
     expect(text).toContain(
       "  looks right: It is the expansion. Seller: 4.9 stars from 210 reviews.",
     )
+  })
+
+  it("shows all twenty listings worth a look with long notes, past one message, ending on Done (docket#152)", () => {
+    const shown = Array.from({ length: 20 }, (_, i) => ({
+      l: {
+        ...listing(`Edge ${i}`, `https://www.ebay.com/itm/${100000 + i}`, 175),
+        seller: "hubbeltr373",
+      },
+      v: {
+        fit: "match" as const,
+        why: `Complete box ${i}. ${"y".repeat(400)}`,
+        seller: "100% positive",
+      },
+    }))
+    const text = renderJudged("Arkham Edge of the Earth (judged)", "t36", shown, 0, {
+      source: "ebay",
+      target: "arkham horror edge of the earth",
+    })
+    expect(text.length).toBeGreaterThan(MAX_DM_CHARS)
+    expect(text.split("\n").filter((x) => x.startsWith("- "))).toHaveLength(20)
+    expect(text).toContain("Edge 19")
+    expect(text).not.toContain("not kept here")
+    for (const line of text.split("\n"))
+      expect(line.length).toBeLessThanOrEqual(MAX_WANT_LINE_CHARS)
+    expect(text.endsWith("Press Done once you have it, and I stop looking.")).toBe(true)
   })
 
   it("waits out BGG's spacing once on its own lane, then reads", async () => {

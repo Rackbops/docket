@@ -34,7 +34,6 @@ import {
 import { keepPrices } from "./want-spike.js"
 import { sourceText } from "./want-text.js"
 import {
-  clip,
   inert,
   keepsFindings,
   listingFinding,
@@ -49,6 +48,7 @@ import {
   SHOWN_IN_DM,
   type WantConfig,
   type WantState,
+  wantDm,
   wanted,
   wantState,
 } from "./wantlist.js"
@@ -403,7 +403,7 @@ export function renderJudged(
   }
   if (shown.length > SHOWN_IN_DM) lines.push(moreLine(shown.length - SHOWN_IN_DM, taskId, config))
   lines.push("Press Done once you have it, and I stop looking.")
-  return clip(lines.join("\n"))
+  return wantDm(lines)
 }
 
 /** The DM when judging failed for good: the listings unchecked, so the alert still goes out. */
@@ -421,7 +421,7 @@ export function renderUnchecked(
   if (pending.length > SHOWN_IN_DM)
     lines.push(moreLine(pending.length - SHOWN_IN_DM, taskId, config))
   lines.push("Press Done once you have it, and I stop looking.")
-  return clip(lines.join("\n"))
+  return wantDm(lines)
 }
 
 /** `pending`, now told (or passed over): remembered, and the look's count reset. */

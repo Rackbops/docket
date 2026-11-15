@@ -97,7 +97,11 @@ export interface WantState {
 }
 
 export const MAX_REPORTED = 500
-export const SHOWN_IN_DM = 5
+/**
+ * Listings a want DM shows: every one a run takes (docket#152, Rod's choice of 2026-11-15:
+ * "several messages at once"). It was 5, and the rest of an eBay look's listings were never shown.
+ */
+export const SHOWN_IN_DM = 20
 
 /**
  * Whether a watch keeps its listings as findings. An eBay API watch keeps none (Rod, 2026-10-20,
@@ -118,8 +122,24 @@ export function moreLine(more: number, taskId: string, config: WantConfig): stri
 /** New listings taken in one run, DMed and kept as findings; any more wait for the next run. */
 export const MAX_NEW_PER_RUN = 20
 
-/** The longest DM text a type here builds; Discord's limit is 2,000. */
+/** The longest one-message DM text a type here builds; Discord's limit is 2,000. */
 export const MAX_DM_CHARS = 2000
+
+/**
+ * The longest want DM: up to `SHOWN_IN_DM` listings, more than one Discord message holds. The
+ * host's Notifier sends it as several messages in a row, split between lines, the buttons on the
+ * last (`OutgoingMessage.text`, docket#152). Every line stays under `MAX_WANT_LINE_CHARS`, so a split
+ * between lines always fits.
+ */
+export const MAX_WANT_DM_CHARS = 24000
+
+/** The longest line a want DM writes: well under one message, so a split between lines fits. */
+export const MAX_WANT_LINE_CHARS = 1000
+
+/** A want DM's lines joined, each cut to `MAX_WANT_LINE_CHARS`, the whole cut to `MAX_WANT_DM_CHARS`. */
+export function wantDm(lines: readonly string[]): string {
+  return clip(lines.map((x) => clip(x, MAX_WANT_LINE_CHARS)).join("\n"), MAX_WANT_DM_CHARS)
+}
 
 /** `text`, cut to `max` with an ellipsis. */
 export function clip(text: string, max = MAX_DM_CHARS): string {
@@ -254,7 +274,7 @@ export function renderWant(
   }
   if (fresh.length > SHOWN_IN_DM) lines.push(moreLine(fresh.length - SHOWN_IN_DM, taskId, config))
   lines.push("Press Done once you have it, and I stop looking.")
-  return clip(lines.join("\n"))
+  return wantDm(lines)
 }
 
 export function miss<S extends WantState>(

@@ -7,7 +7,11 @@ import {
   inboxSource,
   isEbayHost,
   type Listing,
+  MAX_DM_CHARS,
+  MAX_NEW_PER_RUN,
   MAX_REPORTED,
+  MAX_WANT_DM_CHARS,
+  MAX_WANT_LINE_CHARS,
   NEVER_EBAY,
   pageSource,
   parseBggThingId,
@@ -338,12 +342,27 @@ describe("the wantlist type's pieces", () => {
     expect(text).toContain("<https://x.example/a>")
   })
 
-  it("shows five lines and says how many more, and BGG's lines name BGG", () => {
+  it("shows every listing a run takes, with no more line, and BGG's lines name BGG", () => {
     const many = ["a", "b", "c", "d", "e", "f", "g"].map((id) => l(id, 1, "USD"))
     const text = renderWant("Wingspan", "t9", many, { source: "bgg", target: "1" })
-    expect(text.split("\n").filter((x) => x.startsWith("- "))).toHaveLength(5)
+    expect(text.split("\n").filter((x) => x.startsWith("- "))).toHaveLength(7)
     expect(text).toContain("(via BoardGameGeek)")
-    expect(text).toContain("...and 2 more: `/task history t9` lists them all.")
+    expect(text).not.toContain("more:")
+    expect(text.endsWith("Press Done once you have it, and I stop looking.")).toBe(true)
+  })
+
+  it("keeps all twenty long listings past one message's limit, every line short enough to split on (docket#152)", () => {
+    const long = Array.from({ length: MAX_NEW_PER_RUN }, (_, i) => ({
+      ...l(`k${i}`, 100, "USD"),
+      title: `Listing ${i} ${"x".repeat(3000)}`,
+    }))
+    const text = renderWant("W", "t9", long, { source: "ebay", target: "w" })
+    expect(text.length).toBeGreaterThan(MAX_DM_CHARS)
+    expect(text.length).toBeLessThanOrEqual(MAX_WANT_DM_CHARS)
+    expect(text.split("\n").filter((x) => x.startsWith("- "))).toHaveLength(MAX_NEW_PER_RUN)
+    for (const line of text.split("\n"))
+      expect(line.length).toBeLessThanOrEqual(MAX_WANT_LINE_CHARS)
+    expect(text.endsWith("Press Done once you have it, and I stop looking.")).toBe(true)
   })
 
   it("reads back a state, capped, and a broken one as fresh", () => {
