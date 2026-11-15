@@ -814,5 +814,5 @@ function renderPlaces(
   }
   for (const w of warnings) lines.push(`${w} I keep looking there.`)
   lines.push("Press Done once you have it, and I stop looking.")
-  return clip(lines.join("\n"))
+  return wantDm(lines)
 }
