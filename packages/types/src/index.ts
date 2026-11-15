@@ -346,6 +346,15 @@ export {
   readNobleKnightCopies,
 } from "./want-nobleknight.js"
 export {
+  MAX_EXTRA_PLACES,
+  type PlaceState,
+  placeDue,
+  placeKey,
+  readPlaceStates,
+  type WantPlace,
+  wantPlaces,
+} from "./want-places.js"
+export {
   matchesWords,
   minorUnits,
   parseShopifyAnswer,
@@ -414,6 +423,7 @@ export {
   judgeHosts,
   judgeJob,
   judgeState,
+  ONE_PLACE,
   parseVerdicts,
   RETRY_GRACE_MS,
   renderJudged,
