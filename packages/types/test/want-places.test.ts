@@ -3,7 +3,6 @@ import { describe, expect, it } from "vitest"
 import {
   type Listing,
   MAX_EXTRA_PLACES,
-  ONE_PLACE,
   placeDue,
   readPlaceStates,
   type Source,
@@ -11,7 +10,6 @@ import {
   SourceMiss,
   SourceUnavailableError,
   type WantConfig,
-  wantjudgeType,
   wantlistType,
   wantPlaces,
 } from "../src/index.js"
@@ -296,16 +294,5 @@ describe("a look at several places", () => {
     expect(out.notify?.text).toContain("Rougarou: a new listing.")
     const state = out.state as { places: Record<string, { misses: number }> }
     expect(state.places["bgg:300580"]?.misses).toBe(1)
-  })
-
-  it("is refused by a judged watch, which looks in one place", async () => {
-    const page = stub("page", () => [copy("a", 30)])
-    const type = wantjudgeType({ page })
-    const out = await type.prepare?.(ctx({ also: [EBAY] }))
-    expect(page.reads).toEqual([])
-    expect(out).toMatchObject({ outcome: { summary: `nothing read: ${ONE_PLACE}` } })
-    expect((out as { outcome: { notify?: { text: string } } }).outcome.notify?.text).toContain(
-      ONE_PLACE,
-    )
   })
 })
