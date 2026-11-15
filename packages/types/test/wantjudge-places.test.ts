@@ -404,4 +404,27 @@ describe("a judged watch of several places", () => {
         ?.misses,
     ).toBeGreaterThan(1)
   })
+
+  it("ends only the misses of the eBay place whose listings read back", async () => {
+    const page = stub("page", () => [])
+    const item = ebayItem(1, 20)
+    const live = new Map([[item.id, item]])
+    const e = ebay([item], live)
+    const s: Source = {
+      ...e.s,
+      search: async (target: string) => {
+        if (target === "broken words") throw new SourceMiss("eBay said 500")
+        return [item]
+      },
+    }
+    const type = wantjudgeType({ page, ebay: s })
+    const config = { also: [EBAY, { source: "ebay", target: "broken words" }] }
+    const state = outcomeOf(await type.prepare?.(ctx(config, null))).state
+    const read = state as { places: Record<string, { misses: number }> }
+    expect(read.places["ebay:broken words"]?.misses).toBe(1)
+    const out = await type.finish?.(ctx(config, state, FOLLOW_UP), success(verdicts([1, "match"])))
+    const after = out?.state as { places: Record<string, { misses: number }> }
+    expect(after.places["ebay:broken words"]?.misses).toBe(1)
+    expect(after.places["ebay:curse rougarou"]?.misses).toBe(0)
+  })
 })

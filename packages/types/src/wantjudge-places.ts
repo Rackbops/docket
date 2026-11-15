@@ -221,9 +221,9 @@ function heldDown(
 ): { extra: Partial<WantState>; places: Record<string, PlaceState>; warning?: string } {
   const places = readPlaceStates(ctx.state)
   let extra: Partial<WantState> = {}
-  let warning: string | undefined
+  const warnings: string[] = []
   for (const [i, p] of wantPlaces(ctx.config).entries()) {
-    if (p.source !== "ebay") continue
+    if (!holding(state, p)) continue
     const key = placeKey(p)
     const config = placeConfig(ctx.config, p)
     const own =
@@ -239,12 +239,19 @@ function heldDown(
     const s = wantState(out.state)
     if (i === 0) extra = { misses: s.misses, warned: s.warned }
     else places[key] = { ...places[key], misses: s.misses, warned: s.warned }
-    if (out.notify) warning = missText(config, s.misses, missReason(out))
+    if (out.notify) warnings.push(missText(config, s.misses, missReason(out)))
   }
-  return { extra, places, ...(warning !== undefined ? { warning } : {}) }
+  return { extra, places, ...(warnings.length > 0 ? { warning: warnings.join(" ") } : {}) }
 }
 
-/** eBay read its held listings back: each eBay place's misses are over, as after any good read. */
+/** Whether `place` is an eBay place with a listing held: by its key, or any eBay place for an untagged one. */
+function holding(state: JudgeState, place: WantPlace): boolean {
+  if (place.source !== "ebay") return false
+  const key = placeKey(place)
+  return state.held.some((h) => h.place === undefined || h.place === key)
+}
+
+/** eBay read its held listings back: the misses of each eBay place they came from are over, as after any good read. */
 function heldUp(
   ctx: RunContext<WantConfig>,
   state: JudgeState,
@@ -252,14 +259,14 @@ function heldUp(
   const places = readPlaceStates(ctx.state)
   let extra: Partial<WantState> = {}
   for (const [i, p] of wantPlaces(ctx.config).entries()) {
-    if (p.source !== "ebay") continue
+    if (!holding(state, p)) continue
     if (i === 0) extra = { misses: 0, warned: false }
     else {
       const key = placeKey(p)
       places[key] = { ...places[key], misses: 0, warned: false }
     }
   }
-  return state.held.length > 0 ? { extra, places } : { extra: {}, places }
+  return { extra, places }
 }
 
 /** `text` with `warning` before its last line (the Done line); the warning alone when there is no text. */
@@ -350,11 +357,7 @@ async function readPlaces(
           ? polled.state
           : st
     shared = { ...shared, reported: next.reported }
-    // An eBay place's look is good only once its listings read back (`heldUp`): a search that
-    // holds some keeps the misses so far, so a host that cannot read them back is still told.
-    const holds =
-      config.source === "ebay" && polled.kind === "fresh" && polled.fresh.some((l) => l.ref)
-    const left = holds ? mine : { misses: next.misses, warned: next.warned }
+    const left = { misses: next.misses, warned: next.warned }
     if (i === 0) firstMiss = left
     else after[key] = { ...left, lastAt: ctx.now.toISOString() }
     if (outcome) {
@@ -374,6 +377,12 @@ async function readPlaces(
       // An eBay place keeps item numbers only; one with no item id is remembered unjudged and untold.
       else if (l.ref) held.push({ id: l.id, ref: l.ref, place: key })
       else unread.push(k)
+    }
+    // An eBay place's look is good only once its listings read back (`heldUp`): one whose search
+    // put listings in `held` keeps its misses so far, so a host that cannot read them back is told.
+    if (held.some((h) => h.place === key)) {
+      if (i === 0) firstMiss = mine
+      else after[key] = { ...mine, lastAt: ctx.now.toISOString() }
     }
   }
   const { retryAt: _none, ...rest } = state
@@ -436,9 +445,10 @@ export async function preparePlaces(
         }
       }
       const gone = state.held.filter((h) => !dropped.has(h.id)).map((h) => h.id)
+      const up = heldUp(ctx, state)
       return {
         outcome: {
-          state: settle(ctx, state, gone, 0),
+          state: settle(ctx, state, gone, 0, up.extra, up.places),
           summary: `nothing to check: the ${state.held.length} new listing(s) are gone from eBay or could not be read`,
         },
       }
@@ -485,7 +495,7 @@ function failed(
   const byId = new Map(within.map((e) => [e.l.id, e.config]))
   const reason = SAID[kind] ?? "the check failed"
   const kept = within.filter((e) => keepsFindings(e.config))
-  const d = forget.down ? heldDown(ctx, state) : null
+  const d = forget.down ? heldDown(ctx, state) : { ...heldUp(ctx, state), warning: undefined }
   const text = withWarning(
     ctx.task.title,
     within.length > 0
@@ -498,7 +508,7 @@ function failed(
           (l) => byId.get(l.id) ?? ctx.config,
         )
       : null,
-    d?.warning,
+    d.warning,
   )
   return {
     state: settle(
@@ -506,8 +516,8 @@ function failed(
       state,
       remembered(state, forget.dropped, forget.down, new Set(), unwanted),
       within.length,
-      d?.extra ?? {},
-      d?.places,
+      d.extra,
+      d.places,
     ),
     ...(text !== null ? { notify: { text, actions: ["done"] as const } } : {}),
     ...(kept.length > 0
