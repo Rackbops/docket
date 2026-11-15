@@ -152,8 +152,14 @@ export const MAX_DM_CHARS = 2000
  */
 export const MAX_WANT_DM_CHARS = 24000
 
-/** The longest line a want DM writes: well under one message, so a split between lines fits. */
-export const MAX_WANT_LINE_CHARS = 1000
+/**
+ * The longest line a want DM writes: under one message even after the host wraps its links, so a
+ * split between lines fits, and long enough that a listing's link at its end is not cut.
+ */
+export const MAX_WANT_LINE_CHARS = 1900
+
+/** The most of a listing's line before its link: title, price, shipping, condition and seller. */
+export const LISTING_TEXT_CHARS = 600
 
 /** A want DM's lines joined, each cut to `MAX_WANT_LINE_CHARS`, the whole cut to `MAX_WANT_DM_CHARS`. */
 export function wantDm(lines: readonly string[]): string {
@@ -275,7 +281,8 @@ export function listingLine(l: Listing, config: WantConfig, unconfirmed = false)
   ]
   const attribution = sourceText(config.source).attribution
   const via = attribution ? ` (${attribution})` : ""
-  return `- ${parts.join(" -- ")} <${l.url}>${via}`
+  // The text is cut, never the link after it (docket#152).
+  return `- ${clip(parts.join(" -- "), LISTING_TEXT_CHARS)} <${l.url}>${via}`
 }
 
 export function renderWant(

@@ -359,7 +359,10 @@ describe("the wantlist type's pieces", () => {
     const text = renderWant("W", "t9", long, { source: "ebay", target: "w" })
     expect(text.length).toBeGreaterThan(MAX_DM_CHARS)
     expect(text.length).toBeLessThanOrEqual(MAX_WANT_DM_CHARS)
-    expect(text.split("\n").filter((x) => x.startsWith("- "))).toHaveLength(MAX_NEW_PER_RUN)
+    const entries = text.split("\n").filter((x) => x.startsWith("- "))
+    expect(entries).toHaveLength(MAX_NEW_PER_RUN)
+    // The title is cut, never the link after it.
+    for (const [i, e] of entries.entries()) expect(e).toContain(`<${long[i]?.url}>`)
     for (const line of text.split("\n"))
       expect(line.length).toBeLessThanOrEqual(MAX_WANT_LINE_CHARS)
     expect(text.endsWith("Press Done once you have it, and I stop looking.")).toBe(true)
