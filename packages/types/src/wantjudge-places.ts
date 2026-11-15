@@ -239,9 +239,27 @@ function heldDown(
     const s = wantState(out.state)
     if (i === 0) extra = { misses: s.misses, warned: s.warned }
     else places[key] = { ...places[key], misses: s.misses, warned: s.warned }
-    if (out.notify) warnings.push(missText(config, s.misses, missReason(out)))
+    if (out.notify) warnings.push(heldMissText(config, s.misses))
   }
   return { extra, places, ...(warnings.length > 0 ? { warning: warnings.join(" ") } : {}) }
+}
+
+/** eBay's search worked but its listings could not be read back: said so, naming the search. */
+function heldMissText(config: WantConfig, misses: number): string {
+  const times = misses === 1 ? "just now" : `${misses} times in a row`
+  return `eBay found new listings for "${config.target}" but could not read them back ${times}.`
+}
+
+/** A place's miss, naming its search when another place reads the same source. */
+function placeMissText(
+  ctx: RunContext<WantConfig>,
+  config: WantConfig,
+  misses: number,
+  reason: string,
+): string {
+  const text = missText(config, misses, reason)
+  const twins = wantPlaces(ctx.config).filter((p) => p.source === config.source).length
+  return twins > 1 ? `${text.slice(0, -1)}, searching for "${config.target}".` : text
 }
 
 /** Whether `place` is an eBay place with a listing held: by its key, or any eBay place for an untagged one. */
@@ -361,7 +379,8 @@ async function readPlaces(
     if (i === 0) firstMiss = left
     else after[key] = { ...left, lastAt: ctx.now.toISOString() }
     if (outcome) {
-      if (outcome.notify) warnings.push(missText(config, next.misses, missReason(outcome)))
+      if (outcome.notify)
+        warnings.push(placeMissText(ctx, config, next.misses, missReason(outcome)))
       if (outcome.findings) findings.push(...outcome.findings)
       summaries.push(`${label}: ${outcome.summary ?? ""}`)
       continue

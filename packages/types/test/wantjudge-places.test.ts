@@ -397,8 +397,9 @@ describe("a judged watch of several places", () => {
       expect((state as { held: unknown[] }).held).toEqual([])
       told = out.notify?.text
     }
-    expect(told).toContain("I could read no listings from")
-    expect(told).toContain("eBay could not read its listings back just now")
+    expect(told).toContain(
+      'eBay found new listings for "curse rougarou" but could not read them back',
+    )
     expect(
       (state as { places: Record<string, { misses: number }> }).places["ebay:curse rougarou"]
         ?.misses,
@@ -427,4 +428,94 @@ describe("a judged watch of several places", () => {
     expect(after.places["ebay:broken words"]?.misses).toBe(1)
     expect(after.places["ebay:curse rougarou"]?.misses).toBe(0)
   })
+
+  it("ends the eBay place's misses when its held listings read back gone", async () => {
+    const page = stub("page", () => [])
+    const e = ebay([ebayItem(1, 20)])
+    const type = wantjudgeType({ page, ebay: e.s })
+    const config = { also: [EBAY] }
+    const state = withMisses(outcomeOf(await type.prepare?.(ctx(config, null))).state, EBAY, 2)
+    e.live.clear()
+    const out = outcomeOf(await type.prepare?.(ctx(config, state, FOLLOW_UP)))
+    expect(out.summary).toContain("are gone from eBay")
+    expect(missesOf(out.state, EBAY)).toBe(0)
+  })
+
+  it("ends the eBay place's misses when its listings read back and go out unchecked", async () => {
+    const page = stub("page", () => [])
+    const e = ebay([ebayItem(1, 20)])
+    const type = wantjudgeType({ page, ebay: e.s })
+    const config = { also: [EBAY] }
+    let state = withMisses(outcomeOf(await type.prepare?.(ctx(config, null))).state, EBAY, 2)
+    const failure = { kind: "error", detail: "busy" } as JobResult
+    let out: Outcome | undefined
+    for (let i = 0; i < 5 && !out?.notify; i++) {
+      out = await type.finish?.(ctx(config, state, FOLLOW_UP), failure)
+      if (!out?.notify) {
+        expect(missesOf(out?.state, EBAY)).toBe(2)
+        state = out?.state
+      }
+    }
+    expect(out?.notify?.text).toContain("unchecked")
+    expect(missesOf(out?.state, EBAY)).toBe(0)
+  })
+
+  it("tells each eBay search that cannot be read back, by its own words, in one DM", async () => {
+    const page = stub("page", () => [])
+    const second = { source: "ebay", target: "rougarou expansion" } as const
+    const e = ebay([ebayItem(1, 20), ebayItem(2, 25)])
+    const s: Source = {
+      ...e.s,
+      search: async (target: string) => [
+        target === EBAY.target ? ebayItem(1, 20) : ebayItem(2, 25),
+      ],
+    }
+    const type = wantjudgeType({ page, ebay: s })
+    const config = { also: [EBAY, second] }
+    let state = outcomeOf(await type.prepare?.(ctx(config, null))).state
+    state = withMisses(withMisses(state, EBAY, 2), second, 2)
+    e.down.on = true
+    const out = outcomeOf(await type.prepare?.(ctx(config, state, FOLLOW_UP)))
+    const text = out.notify?.text ?? ""
+    expect(text).toContain(
+      'eBay found new listings for "curse rougarou" but could not read them back 3 times in a row.',
+    )
+    expect(text).toContain(
+      'eBay found new listings for "rougarou expansion" but could not read them back 3 times in a row.',
+    )
+    expect(missesOf(out.state, EBAY)).toBe(3)
+    expect(missesOf(out.state, second)).toBe(3)
+  })
+
+  it("names the search when two places of one source cannot be read", async () => {
+    const page = stub("page", () => [])
+    const s: Source = {
+      ...ebay([]).s,
+      search: async () => {
+        throw new SourceUnavailableError("eBay said 500")
+      },
+    }
+    const type = wantjudgeType({ page, ebay: s })
+    const second = { source: "ebay", target: "rougarou expansion" } as const
+    const out = outcomeOf(await type.prepare?.(ctx({ also: [EBAY, second] }, null)))
+    const text = out.notify?.text ?? ""
+    expect(text).toContain('searching for "curse rougarou".')
+    expect(text).toContain('searching for "rougarou expansion".')
+  })
 })
+
+type Place = { source: string; target: string }
+const keyOf = (p: Place) => `${p.source}:${p.target}`
+
+/** The stored state with `place`'s misses set, as if its search had failed `n` times before. */
+function withMisses(state: unknown, place: Place, n: number): unknown {
+  const s = JSON.parse(JSON.stringify(state)) as { places?: Record<string, object> }
+  s.places = {
+    ...s.places,
+    [keyOf(place)]: { ...s.places?.[keyOf(place)], misses: n, warned: false },
+  }
+  return s
+}
+
+const missesOf = (state: unknown, place: Place) =>
+  (state as { places?: Record<string, { misses?: number }> }).places?.[keyOf(place)]?.misses
