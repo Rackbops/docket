@@ -93,7 +93,8 @@ function categoryNames(): string {
  * a second pass, `second`, names only the categories whose pick changed): `renderAnswer` fits the DM into
  * `MAX_MESSAGE_CHARS`, and since docket#126 shows the findings compact and counts the rest when the
  * full lines do not fit, so a category answered only in a late finding may reach the DM as a count;
- * the summary comes first and is kept.
+ * the summary comes first and is kept, cut only when it must be (docket#132) or, above its ask,
+ * to make room for the first finding's line (docket#157).
  */
 export function categoryLines(second = false): string[] {
   return [
