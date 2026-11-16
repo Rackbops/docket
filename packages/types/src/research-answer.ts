@@ -80,8 +80,9 @@ export const MAX_SUMMARY_CHARS = 1200
 /**
  * What the prompt asks the summary to be: at most 150 words, about 900 characters
  * (`ANSWER_SCHEMA`); `MAX_SUMMARY_CHARS` is the hard cap a longer one is cut to. When the DM
- * overflows, a summary's share above this ask is the last thing kept: the first finding's compact
- * line comes before it (docket#157).
+ * overflows, a summary above this ask yields to one thing only, the first finding's compact line
+ * (docket#157); the rest of its excess keeps its place ahead of the other findings and of the
+ * caveats, as docket#132 orders it.
  */
 export const SUMMARY_ASK_CHARS = 900
 export const MAX_CLAIM_CHARS = 400
@@ -557,8 +558,8 @@ function compactFindings(
 /**
  * The room the findings block takes with its first compact line only (docket#157): the blank
  * line, the header, that line and, for more than one finding, the count of the rest, plus the
- * newline joining the block to what precedes it, so `compactFindings` given this much room shows
- * the line. 0 for no findings.
+ * newline joining the block to what precedes it; `compactFindings` shows the line given the
+ * block's own length, one less. 0 for no findings.
  */
 function oneFindingBlockChars(findings: readonly ResearchFinding[], header: string): number {
   const first = findings[0]
@@ -572,10 +573,11 @@ function oneFindingBlockChars(findings: readonly ResearchFinding[], header: stri
  * The summary of an overflowing DM once the findings' room is known (docket#157): `summary` as
  * cut so far, or cut further when the first finding's compact line lacks room in `left` (what
  * the findings have after the summary and the caveats) and the summary is above the prompt's
- * ask (`SUMMARY_ASK_CHARS`) by at least that much. It gives up exactly what the line lacks, from
- * its excess over the ask only, so a summary within the ask keeps every character; the caveats
- * keep the block they were given, so their room is untouched. `text` is the summary as parsed,
- * which the cut is taken from.
+ * ask (`SUMMARY_ASK_CHARS`) by at least that much. It gives up what the line lacks (`clean` may
+ * trim a trailing space off the cut besides, which only leaves the findings spare room), from its
+ * excess over the ask only, so a summary within the ask keeps every character, and it never takes
+ * room back when the line already fits; the caveats keep the block they were given, so their room
+ * is untouched. `text` is the summary as parsed, which the cut is taken from.
  */
 function yieldToFirstFinding(
   text: string,
@@ -585,9 +587,7 @@ function yieldToFirstFinding(
   header: string,
 ): string {
   const lack = oneFindingBlockChars(findings, header) - left
-  if (findings.length === 0 || lack <= 0 || summary.length - SUMMARY_ASK_CHARS < lack) {
-    return summary
-  }
+  if (lack <= 0 || summary.length - lack < SUMMARY_ASK_CHARS) return summary
   return clean(text, summary.length - lack)
 }
 
@@ -689,8 +689,8 @@ export function fitLines(lines: string[], max: number): string {
  * `MAX_MESSAGE_CHARS`; every piece was cleaned by `parseAnswer`, the title is cleaned here. When
  * the whole update does not fit (docket#132), the summary comes first, cut if it must while
  * leaving room for the count, and the findings follow in compact form under "New or corrected:",
- * as in `renderAnswer`, with the same floor: a summary above the prompt's ask gives up its excess
- * before the findings shrink to a count (docket#157).
+ * as in `renderAnswer`, with the same floor: a summary above the prompt's ask gives up what the
+ * first compact line lacks, from its excess, before the findings shrink to a count (docket#157).
  */
 export function renderUpdate(title: string, update: ResearchAnswer, review: Review): string {
   const head = `Update to ${clean(title, 200, true)}:`

@@ -857,6 +857,48 @@ describe("the DM when the whole answer does not fit (docket#126)", () => {
     for (const u of t40.uncertain) expect(whole).toContain(`- ${u}`)
   })
 
+  it("the yield is exact: a space-free summary fills the DM to the character (review of docket#157)", () => {
+    // A summary with no spaces, so `clean`'s trim takes nothing off the cut: what the line lacked
+    // is all the summary gives, and the DM is full to the character.
+    const exact = {
+      ...build(1200),
+      summary: "z".repeat(1200),
+      uncertain: Array.from({ length: 3 }, (_, i) => `Caveat ${i}: ${"x".repeat(290)}`),
+    }
+    const dm = renderAnswer("Pumpkin bread mix", exact, { ...approved, answer: exact })
+    expect(dm.length).toBe(MAX_MESSAGE_CHARS)
+    expect(dm).toMatch(
+      /^Research: Pumpkin bread mix\n\nz+\.\.\.\n\nFindings:\n- Finding 0: posters say[^\n]*\n\(5 more on the task's page\)\n\nUncertain:\n- Caveat 0: x+\n\(2 more not shown\)\n\nSocial: /,
+    )
+    // One finding: no count of the rest, and the line's own room is all the summary gives.
+    const one = { ...exact, findings: findings.slice(0, 1), uncertain: [] }
+    const list = `Couldn't open:\n- ${"boardgamegeek.com: 403 Forbidden ".repeat(20)}`
+    const single = renderAnswer(
+      "Pumpkin bread mix",
+      one,
+      { ...approved, answer: one },
+      list.slice(0, 300),
+    )
+    expect(single.length).toBe(MAX_MESSAGE_CHARS)
+    expect(single).toMatch(
+      /z+\.\.\.\n\nFindings:\n- Finding 0: posters say[^\n]*\(TikTok, 2026-10-02T14:00:00Z, snippet only\)\n\nSocial: /,
+    )
+    expect(single).not.toContain("on the task's page")
+    // A line that already fits takes nothing: the summary stays as the tail cut it (docket#132),
+    // and what the shorter line leaves of the room reserved for the count line stays unused. The
+    // count line with its blank line is 34 characters; the block with "- Short." under its
+    // header, 20.
+    const fits = { ...one, findings: [{ claim: "Short.", sources: [MAKER] }] }
+    const kept = renderAnswer(
+      "Pumpkin bread mix",
+      fits,
+      { ...approved, answer: fits },
+      list.slice(0, 600),
+    )
+    expect(kept.length).toBe(MAX_MESSAGE_CHARS - 14)
+    expect(kept).toMatch(/z+\.\.\.\n\nFindings:\n- Short\.\n\nSocial: /)
+  })
+
   it("a long tail: the summary is cut, never dropped, and both counts stay (docket#132)", () => {
     const out = build(1200)
     // The longest tail `waitTail` makes: a 600-character "Couldn't open:" list and the queued line.
@@ -932,7 +974,8 @@ describe("the DM when the whole answer does not fit (docket#126)", () => {
     // excess over the ask (docket#157); the count stands for the rest, never a bare header.
     const wordy = { ...update, summary: `${"z".repeat(1899)}.` }
     const counted = renderUpdate("Pumpkin bread mix", wordy, { ...approved, answer: wordy })
-    expect(counted.length).toBeLessThanOrEqual(MAX_MESSAGE_CHARS)
+    // Space-free, so `clean`'s trim takes nothing off the cut: the DM is full to the character.
+    expect(counted.length).toBe(MAX_MESSAGE_CHARS)
     expect(counted).toMatch(
       /z+\.\.\.\n\nNew or corrected:\n- Finding 0: posters say[^\n]*\n\(5 more on the task's page\)\n\nChecked by a reviewer run\.$/,
     )
