@@ -174,6 +174,7 @@ export {
   type Review,
   renderAnswer,
   renderUpdate,
+  SUMMARY_ASK_CHARS,
   safeUrl,
   sameClaim,
   VERDICTS,

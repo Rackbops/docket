@@ -47,6 +47,7 @@ import {
   SOCIAL_MAX_CREDITS,
   SOCIAL_MAX_TURNS,
   SOCIAL_PLATFORMS,
+  SUMMARY_ASK_CHARS,
   sinceOf,
   socialChoice,
   socialOutgoing,
@@ -767,32 +768,93 @@ describe("the DM when the whole answer does not fit (docket#126)", () => {
   })
 
   it("no room for one compact line: one line counts the findings; none at all: no header", () => {
-    const out = build(1200)
-    // A "Couldn't open:" tail, kept whole, sized so that about 100 characters are left after the
-    // summary, the caveats and the Social line: room for the count, not for a compact line.
+    // A summary within the prompt's ask, which docket#157 never cuts, and a "Couldn't open:"
+    // tail, kept whole, sized so that about 100 characters are left after the summary, the caveats
+    // and the Social line: room for the count, not for a compact line.
+    const out = build(SUMMARY_ASK_CHARS)
     const social = coverageLine(out.coverage ?? [])
     const tail = "Couldn't open:\n- boardgamegeek.com (403 Forbidden)".padEnd(
-      310 - social.length,
+      610 - social.length,
       ".",
     )
     const counted = renderAnswer("Pumpkin bread mix", out, { ...approved, answer: out }, tail)
     expect(counted.length).toBeLessThanOrEqual(MAX_MESSAGE_CHARS)
+    expect(counted).toContain(out.summary)
     expect(counted).toContain("\n\n6 finding(s) on the task's page.\n\nUncertain:")
     expect(counted).not.toContain("Findings:")
     for (const u of uncertain) expect(counted).toContain(`- ${u}`)
+    // A tail 300 characters shorter under a summary at its 1200 cap: the caveats all fit and the
+    // findings used to be a count; now the summary gives up what the first compact line lacks,
+    // from its excess over the ask (docket#157), and the caveats are untouched.
+    const long = build(1200)
+    const shorter = "Couldn't open:\n- boardgamegeek.com (403 Forbidden)".padEnd(
+      310 - social.length,
+      ".",
+    )
+    const yielded = renderAnswer("Pumpkin bread mix", long, { ...approved, answer: long }, shorter)
+    expect(yielded.length).toBeLessThanOrEqual(MAX_MESSAGE_CHARS)
+    expect(yielded).not.toContain(long.summary)
+    expect(yielded).toContain(long.summary.slice(0, SUMMARY_ASK_CHARS - 3))
+    expect(yielded).toMatch(
+      /\.\.\.\n\nFindings:\n- Finding 0: posters say[^\n]*\n\(5 more on the task's page\)\n\nUncertain:\n- Caveat 0/,
+    )
+    for (const u of uncertain) expect(yielded).toContain(`- ${u}`)
     // Caveats that overflow the DM on their own are counted, not cut (docket#132): the first
-    // stands under its header, the rest are a count, and the findings are a count too.
+    // stands under its header, the rest are a count. With the summary at its cap the findings
+    // used to be a count too; now the summary yields for one line and the caveats keep theirs.
     const wordy = {
-      ...out,
+      ...long,
       uncertain: Array.from({ length: MAX_UNCERTAIN }, (_, i) => `Caveat ${i}: ${"y".repeat(290)}`),
     }
     const cut = renderAnswer("Pumpkin bread mix", wordy, { ...approved, answer: wordy })
     expect(cut.length).toBeLessThanOrEqual(MAX_MESSAGE_CHARS)
-    expect(cut).toContain(out.summary)
-    expect(cut).toContain("\n\n6 finding(s) on the task's page.\n\nUncertain:\n- Caveat 0:")
+    expect(cut).not.toContain(long.summary)
+    expect(cut).toMatch(
+      /\.\.\.\n\nFindings:\n- Finding 0: posters say[^\n]*\n\(5 more on the task's page\)\n\nUncertain:\n- Caveat 0:/,
+    )
     expect(cut).toContain(`- Caveat 0: ${"y".repeat(290)}\n(5 more not shown)\n\nSocial: `)
-    expect(cut).not.toContain("Findings:")
     expect(cut).not.toContain("more lines not shown")
+  })
+
+  it("a summary above its 150-word ask yields what the first finding's line lacks (docket#157)", () => {
+    // Research t40 on Clerk (2026-11-16): a summary at its 1200 cap, four caveats (the first a
+    // long one) and the Social line left the five findings a count, so the one dated post finding
+    // reached the owner on the task's page only.
+    const out = build(1200)
+    const t40 = {
+      ...out,
+      findings: findings.slice(0, 5),
+      uncertain: [
+        "Shopper opinion (as opposed to critic/listicle opinion) was not gathered: YouTube " +
+          "transcripts and comments were not read; TikTok returned nothing; Instagram was not searched.",
+        ...Array.from({ length: 3 }, (_, i) => `Caveat ${i}: ${"x".repeat(110)}`),
+      ],
+    }
+    const title =
+      "Which seasonal items at Trader Joe's are people recommending right now, and what do " +
+      "reviews say are the letdowns?"
+    const dm = renderAnswer(title, t40, { ...approved, answer: t40 })
+    expect(dm.length).toBeLessThanOrEqual(MAX_MESSAGE_CHARS)
+    const shown = dm.slice(dm.indexOf("\n\n") + 2, dm.indexOf("\n\nFindings:"))
+    // Cut, but only by what the line lacked: still well above the ask, and a prefix of the whole.
+    expect(shown.endsWith("...")).toBe(true)
+    expect(shown.length).toBeGreaterThan(SUMMARY_ASK_CHARS)
+    expect(shown.length).toBeLessThan(out.summary.length)
+    expect(out.summary.startsWith(shown.slice(0, -3))).toBe(true)
+    expect(dm).toMatch(
+      /Findings:\n- Finding 0: posters say[^\n]*\(TikTok, 2026-10-02T14:00:00Z, snippet only\)\n\(4 more on the task's page\)\n\nUncertain:\n- Shopper opinion/,
+    )
+    expect(dm).toContain("Instagram was not searched.\n(3 more not shown)\n\nSocial: ")
+    // The same answer with its summary within the ask gives nothing up: the summary is whole, the
+    // caveats take their room before the findings as docket#132 orders it, and the findings are a
+    // count.
+    const asked = { ...t40, summary: `${out.summary.slice(0, SUMMARY_ASK_CHARS - 1).trimEnd()}.` }
+    const whole = renderAnswer(title, asked, { ...approved, answer: asked })
+    expect(whole.length).toBeLessThanOrEqual(MAX_MESSAGE_CHARS)
+    expect(whole).toContain(
+      `\n\n${asked.summary}\n\n5 finding(s) on the task's page.\n\nUncertain:\n- Shopper opinion`,
+    )
+    for (const u of t40.uncertain) expect(whole).toContain(`- ${u}`)
   })
 
   it("a long tail: the summary is cut, never dropped, and both counts stay (docket#132)", () => {
@@ -813,7 +875,8 @@ describe("the DM when the whole answer does not fit (docket#126)", () => {
     expect(dm).not.toContain("Uncertain:")
     expect(dm).not.toContain("more lines not shown")
     expect(dm.endsWith(tail)).toBe(true)
-    // A shorter list: the summary whole, the caveats that fit under their header, then a count.
+    // A shorter list: the summary yields what the first compact line lacks (docket#157), then the
+    // caveats that fit under their header and a count, with the room they had before.
     const some = renderAnswer(
       "Pumpkin bread mix",
       out,
@@ -821,11 +884,11 @@ describe("the DM when the whole answer does not fit (docket#126)", () => {
       list.slice(0, 300),
     )
     expect(some.length).toBeLessThanOrEqual(MAX_MESSAGE_CHARS)
-    expect(some).toContain(out.summary)
+    expect(some).not.toContain(out.summary)
+    expect(some).toContain(out.summary.slice(0, SUMMARY_ASK_CHARS - 3))
     expect(some).toMatch(
-      /Uncertain:\n- Caveat 0: x+\n(- Caveat \d: x+\n)*\(\d more not shown\)\n\nSocial: /,
+      /\.\.\.\n\nFindings:\n- Finding 0: posters say[^\n]*\n\(5 more on the task's page\)\n\nUncertain:\n- Caveat 0: x+\n(- Caveat \d: x+\n)*\(\d more not shown\)\n\nSocial: /,
     )
-    expect(some).toContain("\n\n6 finding(s) on the task's page.\n\nUncertain:")
     expect(some).not.toContain("more lines not shown")
   })
 
@@ -865,14 +928,15 @@ describe("the DM when the whole answer does not fit (docket#126)", () => {
       `New or corrected:\n- ${findings[0]?.claim} (TikTok, 2026-10-02T14:00:00Z, snippet only) <https://www.tiktok.com`,
     )
     expect(full).not.toContain("on the task's page")
-    // No room for one compact line: the count alone, never a bare header.
+    // A summary that would take the whole DM yields what the first compact line lacks, from its
+    // excess over the ask (docket#157); the count stands for the rest, never a bare header.
     const wordy = { ...update, summary: `${"z".repeat(1899)}.` }
     const counted = renderUpdate("Pumpkin bread mix", wordy, { ...approved, answer: wordy })
     expect(counted.length).toBeLessThanOrEqual(MAX_MESSAGE_CHARS)
     expect(counted).toMatch(
-      /z+\.\.\.\n\n6 finding\(s\) on the task's page\.\n\nChecked by a reviewer run\.$/,
+      /z+\.\.\.\n\nNew or corrected:\n- Finding 0: posters say[^\n]*\n\(5 more on the task's page\)\n\nChecked by a reviewer run\.$/,
     )
-    expect(counted).not.toContain("New or corrected:")
+    expect(counted).not.toContain("6 finding(s)")
   })
 
   it("no findings and an overflowing answer: no Findings header at all (review of docket#131)", () => {

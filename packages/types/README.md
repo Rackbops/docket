@@ -88,8 +88,8 @@ The tracker's task types, built on `@rackbops/docket-core`'s contract. Shipped s
   (a claim the first answer already made, case and spacing aside, is dropped), or one line when
   there are none; when the whole update does not fit the DM, the summary comes first and the
   findings follow in compact form under "New or corrected:", counted, as in the first pass
-  (docket#132); they are saved tagged `["research", verdict, "update"]` beside the first pass's
-  (one from a post with its post tags as well, docket#124).
+  (docket#132, with docket#157's floor); they are saved tagged `["research", verdict, "update"]`
+  beside the first pass's (one from a post with its post tags as well, docket#124).
   With no pages by the expiry, past the deadline, on a rejected update or on a second failure, the
   task ends with one line: the first answer stands. With no store, a `sent` request, or nothing
   blocked, a request runs exactly as in 0.8.0; the answer schema gains the optional field (and with
@@ -244,7 +244,11 @@ The tracker's task types, built on `@rackbops/docket-core`'s contract. Shipped s
   post marks, no link -- as many as fit, the rest counted as "(N more on the task's page)", or one
   line saying how many are on the task's page when not one fits. The order on screen stays
   summary, findings, caveats; no header stands without a line under it, and neither the caveats
-  nor the findings are dropped without a count. The
+  nor the findings are dropped without a count. One exception to the sharing order (docket#157):
+  when the findings would be a count, a summary longer than the prompt's 150-word ask (about 900
+  characters, `SUMMARY_ASK_CHARS`) gives up what the first finding's compact line lacks, from its
+  excess over the ask only, so that line reaches the owner whenever the summary alone was crowding
+  it out; the caveats keep the room they had, and a summary within the ask gives up nothing. The
   reviewer (`socialChecks`) opens post pages where they open (at most one youtube-com call, no
   oriane call), turns an unopened `read` into `snippet`, moves stock, price and availability
   claims resting on posts alone to `uncertain`, rewords opinions as what posters say, counts a
